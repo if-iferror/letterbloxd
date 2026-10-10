@@ -331,7 +331,8 @@
     const byName = (map) => (a, b) => (map.get(a).order || 1) - (map.get(b).order || 1) || collator.compare(map.get(a).name, map.get(b).name);
     for (const g of genres.values()) g.cats.sort(byName(cats));
     for (const c of cats.values()) c.subs.sort(byName(subs));
-    lib = { genres, cats, subs, place, names, inSub, count };
+    const rank = (lib && lib.rank) || new Map(stock.films.map(([slug], i) => [slug, i]));
+    lib = { genres, cats, subs, place, names, inSub, count, rank };
     return lib;
   }
 
@@ -734,6 +735,7 @@
 
   const desk = {
     open: false,
+    mode: "store", // left side: "store" (the floor) or "list"
     folder: null, // what the left pane lists (genre, category or subcategory id)
     col: null, // how far the right-hand columns are opened
     scope: "folder", // left search: "folder" or "all"
@@ -752,11 +754,18 @@
       `<section class="lbs-drawer" aria-label="Sorting desk" hidden>` +
       `<div class="lbs-films">` +
       `<div class="lbs-films-top">` +
+      `<div class="lbs-mode" role="group" aria-label="Show"><button type="button" data-mode="store">Store</button><button type="button" data-mode="list">List</button></div>` +
       `<label class="lbs-search">${ICON_SEARCH}<input type="search" class="lbs-fq" placeholder="Search films" autocomplete="off"></label>` +
       `<div class="lbs-scope" role="group" aria-label="Search in"><button type="button" data-scope="folder">This folder</button><button type="button" data-scope="all">All of Letterboxd</button></div>` +
       `</div>` +
       `<div class="lbs-where"></div>` +
       `<div class="lbs-moving" hidden></div>` +
+      `<div class="lbs-stage" hidden>` +
+      `<div class="lbs-stage-top"><div class="lbs-stage-path"></div>` +
+      `<div class="lbs-zoom"><button type="button" data-act="zoom-out" aria-label="Zoom out">−</button><button type="button" data-act="fit">Fit</button><button type="button" data-act="zoom-in" aria-label="Zoom in">+</button></div></div>` +
+      `<div class="lbs-aisles"></div><canvas class="lbs-canvas" draggable="false" aria-label="Horror wall. Scroll to move, pinch or Ctrl-scroll to zoom, drag a spine to a folder."></canvas>` +
+      `<div class="lbs-tip" hidden></div>` +
+      `</div>` +
       `<ul class="lbs-rows" role="listbox" aria-multiselectable="true"></ul>` +
       `</div>` +
       `<div class="lbs-folders">` +
@@ -842,6 +851,12 @@
       const n = desk.moving.length;
       moving.innerHTML = `Moving <b>${n === 1 ? esc(titleOf(desk.moving[0][1])) : `${n} films`}</b>. Pick a folder on the right, then <b>Move here</b>. <button type="button" data-act="cancel-move">Cancel</button>`;
     }
+
+    root.querySelectorAll(".lbs-mode button").forEach((b) => b.classList.toggle("-on", b.dataset.mode === desk.mode));
+    const storeMode = desk.mode === "store";
+    where.hidden = list.hidden = storeMode;
+    $(".lbs-stage", root).hidden = !storeMode;
+    if (storeMode) return showStage();
 
     let films;
     if (desk.scope === "all") {
@@ -986,6 +1001,439 @@
     toast(`Made “${name}”. It's yours until a moderator approves it.`);
   }
 
+
+  /* ---------------- the store floor (left side, "Store" mode) ----------------
+   * One big map of the Horror wall in "wall units". Sections pour onto the
+   * shelves in WALL_ORDER: across a shelf, down to the next, then into the next
+   * bay. A camera (x, y, zoom) moves over it and only the bays in view are
+   * drawn, at a level of detail that depends on zoom:
+   *   far    section colour blocks + names
+   *   middle spine impressions + 3 face-out highlights per section
+   *   near   spines with titles; hover for the poster, drag one to a folder
+   */
+  const WALL_ORDER = ["gothic", "haunted", "creepy", "vampires", "madsci", "creature", "zombies", "extreme", "slashers", "giallo", "eighties", "jhorror", "comedy", "rest"];
+  const HUES = [282, 262, 220, 350, 160, 95, 120, 8, 0, 35, 315, 190, 48, 210];
+  const WU = { bayW: 1000, gap: 36, pad: 22, sign: 80, shelfH: 200, shelves: 6, lip: 14 };
+  const FAR = 0.09, NEAR = 0.45, TEXT = 0.8, ZMIN = 0.02, ZMAX = 2.6;
+  const reduceMotion = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  const wall = { level: "aisles", lay: null, cam: { x: 0, y: 0, z: 0.05 }, hover: null, pin: null, lite: false, slow: 0, imgs: new Map(), frame: 0 };
+  const spineW = (y) => (y && y < 1990 ? 20 : y && y < 2008 ? 12 : 10);
+  const spineH = (y) => (y && y < 1990 ? 168 : y && y < 2008 ? 158 : 148);
+  const hash = (s) => { let x = 2166136261; for (let i = 0; i < s.length; i++) x = Math.imul(x ^ s.charCodeAt(i), 16777619); return x >>> 0; };
+
+  function buildLayout() {
+    const order = WALL_ORDER.map((id) => `${STOCKED}/${id}`).filter((id) => lib.cats.has(id));
+    const extra = lib.genres.get(STOCKED).cats.filter((id) => !order.includes(id)); // your own sections
+    order.splice(order.length - 1, 0, ...extra);
+    const inner = WU.bayW - WU.pad * 2;
+    const films = [];
+    const chunks = new Map(); // "bay:shelf" -> [film index], left to right
+    const secs = [];
+    let bay = 0, shelf = 0, x = WU.pad;
+    order.forEach((cid, k) => {
+      const sec = { id: cid, name: lib.cats.get(cid).name, hue: HUES[k % HUES.length], films: [], subs: [] };
+      for (const sid of lib.cats.get(cid).subs) {
+        const list = lib.inSub.get(sid) || [];
+        if (!list.length) continue;
+        sec.subs.push({ id: sid, name: lib.subs.get(sid).name, first: films.length });
+        for (const [slug, name] of list) {
+          const y = yearOf(name), w = spineW(y);
+          if (x + w > WU.pad + inner) { x = WU.pad; if (++shelf >= WU.shelves) { shelf = 0; bay++; } }
+          const f = { slug, name, year: y, w, h: spineH(y), sec: secs.length, sub: sid, bay, shelf, x: bay * (WU.bayW + WU.gap) + x, y: WU.sign + (shelf + 1) * WU.shelfH - WU.lip, rank: lib.rank.get(slug) ?? 1e9 };
+          const key = `${bay}:${shelf}`;
+          if (!chunks.has(key)) chunks.set(key, []);
+          chunks.get(key).push(films.length);
+          sec.films.push(films.length);
+          films.push(f);
+          x += w + 1;
+        }
+      }
+      if (!sec.films.length) return;
+      // Face-out highlights: the best-known three (popularity order).
+      sec.highlights = [...sec.films].sort((a, b) => films[a].rank - films[b].rank).slice(0, 3);
+      secs.push(sec);
+    });
+    // Runs of one section along one shelf, for the far view and the tags.
+    const runs = [];
+    for (const [key, list] of chunks) {
+      const [b, s] = key.split(":").map(Number);
+      let run = null;
+      for (const i of list) {
+        const f = films[i];
+        if (!run || run.sec !== f.sec) { run = { sec: f.sec, bay: b, shelf: s, x0: f.x, x1: f.x + f.w, first: i }; runs.push(run); }
+        else run.x1 = f.x + f.w;
+      }
+    }
+    const width = (bay + 1) * (WU.bayW + WU.gap);
+    const height = WU.sign + WU.shelves * WU.shelfH + 20;
+    wall.lay = { films, chunks, secs, runs, width, height, bays: bay + 1 };
+  }
+
+  // Screen <-> wall coordinates.
+  const toWall = (sx, sy) => ({ x: wall.cam.x + sx / wall.cam.z, y: wall.cam.y + sy / wall.cam.z });
+
+  function fit() {
+    const c = wall.canvas;
+    if (!c || !wall.lay) return;
+    const z = Math.min(c.clientWidth / wall.lay.width, c.clientHeight / wall.lay.height) * 0.96;
+    wall.cam.z = Math.max(ZMIN, z);
+    wall.cam.x = -(c.clientWidth / wall.cam.z - wall.lay.width) / 2;
+    wall.cam.y = -(c.clientHeight / wall.cam.z - wall.lay.height) / 2;
+    drawSoon();
+  }
+
+  function clampCam() {
+    const c = wall.canvas, L = wall.lay, cam = wall.cam;
+    const vw = c.clientWidth / cam.z, vh = c.clientHeight / cam.z;
+    const mx = Math.max(200, vw * 0.25), my = 120;
+    cam.x = vw > L.width ? -(vw - L.width) / 2 : Math.min(Math.max(cam.x, -mx), L.width - vw + mx);
+    cam.y = vh > L.height ? -(vh - L.height) / 2 : Math.min(Math.max(cam.y, -my), L.height - vh + my);
+  }
+
+  function zoomAt(factor, sx, sy) {
+    const before = toWall(sx, sy);
+    wall.cam.z = Math.min(ZMAX, Math.max(ZMIN, wall.cam.z * factor));
+    wall.cam.x = before.x - sx / wall.cam.z;
+    wall.cam.y = before.y - sy / wall.cam.z;
+    drawSoon();
+  }
+
+  // Glide the camera to a wall point at a zoom (instant with reduced motion).
+  function flyTo(x, y, z) {
+    const c = wall.canvas, cam = wall.cam;
+    const target = { z, x: x - c.clientWidth / 2 / z, y: y - c.clientHeight / 2 / z };
+    if (reduceMotion || wall.lite) { Object.assign(cam, target); return drawSoon(); }
+    const from = { ...cam }, t0 = performance.now(), dur = 420;
+    const step = (t) => {
+      const k = Math.min(1, (t - t0) / dur), e = 1 - Math.pow(1 - k, 3);
+      cam.z = Math.exp(Math.log(from.z) + (Math.log(target.z) - Math.log(from.z)) * e);
+      cam.x = from.x + (target.x - from.x) * e;
+      cam.y = from.y + (target.y - from.y) * e;
+      draw();
+      if (k < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+
+  // Fly to a section or shelf picked on the right.
+  function flyToFolder(id) {
+    if (!wall.lay || wall.level !== "wall") return;
+    const p = partsOf(id);
+    if (p.genre !== STOCKED || !p.cat) return fit();
+    const L = wall.lay;
+    const i = p.sub ? L.films.findIndex((f) => f.sub === p.sub) : L.secs.find((s) => s.id === p.cat)?.films[0];
+    if (i == null || i < 0) return;
+    const f = L.films[i];
+    flyTo(f.x + 300, f.y - 120, p.sub ? 0.9 : 0.25);
+  }
+
+  function drawSoon() {
+    if (wall.frame) return;
+    wall.frame = requestAnimationFrame(() => { wall.frame = 0; draw(); });
+  }
+
+  function posterImg(slug) {
+    let im = wall.imgs.get(slug);
+    if (im) return im.complete && im.naturalWidth ? im : null;
+    im = new Image();
+    wall.imgs.set(slug, im);
+    posterFor(slug).then(([one]) => { im.onload = drawSoon; im.src = one; }).catch(() => {});
+    return null;
+  }
+
+  function draw() {
+    const c = wall.canvas, L = wall.lay;
+    if (!c || !L || wall.level !== "wall" || !c.isConnected) return;
+    const t0 = performance.now();
+    const dpr = Math.min(window.devicePixelRatio || 1, wall.lite ? 1 : 2);
+    const W = c.clientWidth, H = c.clientHeight;
+    if (c.width !== Math.round(W * dpr) || c.height !== Math.round(H * dpr)) { c.width = Math.round(W * dpr); c.height = Math.round(H * dpr); }
+    clampCam();
+    const { x: cx, y: cy, z } = wall.cam;
+    const ctx = c.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = "#0f1317";
+    ctx.fillRect(0, 0, W, H);
+    ctx.setTransform(dpr * z, 0, 0, dpr * z, -cx * z * dpr, -cy * z * dpr);
+    const x0 = cx, x1 = cx + W / z;
+    const step = WU.bayW + WU.gap;
+    const b0 = Math.max(0, Math.floor(x0 / step)), b1 = Math.min(L.bays - 1, Math.floor(x1 / step));
+    const px = 1 / z; // one screen pixel in wall units
+
+    // Bays: back panel, shelf boards, uprights.
+    for (let b = b0; b <= b1; b++) {
+      const bx = b * step;
+      ctx.fillStyle = "#171c21";
+      ctx.fillRect(bx, WU.sign - 10, WU.bayW, WU.shelves * WU.shelfH + 10);
+      ctx.fillStyle = "#2f3842";
+      for (let s = 1; s <= WU.shelves; s++) ctx.fillRect(bx, WU.sign + s * WU.shelfH - WU.lip, WU.bayW, WU.lip);
+      ctx.fillStyle = "#3a4552";
+      ctx.fillRect(bx - 6, WU.sign - 10, 10, WU.shelves * WU.shelfH + 20);
+    }
+
+    const secColor = (sec, f) => {
+      const hv = f ? hash(f.slug) : 0;
+      const hue = sec.hue + ((hv % 37) - 18);
+      if (!f) return `hsl(${sec.hue} 38% 34%)`;
+      const vhs = f.year && f.year < 1990;
+      return vhs ? `hsl(${hue} 10% ${10 + (hv % 9)}%)` : `hsl(${hue} ${32 + (hv % 22)}% ${f.year >= 2008 ? 36 + (hv % 14) : 24 + (hv % 14)}%)`;
+    };
+
+    if (z < FAR) {
+      // FAR: each section is a coloured block on every shelf it covers.
+      for (const r of L.runs) {
+        if (r.bay < b0 || r.bay > b1) continue;
+        ctx.fillStyle = secColor(L.secs[r.sec]);
+        ctx.fillRect(r.x0, WU.sign + r.shelf * WU.shelfH + 30, r.x1 - r.x0, WU.shelfH - 30 - WU.lip);
+      }
+    } else {
+      // MIDDLE + NEAR: every spine in view.
+      const near = z >= NEAR, text = z >= TEXT && !wall.lite;
+      for (let b = b0; b <= b1; b++) {
+        for (let s = 0; s < WU.shelves; s++) {
+          const list = L.chunks.get(`${b}:${s}`);
+          if (!list) continue;
+          for (const i of list) {
+            const f = L.films[i];
+            if (f.x + f.w < x0 || f.x > x1) continue;
+            const top = f.y - f.h;
+            ctx.fillStyle = secColor(L.secs[f.sec], f);
+            ctx.fillRect(f.x, top, f.w, f.h);
+            if (!near || wall.lite) continue;
+            // a little plastic: lit edge, VHS label band
+            ctx.fillStyle = "rgba(255,255,255,0.10)";
+            ctx.fillRect(f.x, top, Math.max(px, f.w * 0.18), f.h);
+            if (f.year && f.year < 1990) { ctx.fillStyle = "rgba(235,232,222,0.85)"; ctx.fillRect(f.x + 2, top + 22, f.w - 4, f.h - 50); }
+            if (text) {
+              ctx.save();
+              ctx.translate(f.x + f.w / 2, f.y - 8);
+              ctx.rotate(-Math.PI / 2);
+              const fs = Math.min(f.w * 0.62, 10);
+              ctx.font = `700 ${fs}px "Helvetica Neue", Arial, sans-serif`;
+              ctx.fillStyle = f.year && f.year < 1990 ? "#1a1a1a" : "rgba(255,255,255,0.92)";
+              ctx.textBaseline = "middle";
+              let t = titleOf(f.name).toUpperCase();
+              const room = f.h - 34;
+              if (ctx.measureText(t).width > room) { while (t.length > 3 && ctx.measureText(t + "…").width > room) t = t.slice(0, -1); t += "…"; }
+              ctx.fillText(t, 8, 0);
+              ctx.font = `600 ${fs * 0.8}px Arial, sans-serif`;
+              ctx.fillStyle = "rgba(255,255,255,0.6)";
+              ctx.fillText(String(f.year || ""), f.h - 26, 0);
+              ctx.restore();
+            }
+          }
+        }
+      }
+      // MIDDLE: three face-out boxes per section, standing in front.
+      if (!near) {
+        for (const sec of L.secs) {
+          for (const i of sec.highlights) {
+            const f = L.films[i];
+            if (f.x + 150 < x0 || f.x - 150 > x1) continue;
+            const w = 150, h = 225, x = f.x - w / 2, y = f.y - h + 6;
+            ctx.fillStyle = "rgba(0,0,0,0.55)";
+            ctx.fillRect(x + 6, y + 8, w, h);
+            const im = posterImg(f.slug);
+            if (im) ctx.drawImage(im, x, y, w, h);
+            else { ctx.fillStyle = secColor(sec, f); ctx.fillRect(x, y, w, h); }
+          }
+        }
+      }
+    }
+
+    // Section signs: a tag where each section starts on a shelf, sized for the screen.
+    const fsz = Math.max(11, Math.min(15, 11 + (z - FAR) * 10)) * px;
+    ctx.font = `800 ${fsz}px Arial, sans-serif`;
+    ctx.textBaseline = "middle";
+    const tagged = new Set();
+    for (const r of L.runs) {
+      if (r.bay < b0 || r.bay > b1) continue;
+      const startsHere = L.films[r.first] && L.secs[r.sec].films[0] === r.first;
+      const key = `${r.sec}:${r.bay}`;
+      if (!startsHere && tagged.has(key)) continue;
+      if (z < FAR && !startsHere && tagged.has(key)) continue;
+      tagged.add(key);
+      const label = L.secs[r.sec].name.toUpperCase();
+      const tw = ctx.measureText(label).width + 12 * px;
+      const ty = WU.sign + (r.shelf + 1) * WU.shelfH - WU.lip / 2;
+      const th = 18 * px;
+      ctx.fillStyle = z < FAR ? "rgba(15,19,23,0.75)" : "#f2eee3";
+      ctx.fillRect(r.x0, ty - th / 2, tw, th);
+      ctx.fillStyle = z < FAR ? "#fff" : "#14181c";
+      ctx.fillText(label, r.x0 + 6 * px, ty + px);
+    }
+
+    // Hovered spine
+    if (wall.hover != null && z >= NEAR) {
+      const f = L.films[wall.hover];
+      ctx.strokeStyle = "#40bcf4";
+      ctx.lineWidth = 2 * px;
+      ctx.strokeRect(f.x, f.y - f.h, f.w, f.h);
+    }
+
+    // Too slow on this machine? Drop the extras (no sheen, no titles, 1x pixels).
+    const ms = performance.now() - t0;
+    wall.slow = ms > 28 ? wall.slow + 1 : Math.max(0, wall.slow - 1);
+    if (wall.slow > 6 && !wall.lite) { wall.lite = true; toast("Simplified the shelves to keep things smooth on this computer."); drawSoon(); }
+    renderStagePath();
+  }
+
+  function filmAt(sx, sy) {
+    const L = wall.lay;
+    if (!L || wall.cam.z < NEAR) return null;
+    const p = toWall(sx, sy);
+    const step = WU.bayW + WU.gap;
+    const b = Math.floor(p.x / step), s = Math.floor((p.y - WU.sign) / WU.shelfH);
+    const list = L.chunks.get(`${b}:${s}`);
+    if (!list) return null;
+    for (const i of list) {
+      const f = L.films[i];
+      if (p.x >= f.x && p.x <= f.x + f.w + 1 && p.y >= f.y - f.h && p.y <= f.y) return i;
+    }
+    return null;
+  }
+
+  function sectionAtCenter() {
+    const L = wall.lay, c = wall.canvas;
+    if (!L || !c) return null;
+    const p = toWall(c.clientWidth / 2, c.clientHeight / 2);
+    const s = Math.min(WU.shelves - 1, Math.max(0, Math.floor((p.y - WU.sign) / WU.shelfH)));
+    const b = Math.floor(p.x / (WU.bayW + WU.gap));
+    const r = L.runs.find((r) => r.bay === b && r.shelf === s && p.x >= r.x0 - 40 && p.x <= r.x1 + 40);
+    return r ? L.secs[r.sec] : null;
+  }
+
+  function renderStagePath() {
+    const el = $(".lbs-stage-path", root);
+    if (!el) return;
+    const sec = wall.level === "wall" ? sectionAtCenter() : null;
+    const z = wall.cam.z;
+    const lod = z < FAR ? "far" : z < NEAR ? "middle" : "near";
+    el.innerHTML =
+      `<button type="button" class="lbs-crumb" data-act="aisles">Store</button>` +
+      (wall.level === "wall" ? `<i>›</i><button type="button" class="lbs-crumb" data-act="fit">Horror</button>` : "") +
+      (sec ? `<i>›</i><button type="button" class="lbs-crumb" data-act="open" data-id="${esc(sec.id)}" data-drop="${esc(sec.id)}">${esc(sec.name)}</button>` : "") +
+      (wall.level === "wall" ? `<span class="lbs-lod">${lod}</span>` : "");
+  }
+
+  // The tip: poster + title for the spine under the pointer.
+  function showTip(i, sx, sy) {
+    const tip = $(".lbs-tip", root);
+    if (!tip) return;
+    if (i == null) { tip.hidden = true; return; }
+    const f = wall.lay.films[i];
+    const cached = posterCache.get(f.slug);
+    tip.innerHTML =
+      `<img src="${cached ? esc(cached[0]) : EMPTY}" alt="" width="70" height="105">` +
+      `<div><b>${esc(titleOf(f.name))}</b><span>${f.year || ""}</span><small>${esc(pathOf(f.sub).join(" › "))}</small>` +
+      `<a href="/film/${esc(f.slug)}/" target="_blank" rel="noopener">Open on Letterboxd ↗</a><em>Drag to a folder to re-file</em></div>`;
+    if (!cached) posterFor(f.slug).then(([u]) => { const im = tip.querySelector("img"); if (im && wall.hover === i) im.src = u; }).catch(() => {});
+    const st = $(".lbs-stage", root).getBoundingClientRect();
+    tip.hidden = false;
+    const tw = tip.offsetWidth, th = tip.offsetHeight;
+    tip.style.left = `${Math.min(sx + 18, st.width - tw - 8)}px`;
+    tip.style.top = `${Math.max(8, Math.min(sy - th / 2, st.height - th - 8))}px`;
+  }
+
+  // The aisles: one box per genre, Horror stocked.
+  function renderAisles() {
+    const box = $(".lbs-aisles", root);
+    const top3 = stock.films.slice(0, 3).map(([s]) => s);
+    box.innerHTML = [...lib.genres.values()]
+      .map((g) => {
+        const n = lib.count.get(g.id) || 0;
+        const live = g.id === STOCKED;
+        return (
+          `<button type="button" class="lbs-aisle-box${live ? " -live" : ""}" data-act="${live ? "enter" : "open"}" data-id="${esc(g.id)}" data-drop="${esc(g.id)}">` +
+          `<span class="lbs-aisle-sign">${esc(g.name)}</span>` +
+          (live ? `<span class="lbs-aisle-posters">${top3.map((s) => `<img data-slug="${esc(s)}" src="${posterCache.has(s) ? esc(posterCache.get(s)[0]) : EMPTY}" alt="">`).join("")}</span>` : `<span class="lbs-aisle-empty">not stocked yet</span>`) +
+          `<span class="lbs-aisle-n">${fmt(n)} film${n === 1 ? "" : "s"}</span></button>`
+        );
+      })
+      .join("");
+    box.querySelectorAll("img[data-slug]").forEach((im) => posterFor(im.dataset.slug).then(([u]) => (im.src = u)).catch(() => {}));
+  }
+
+  function showStage() {
+    const stage = $(".lbs-stage", root);
+    if (!stage) return;
+    stage.hidden = false;
+    const aisles = $(".lbs-aisles", root), canvas = $(".lbs-canvas", root);
+    aisles.hidden = wall.level !== "aisles";
+    canvas.hidden = wall.level !== "wall";
+    $(".lbs-zoom", root).hidden = wall.level !== "wall";
+    if (wall.level === "aisles") renderAisles();
+    else {
+      const fresh = wall.canvas !== canvas;
+      wall.canvas = canvas;
+      buildLayout();
+      if (fresh) { bindCanvas(canvas); requestAnimationFrame(fit); }
+      else drawSoon();
+    }
+    renderStagePath();
+  }
+
+  function bindCanvas(c) {
+    let pan = null;
+    c.addEventListener("wheel", (e) => {
+      e.preventDefault();
+      if (e.ctrlKey || e.metaKey) return zoomAt(Math.exp(-e.deltaY * 0.0045), e.offsetX, e.offsetY);
+      const k = e.deltaMode === 1 ? 30 : 1;
+      let dx = e.deltaX * k, dy = e.deltaY * k;
+      // A plain mouse wheel walks sideways when the wall already fits top to bottom.
+      if (!e.deltaX && wall.lay.height * wall.cam.z <= c.clientHeight + 4) { dx = dy; dy = 0; }
+      wall.cam.x += dx / wall.cam.z;
+      wall.cam.y += dy / wall.cam.z;
+      drawSoon();
+    }, { passive: false });
+    c.addEventListener("mousedown", (e) => {
+      const i = filmAt(e.offsetX, e.offsetY);
+      c.draggable = i != null; // on a spine: pick it up; elsewhere: pan
+      if (i != null) return;
+      pan = { x: e.clientX, y: e.clientY, moved: 0 };
+    });
+    window.addEventListener("mousemove", (e) => {
+      if (!pan) return;
+      const dx = e.clientX - pan.x, dy = e.clientY - pan.y;
+      pan.moved += Math.abs(dx) + Math.abs(dy);
+      pan.x = e.clientX; pan.y = e.clientY;
+      wall.cam.x -= dx / wall.cam.z;
+      wall.cam.y -= dy / wall.cam.z;
+      drawSoon();
+    });
+    window.addEventListener("mouseup", (e) => {
+      if (!pan) return;
+      const clicked = pan.moved < 4 && e.target === c;
+      pan = null;
+      // Click from far or middle: step in toward that spot.
+      if (clicked && wall.cam.z < NEAR) {
+        const p = toWall(e.offsetX, e.offsetY);
+        flyTo(p.x, p.y, wall.cam.z < FAR ? 0.22 : 0.95);
+      }
+    });
+    c.addEventListener("mousemove", (e) => {
+      if (pan) return;
+      const i = filmAt(e.offsetX, e.offsetY);
+      c.style.cursor = i != null ? "grab" : wall.cam.z < NEAR ? "zoom-in" : "default";
+      if (i !== wall.hover) { wall.hover = i; drawSoon(); }
+      showTip(i, e.offsetX, e.offsetY);
+    });
+    c.addEventListener("mouseleave", () => { wall.hover = null; showTip(null); drawSoon(); });
+    c.addEventListener("dblclick", (e) => {
+      const i = filmAt(e.offsetX, e.offsetY);
+      if (i != null) window.open(`/film/${wall.lay.films[i].slug}/`, "_blank", "noopener");
+    });
+    c.tabIndex = 0;
+    c.addEventListener("keydown", (e) => {
+      const k = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[e.key];
+      if (k) { e.preventDefault(); wall.cam.x += (k[0] * 300) / wall.cam.z; wall.cam.y += (k[1] * 200) / wall.cam.z; drawSoon(); }
+      else if (e.key === "+" || e.key === "=") zoomAt(1.4, c.clientWidth / 2, c.clientHeight / 2);
+      else if (e.key === "-") zoomAt(1 / 1.4, c.clientWidth / 2, c.clientHeight / 2);
+    });
+    new ResizeObserver(() => drawSoon()).observe(c);
+  }
+
   /* ---------------- moving films ---------------- */
 
   // `films` = [[slug, name]]; `target` = any folder id.
@@ -1044,6 +1492,16 @@
   }
 
   function onDragStart(e) {
+    if (e.target === wall.canvas) {
+      if (wall.hover == null) return e.preventDefault();
+      const f = wall.lay.films[wall.hover];
+      dragging = [[f.slug, f.name]];
+      showTip(null);
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", f.name);
+      root.classList.add("lbs-dragging");
+      return;
+    }
     const src = e.target.closest && e.target.closest(".lbs-item, .lbs-row");
     if (!src || !src.dataset.slug) return;
     if (src.classList.contains("lbs-row") && desk.selected.has(src.dataset.slug) && desk.selected.size > 1) {
@@ -1143,6 +1601,10 @@
       else renderFilms();
       return $(".lbs-fq", root)?.focus();
     }
+    if (btn.dataset.mode) {
+      desk.mode = btn.dataset.mode;
+      return renderFilms();
+    }
     if (btn.dataset.view) {
       mine.view = btn.dataset.view;
       saveMine();
@@ -1173,7 +1635,17 @@
         desk.col = id;
         return setDesk(true);
       }
-      return openFolder(id);
+      if (desk.mode === "store" && partsOf(id).genre === STOCKED && wall.level === "aisles" && id !== STOCKED) wall.level = "wall";
+      openFolder(id);
+      if (desk.mode === "store") requestAnimationFrame(() => flyToFolder(id));
+      return;
+    }
+    if (act === "aisles") { wall.level = "aisles"; return showStage(); }
+    if (act === "enter") { wall.level = "wall"; desk.col = id; renderFolders(); return showStage(); }
+    if (act === "fit") return fit();
+    if (act === "zoom-in" || act === "zoom-out") {
+      const c = wall.canvas;
+      return c && zoomAt(act === "zoom-in" ? 1.6 : 1 / 1.6, c.clientWidth / 2, c.clientHeight / 2);
     }
     if (act === "col") { desk.col = id || null; return renderFolders(); }
     if (act === "up") {
@@ -1213,6 +1685,7 @@
   function onInput(e) {
     if (e.target.classList.contains("lbs-fq")) {
       desk.q = e.target.value;
+      if (desk.mode === "store" && desk.q) desk.mode = "list";
       desk.shown = 150;
       if (desk.scope === "all") searchAll();
       else renderFilms();
