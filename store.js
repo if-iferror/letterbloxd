@@ -1234,9 +1234,11 @@
               ctx.fillStyle = f.year && f.year < 1990 ? "#1a1a1a" : "rgba(255,255,255,0.92)";
               ctx.textBaseline = "middle";
               let t = titleOf(f.name).toUpperCase();
-              const room = f.h - 34;
+              const vhs = f.year && f.year < 1990;
+              const start = vhs ? 34 : 8; // VHS: write on the white label
+              const room = f.h - start - 30;
               if (ctx.measureText(t).width > room) { while (t.length > 3 && ctx.measureText(t + "…").width > room) t = t.slice(0, -1); t += "…"; }
-              ctx.fillText(t, 8, 0);
+              ctx.fillText(t, start, 0);
               ctx.font = `600 ${fs * 0.8}px Arial, sans-serif`;
               ctx.fillStyle = "rgba(255,255,255,0.6)";
               ctx.fillText(String(f.year || ""), f.h - 26, 0);
