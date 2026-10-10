@@ -1014,6 +1014,7 @@
   const WALL_ORDER = ["gothic", "haunted", "creepy", "vampires", "madsci", "creature", "zombies", "extreme", "slashers", "giallo", "eighties", "jhorror", "comedy", "rest"];
   const HUES = [282, 262, 220, 350, 160, 95, 120, 8, 0, 35, 315, 190, 48, 210];
   const WU = { bayW: 1000, gap: 36, pad: 22, sign: 80, shelfH: 200, shelves: 6, lip: 14 };
+  const ROW_H = WU.sign + WU.shelves * WU.shelfH + 150; // a row of bays plus the floor between rows
   const FAR = 0.09, NEAR = 0.45, TEXT = 0.8, ZMIN = 0.02, ZMAX = 2.6;
   const reduceMotion = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
@@ -1027,6 +1028,18 @@
     const extra = lib.genres.get(STOCKED).cats.filter((id) => !order.includes(id)); // your own sections
     order.splice(order.length - 1, 0, ...extra);
     const inner = WU.bayW - WU.pad * 2;
+    // How many bays per row, so the whole wall is about the pane's shape.
+    const total = lib.genres.get(STOCKED).cats.reduce((n, c) => n + (lib.count.get(c) || 0), 0);
+    const perBay = Math.floor(inner / 12) * WU.shelves;
+    const bays = Math.max(1, Math.ceil(total / perBay) + 1);
+    const c = wall.canvas;
+    const aspect = c && c.clientHeight ? c.clientWidth / c.clientHeight : 1.4;
+    let k = 1, best = Infinity;
+    for (let t = 1; t <= bays; t++) {
+      const d = Math.abs(Math.log((t * (WU.bayW + WU.gap)) / (Math.ceil(bays / t) * ROW_H) / aspect));
+      if (d < best) { best = d; k = t; }
+    }
+    const origin = (b) => ({ x: (b % k) * (WU.bayW + WU.gap), y: Math.floor(b / k) * ROW_H });
     const films = [];
     const chunks = new Map(); // "bay:shelf" -> [film index], left to right
     const secs = [];
@@ -1040,7 +1053,8 @@
         for (const [slug, name] of list) {
           const y = yearOf(name), w = spineW(y);
           if (x + w > WU.pad + inner) { x = WU.pad; if (++shelf >= WU.shelves) { shelf = 0; bay++; } }
-          const f = { slug, name, year: y, w, h: spineH(y), sec: secs.length, sub: sid, bay, shelf, x: bay * (WU.bayW + WU.gap) + x, y: WU.sign + (shelf + 1) * WU.shelfH - WU.lip, rank: lib.rank.get(slug) ?? 1e9 };
+          const o = origin(bay);
+          const f = { slug, name, year: y, w, h: spineH(y), sec: secs.length, sub: sid, bay, shelf, x: o.x + x, y: o.y + WU.sign + (shelf + 1) * WU.shelfH - WU.lip, rank: lib.rank.get(slug) ?? 1e9 };
           const key = `${bay}:${shelf}`;
           if (!chunks.has(key)) chunks.set(key, []);
           chunks.get(key).push(films.length);
@@ -1061,13 +1075,14 @@
       let run = null;
       for (const i of list) {
         const f = films[i];
-        if (!run || run.sec !== f.sec) { run = { sec: f.sec, bay: b, shelf: s, x0: f.x, x1: f.x + f.w, first: i }; runs.push(run); }
+        if (!run || run.sec !== f.sec) { run = { sec: f.sec, bay: b, shelf: s, x0: f.x, x1: f.x + f.w, by: origin(b).y, first: i }; runs.push(run); }
         else run.x1 = f.x + f.w;
       }
     }
-    const width = (bay + 1) * (WU.bayW + WU.gap);
-    const height = WU.sign + WU.shelves * WU.shelfH + 20;
-    wall.lay = { films, chunks, secs, runs, width, height, bays: bay + 1 };
+    const used = bay + 1;
+    const width = Math.min(used, k) * (WU.bayW + WU.gap);
+    const height = Math.ceil(used / k) * ROW_H;
+    wall.lay = { films, chunks, secs, runs, width, height, bays: used, k, origin };
   }
 
   // Screen <-> wall coordinates.
@@ -1156,20 +1171,25 @@
     ctx.fillStyle = "#0f1317";
     ctx.fillRect(0, 0, W, H);
     ctx.setTransform(dpr * z, 0, 0, dpr * z, -cx * z * dpr, -cy * z * dpr);
-    const x0 = cx, x1 = cx + W / z;
-    const step = WU.bayW + WU.gap;
-    const b0 = Math.max(0, Math.floor(x0 / step)), b1 = Math.min(L.bays - 1, Math.floor(x1 / step));
+    const x0 = cx, x1 = cx + W / z, y0 = cy, y1 = cy + H / z;
+    const inView = [];
+    for (let b = 0; b < L.bays; b++) {
+      const o = L.origin(b);
+      if (o.x + WU.bayW >= x0 && o.x <= x1 && o.y + ROW_H >= y0 && o.y <= y1) inView.push(b);
+    }
+    const seen = new Set(inView);
     const px = 1 / z; // one screen pixel in wall units
 
     // Bays: back panel, shelf boards, uprights.
-    for (let b = b0; b <= b1; b++) {
-      const bx = b * step;
+    for (const b of inView) {
+      const { x: bx, y: by } = L.origin(b);
       ctx.fillStyle = "#171c21";
-      ctx.fillRect(bx, WU.sign - 10, WU.bayW, WU.shelves * WU.shelfH + 10);
+      ctx.fillRect(bx, by + WU.sign - 10, WU.bayW, WU.shelves * WU.shelfH + 10);
       ctx.fillStyle = "#2f3842";
-      for (let s = 1; s <= WU.shelves; s++) ctx.fillRect(bx, WU.sign + s * WU.shelfH - WU.lip, WU.bayW, WU.lip);
+      for (let s = 1; s <= WU.shelves; s++) ctx.fillRect(bx, by + WU.sign + s * WU.shelfH - WU.lip, WU.bayW, WU.lip);
       ctx.fillStyle = "#3a4552";
-      ctx.fillRect(bx - 6, WU.sign - 10, 10, WU.shelves * WU.shelfH + 20);
+      ctx.fillRect(bx - 6, by + WU.sign - 10, 10, WU.shelves * WU.shelfH + 20);
+      ctx.fillRect(bx + WU.bayW - 4, by + WU.sign - 10, 10, WU.shelves * WU.shelfH + 20);
     }
 
     const secColor = (sec, f) => {
@@ -1183,14 +1203,14 @@
     if (z < FAR) {
       // FAR: each section is a coloured block on every shelf it covers.
       for (const r of L.runs) {
-        if (r.bay < b0 || r.bay > b1) continue;
+        if (!seen.has(r.bay)) continue;
         ctx.fillStyle = secColor(L.secs[r.sec]);
-        ctx.fillRect(r.x0, WU.sign + r.shelf * WU.shelfH + 30, r.x1 - r.x0, WU.shelfH - 30 - WU.lip);
+        ctx.fillRect(r.x0, r.by + WU.sign + r.shelf * WU.shelfH + 30, r.x1 - r.x0, WU.shelfH - 30 - WU.lip);
       }
     } else {
       // MIDDLE + NEAR: every spine in view.
       const near = z >= NEAR, text = z >= TEXT && !wall.lite;
-      for (let b = b0; b <= b1; b++) {
+      for (const b of inView) {
         for (let s = 0; s < WU.shelves; s++) {
           const list = L.chunks.get(`${b}:${s}`);
           if (!list) continue;
@@ -1230,7 +1250,7 @@
         for (const sec of L.secs) {
           for (const i of sec.highlights) {
             const f = L.films[i];
-            if (f.x + 150 < x0 || f.x - 150 > x1) continue;
+            if (f.x + 150 < x0 || f.x - 150 > x1 || f.y < y0 || f.y - 260 > y1) continue;
             const w = 150, h = 225, x = f.x - w / 2, y = f.y - h + 6;
             ctx.fillStyle = "rgba(0,0,0,0.55)";
             ctx.fillRect(x + 6, y + 8, w, h);
@@ -1247,17 +1267,18 @@
     ctx.font = `800 ${fsz}px Arial, sans-serif`;
     ctx.textBaseline = "middle";
     const tagged = new Set();
+    const boxes = [];
     for (const r of L.runs) {
-      if (r.bay < b0 || r.bay > b1) continue;
-      const startsHere = L.films[r.first] && L.secs[r.sec].films[0] === r.first;
+      if (!seen.has(r.bay)) continue;
       const key = `${r.sec}:${r.bay}`;
-      if (!startsHere && tagged.has(key)) continue;
-      if (z < FAR && !startsHere && tagged.has(key)) continue;
+      if (tagged.has(key)) continue;
       tagged.add(key);
       const label = L.secs[r.sec].name.toUpperCase();
       const tw = ctx.measureText(label).width + 12 * px;
-      const ty = WU.sign + (r.shelf + 1) * WU.shelfH - WU.lip / 2;
+      const ty = r.by + WU.sign + (r.shelf + 1) * WU.shelfH - WU.lip / 2;
       const th = 18 * px;
+      if (boxes.some((q) => r.x0 < q[0] + q[2] && q[0] < r.x0 + tw && ty - th / 2 < q[1] + q[3] && q[1] < ty + th / 2)) continue;
+      boxes.push([r.x0, ty - th / 2, tw, th]);
       ctx.fillStyle = z < FAR ? "rgba(15,19,23,0.75)" : "#f2eee3";
       ctx.fillRect(r.x0, ty - th / 2, tw, th);
       ctx.fillStyle = z < FAR ? "#fff" : "#14181c";
@@ -1279,12 +1300,18 @@
     renderStagePath();
   }
 
+  function bayAt(p) {
+    const L = wall.lay;
+    const col = Math.floor(p.x / (WU.bayW + WU.gap)), row = Math.floor(p.y / ROW_H);
+    if (col < 0 || col >= L.k || row < 0) return { b: -1, s: -1 };
+    return { b: row * L.k + col, s: Math.floor((p.y - row * ROW_H - WU.sign) / WU.shelfH) };
+  }
+
   function filmAt(sx, sy) {
     const L = wall.lay;
     if (!L || wall.cam.z < NEAR) return null;
     const p = toWall(sx, sy);
-    const step = WU.bayW + WU.gap;
-    const b = Math.floor(p.x / step), s = Math.floor((p.y - WU.sign) / WU.shelfH);
+    const { b, s } = bayAt(p);
     const list = L.chunks.get(`${b}:${s}`);
     if (!list) return null;
     for (const i of list) {
@@ -1298,8 +1325,8 @@
     const L = wall.lay, c = wall.canvas;
     if (!L || !c) return null;
     const p = toWall(c.clientWidth / 2, c.clientHeight / 2);
-    const s = Math.min(WU.shelves - 1, Math.max(0, Math.floor((p.y - WU.sign) / WU.shelfH)));
-    const b = Math.floor(p.x / (WU.bayW + WU.gap));
+    const at = bayAt(p);
+    const b = at.b, s = Math.min(WU.shelves - 1, Math.max(0, at.s));
     const r = L.runs.find((r) => r.bay === b && r.shelf === s && p.x >= r.x0 - 40 && p.x <= r.x1 + 40);
     return r ? L.secs[r.sec] : null;
   }
@@ -1431,7 +1458,14 @@
       else if (e.key === "+" || e.key === "=") zoomAt(1.4, c.clientWidth / 2, c.clientHeight / 2);
       else if (e.key === "-") zoomAt(1 / 1.4, c.clientWidth / 2, c.clientHeight / 2);
     });
-    new ResizeObserver(() => drawSoon()).observe(c);
+    let lastK = 0;
+    new ResizeObserver(() => {
+      if (!wall.lay) return;
+      lastK = wall.lay.k;
+      buildLayout();
+      if (wall.lay.k !== lastK) fit();
+      else drawSoon();
+    }).observe(c);
   }
 
   /* ---------------- moving films ---------------- */
