@@ -560,6 +560,10 @@
       root.addEventListener("dragleave", onDragLeave);
       root.addEventListener("drop", onDrop);
       root.addEventListener("contextmenu", onContextMenu);
+      root.addEventListener("mousedown", (e) => {
+        const pc = edit.on && e.button === 0 && e.target.closest(".lbs-tray .lbs-piece");
+        if (pc) { e.preventDefault(); pieceDown(pc.dataset.ref, "tray", e); }
+      });
       root.addEventListener("dblclick", (e) => {
         const row = edit.on && e.target.closest(".lbs-folder");
         if (!row || isFixed(row.dataset.id)) return;
@@ -870,14 +874,14 @@
       `<div class="lbs-stage-top"><div class="lbs-stage-path"></div>` +
       `<div class="lbs-zoom"><button type="button" data-act="zoom-out" aria-label="Zoom out">−</button><button type="button" data-act="fit">Fit</button><button type="button" data-act="zoom-in" aria-label="Zoom in">+</button></div></div>` +
       `<div class="lbs-aisles"></div><canvas class="lbs-canvas" draggable="false" aria-label="Horror wall. Scroll to move, pinch or Ctrl-scroll to zoom, drag a spine to a folder."></canvas>` +
-      `<div class="lbs-tip" hidden></div>` +
+      `<div class="lbs-tip" hidden></div><div class="lbs-tray" hidden></div>` +
       `<div class="lbs-logopick" hidden></div><div class="lbs-logobuild" hidden></div>` +
       `<p class="lbs-credit" hidden>Title logos from <a href="https://www.themoviedb.org/" target="_blank" rel="noopener">TMDB</a>. This product uses the TMDB API but is not endorsed or certified by TMDB.</p>` +
       `</div>` +
       `<ul class="lbs-rows" role="listbox" aria-multiselectable="true"></ul>` +
       `</div>` +
       `<div class="lbs-folders">` +
-      `<div class="lbs-editbar" hidden></div><div class="lbs-shape" hidden></div>` +
+      `<div class="lbs-editbar" hidden></div>` +
       `<label class="lbs-search">${ICON_SEARCH}<input type="search" class="lbs-dq" placeholder="Search folders" autocomplete="off"></label>` +
       `<div class="lbs-crumbs"></div>` +
       `<div class="lbs-cols"></div>` +
@@ -1096,7 +1100,6 @@
       if (input) { input.focus(); if (input.classList.contains("lbs-rename")) input.select(); }
     }
     renderEditBar();
-    renderShape();
 
     const recent = (mine.recent || []).filter((id) => lib.subs.has(id)).slice(0, 5);
     $(".lbs-recent", root).innerHTML = recent.length
@@ -1163,156 +1166,192 @@
   const spineH = (y) => (y && y < 1990 ? 168 : y && y < 2008 ? 158 : 148);
   const hash = (s) => { let x = 2166136261; for (let i = 0; i < s.length; i++) x = Math.imul(x ^ s.charCodeAt(i), 16777619); return x >>> 0; };
 
-  /* Sections fill whole shelves. A section's films are spread evenly over the
-   * shelves it needs (plus any spare "room to grow"), and the slack on each
-   * shelf is taken up the way a real store does it: a few face-out boxes at
-   * the end of the shelf, and the last spines leaning over. Shapes (house plan):
-   *   start  "shelf" = carry on from the last section; "bay" = a fresh bay
-   *   width  bays side by side; each shelf row runs across all of them
-   *   spare  extra shelves to grow into */
-  const FACE_W = 112, FACE_H = 168, MAX_LEAN = 0.36; // about 20°
-  // width 0 = same as the section before (sections follow on in its run)
-  const shapeOf = (cid) => ({ start: "shelf", width: 0, spare: 0, ...(house().shape[cid] || {}) });
+  /* The wall is built from "pieces". Each section's films, A-Z, are cut into
+   * shelf-length pieces (the last one shorter): 2,500 units of Witches is two
+   * full pieces and a half. The house plan says which shelf each piece sits on
+   * (several small pieces can share a shelf). Films flow through a section's
+   * placed pieces in reading order: down a bay first, then across. Pieces not
+   * on the wall wait in the moderator's bucket.
+   * A shelf that's at least 85% full is justified: the slack is taken up by
+   * leaning spines. Fuller than that, it stays as is, with a gap at the end. */
+  const CAP = WU.bayW - WU.pad * 2;
+  const BOOKEND = 10, JUSTIFY = 0.85, MAX_LEAN = 0.42, LEAN_EACH = 48;
   const footprint = (list) => list.reduce((n, f) => n + f.w + 1, 0);
-  // Extra room a leaning group takes compared with standing up.
   const leanReach = (group, a) => (group.length ? group[0].h * Math.sin(a) + group.reduce((n, f) => n + f.w * (1 / Math.cos(a) - 1), 0) : 0);
   function solveLean(group, gap) {
     let lo = 0, hi = MAX_LEAN;
     for (let i = 0; i < 24; i++) { const mid = (lo + hi) / 2; if (leanReach(group, mid) < gap) lo = mid; else hi = mid; }
     return lo;
   }
-  // Spread films over n shelves, evenly by width, keeping their order.
-  function spread(items, n, inner) {
-    const total = footprint(items);
-    const bins = Array.from({ length: n }, () => []);
-    let acc = 0;
-    for (const f of items) {
-      bins[Math.min(n - 1, Math.floor(((acc + (f.w + 1) / 2) / total) * n))].push(f);
-      acc += f.w + 1;
-    }
-    return bins.every((bin) => footprint(bin) <= inner) ? bins : null;
-  }
+  const secHue = (i) => (i * 137.508 + 8) % 360; // well-spread, one per section
 
-  function buildLayout() {
-    const order = lib.genres.get(STOCKED).cats;
-    const inner = WU.bayW - WU.pad * 2;
-    const plan = [];
-    order.forEach((cid, n) => {
-      const items = [], subs = [];
+  // Every section's films (shelf order) and its pieces' lengths.
+  function cutPieces() {
+    const out = new Map();
+    lib.genres.get(STOCKED).cats.forEach((cid, n) => {
+      const items = [];
       for (const sid of lib.cats.get(cid).subs) {
-        const list = lib.inSub.get(sid) || [];
-        if (!list.length) continue;
-        subs.push({ id: sid, name: lib.subs.get(sid).name, first: items.length });
-        for (const [slug, name] of list) {
+        for (const [slug, name] of lib.inSub.get(sid) || []) {
           const y = yearOf(name);
           items.push({ slug, name, year: y, w: spineW(y), h: spineH(y), sub: sid, rank: lib.rank.get(slug) ?? 1e9 });
         }
       }
-      const shape = shapeOf(cid);
-      if (items.length || shape.spare > 0) plan.push({ id: cid, hue: HUES[n % HUES.length], items, subs, shape });
+      const sizes = [];
+      let acc = 0;
+      for (const f of items) {
+        if (acc + f.w + 1 > CAP) { sizes.push(acc); acc = 0; }
+        acc += f.w + 1;
+      }
+      if (acc) sizes.push(acc);
+      out.set(cid, { id: cid, n, items, sizes });
     });
-    for (const p of plan) {
-      let n = Math.max(1, Math.ceil(footprint(p.items) / inner)) + Math.max(0, p.shape.spare | 0);
-      while (!(p.bins = spread(p.items, n, inner))) n++;
+    return out;
+  }
+  const pieceRef = (cid, i) => `${cid}#${i}`;
+  const parseRef = (ref) => { const k = ref.lastIndexOf("#"); return [ref.slice(0, k), +ref.slice(k + 1)]; };
+
+  // The default arrangement: pieces in wall order, down each bay then across;
+  // a piece goes on the current shelf if it fits, otherwise the next.
+  function autoArrange(pieces, perRow) {
+    const shelves = {};
+    let b = 0, s = 0, used = 0;
+    for (const P of pieces.values()) {
+      P.sizes.forEach((size, i) => {
+        if (used && used + BOOKEND + size > CAP) { used = 0; if (++s >= WU.shelves) { s = 0; b++; } }
+        (shelves[`${b}:${s}`] ||= []).push(pieceRef(P.id, i));
+        used += (used ? BOOKEND : 0) + size;
+      });
+    }
+    return { perRow, shelves };
+  }
+
+  function buildLayout() {
+    const pieces = cutPieces();
+    const H = house();
+    // Bays per row (fixed once a plan exists, so the wall doesn't reflow while you edit).
+    let perRow = H.wall && H.wall.perRow;
+    if (!perRow) {
+      const total = [...pieces.values()].reduce((n, P) => n + P.sizes.length, 0);
+      const bays = Math.max(1, Math.ceil(total / WU.shelves));
+      const c = wall.canvas;
+      const aspect = c && c.clientHeight ? c.clientWidth / c.clientHeight : 1.4;
+      let best = Infinity;
+      for (let t = 1; t <= bays; t++) {
+        const d = Math.abs(Math.log((t * (WU.bayW + WU.gap)) / (Math.ceil(bays / t) * ROW_H) / aspect));
+        if (d < best) { best = d; perRow = t; }
+      }
+    }
+    const plan = H.wall && H.wall.shelves ? H.wall : autoArrange(pieces, perRow);
+    wall.plan = { perRow, shelves: plan.shelves };
+    const origin = (b) => ({ x: (b % perRow) * (WU.bayW + WU.gap), y: Math.floor(b / perRow) * ROW_H });
+
+    // Where each piece sits; anything unknown or duplicated is dropped.
+    const where = new Map(); // ref -> { bay, shelf, slot }
+    const shelfList = new Map();
+    for (const [key, refs] of Object.entries(plan.shelves || {})) {
+      const [bay, shelf] = key.split(":").map(Number);
+      const keep = [];
+      for (const ref of refs) {
+        const [cid, i] = parseRef(ref);
+        const P = pieces.get(cid);
+        if (!P || i >= P.sizes.length || where.has(ref)) continue;
+        where.set(ref, { bay, shelf, slot: keep.length });
+        keep.push(ref);
+      }
+      if (keep.length) shelfList.set(key, keep);
+    }
+    // Reading order: bay row, bay, shelf (down first), then left to right.
+    const readKey = (w) => [Math.floor(w.bay / perRow), w.bay % perRow, w.shelf, w.slot];
+    const cmp = (a, b) => { const x = readKey(a), y = readKey(b); for (let i = 0; i < 4; i++) if (x[i] !== y[i]) return x[i] - y[i]; return 0; };
+
+    // Pour each section's films through its pieces: placed ones in reading
+    // order, then the ones still in the bucket.
+    const content = new Map(); // ref -> [items]
+    const bucket = [];
+    for (const P of pieces.values()) {
+      const refs = P.sizes.map((_, i) => pieceRef(P.id, i));
+      const placed = refs.filter((r) => where.has(r)).sort((a, b) => cmp(where.get(a), where.get(b)));
+      const order = [...placed, ...refs.filter((r) => !where.has(r))];
+      let k = 0;
+      order.forEach((ref, oi) => {
+        const size = P.sizes[parseRef(ref)[1]];
+        const list = [];
+        let acc = 0;
+        while (k < P.items.length && (oi === order.length - 1 || !list.length || acc + P.items[k].w + 1 <= size)) {
+          acc += P.items[k].w + 1;
+          list.push(P.items[k++]);
+        }
+        content.set(ref, list);
+        if (!where.has(ref)) bucket.push({ ref, sec: P.id, n: P.n, size: footprint(list), count: list.length, of: P.sizes.length, i: oi });
+      });
     }
 
-    // Lay the shelves out: which bay and shelf each of a section's shelves is.
-    // Shelves flow through a "run" of bays: across all of the run's bays, row
-    // by row, then on to the next run. A section with a different width, or
-    // one set to start a new bay, starts a new run; the section before it then
-    // spreads out over whatever is left of its run, so no shelf is left bare.
-    function pour(rowLen) {
-      const out = [];
-      const nextRow = (b, k) => (rowLen !== Infinity && (b % rowLen) + k > rowLen ? Math.ceil(b / rowLen) * rowLen : b);
-      let b0 = 0, k = 1, r = 0, j = 0, last = null, started = false;
-      const take = () => {
-        const sg = { bay: b0 + j, shelf: r };
-        if (++j >= k) { j = 0; if (++r >= WU.shelves) { r = 0; b0 = nextRow(b0 + k, k); } }
-        return sg;
-      };
-      for (const p of plan) {
-        const want = p.shape.width ? Math.max(1, Math.min(p.shape.width | 0, rowLen)) : k;
-        if (started && (p.shape.start === "bay" || want !== k)) {
-          if (r || j) {
-            while (r || j) (last || []).push(take());
+    const films = [], chunks = new Map(), secs = [], secIndex = new Map(), runs = [], bookends = [], idx = new Map();
+    for (const P of pieces.values()) {
+      secIndex.set(P.id, secs.length);
+      secs.push({ id: P.id, name: lib.cats.get(P.id).name, hue: secHue(P.n), films: [], subs: [], pieces: P.sizes.length });
+    }
+    let maxBay = 0;
+    for (const [key, refs] of shelfList) {
+      const [bay, shelf] = key.split(":").map(Number);
+      maxBay = Math.max(maxBay, bay);
+      const o = origin(bay);
+      const x0 = o.x + WU.pad, y = o.y + WU.sign + (shelf + 1) * WU.shelfH - WU.lip;
+      const lists = refs.map((r) => content.get(r) || []);
+      const used = lists.reduce((n, l) => n + footprint(l), 0) + BOOKEND * (refs.length - 1);
+      const squeeze = used > CAP ? CAP / used : 1;
+      const slack = used >= CAP * JUSTIFY && used < CAP ? CAP - used : 0;
+      if (!chunks.has(key)) chunks.set(key, []);
+      let x = x0;
+      refs.forEach((ref, ri) => {
+        const si = secIndex.get(parseRef(ref)[0]);
+        const list = lists[ri];
+        const start = x;
+        // This piece's share of the slack, as a few leaning groups.
+        const share = slack ? (slack * footprint(list)) / Math.max(1, used - BOOKEND * (refs.length - 1)) : 0;
+        const groups = share > 2 ? Math.max(1, Math.ceil(share / LEAN_EACH)) : 0;
+        const per = groups ? share / groups : 0;
+        const leanAt = new Map(); // index of a group's first leaning film -> angle
+        let leftover = 0;
+        if (groups && list.length) {
+          for (let g = 0; g < groups; g++) {
+            const end = Math.round(((g + 1) * list.length) / groups);
+            const m = Math.min(6, Math.max(1, end - Math.round((g * list.length) / groups)));
+            const grp = list.slice(end - m, end);
+            const reach = leanReach(grp, MAX_LEAN);
+            const a = solveLean(grp, Math.min(per, reach));
+            leftover += Math.max(0, per - reach);
+            for (let j = end - m; j < end; j++) leanAt.set(j, { a, first: j === end - m });
           }
         }
-        if (!started || p.shape.start === "bay" || want !== k) { k = want; b0 = nextRow(b0, k); started = true; }
-        const segs = [];
-        for (let i = 0; i < p.bins.length; i++) segs.push(take());
-        out.push(segs);
-        last = segs;
-      }
-      // The last section fills out its run.
-      if (last) while (r || j) last.push(take());
-      return { out, bays: 1 + Math.max(0, ...out.flat().map((sg) => sg.bay)) };
-    }
-    // Bays per row: whatever makes the wall about the pane's shape.
-    const dry = pour(Infinity);
-    const widest = Math.max(1, ...plan.map((p) => p.shape.width | 0 || 1));
-    const c = wall.canvas;
-    const aspect = c && c.clientHeight ? c.clientWidth / c.clientHeight : 1.4;
-    let kRow = widest, best = Infinity;
-    for (let t = widest; t <= Math.max(widest, dry.bays); t++) {
-      const d = Math.abs(Math.log((t * (WU.bayW + WU.gap)) / (Math.ceil(dry.bays / t) * ROW_H) / aspect));
-      if (d < best) { best = d; kRow = t; }
-    }
-    const { out, bays } = pour(kRow);
-    const origin = (b) => ({ x: (b % kRow) * (WU.bayW + WU.gap), y: Math.floor(b / kRow) * ROW_H });
-
-    const films = [], chunks = new Map(), secs = [], runs = [], faces = [], idx = new Map();
-    plan.forEach((p, pi) => {
-      const si = secs.length;
-      const sec = { id: p.id, name: lib.cats.get(p.id).name, hue: p.hue, films: [], subs: p.subs.map((x) => ({ ...x, first: films.length + x.first })), shelves: out[pi].length };
-      const byRank = [...p.items].sort((a, b) => a.rank - b.rank);
-      if (out[pi].length > p.bins.length) p.bins = spread(p.items, out[pi].length, inner);
-      const faced = new Set(); // one face-out per film per section
-      out[pi].forEach((sg, i) => {
-        const o = origin(sg.bay);
-        const x0 = o.x + WU.pad, y = o.y + WU.sign + (sg.shelf + 1) * WU.shelfH - WU.lip;
-        const list = p.bins[i];
-        runs.push({ sec: si, bay: sg.bay, shelf: sg.shelf, x0, x1: x0 + inner, by: o.y });
-        const key = `${sg.bay}:${sg.shelf}`;
-        if (!chunks.has(key)) chunks.set(key, []);
-        let gap = inner - footprint(list);
-        const m = Math.min(list.length, 6);
-        const group = list.slice(list.length - m);
-        const reach = leanReach(group, MAX_LEAN);
-        // Big gaps: face-out boxes at the right end (this shelf's best first).
-        const here = new Set(list.map((f) => f.slug));
-        const cands = [...list].sort((a, b) => a.rank - b.rank).concat(byRank.filter((f) => !here.has(f.slug))).filter((f) => !faced.has(f.slug));
-        let xr = x0 + inner, ci = 0;
-        while (gap - reach > 4 && gap >= FACE_W + 6 && ci < cands.length) {
-          const f = cands[ci++];
-          faced.add(f.slug);
-          xr -= FACE_W + 4;
-          gap -= FACE_W + 4;
-          faces.push({ slug: f.slug, name: f.name, year: f.year, sec: si, bay: sg.bay, shelf: sg.shelf, x: xr + 2, y, w: FACE_W, h: FACE_H });
-        }
-        // What's left: the last few spines lean over to fill it.
-        const lean = gap > 3 && m ? solveLean(group, Math.min(gap, reach)) : 0;
-        // Anything still left over: a hair of air between the standing spines.
-        const standing = list.length - (lean > 0 ? m : 0);
-        const air = standing > 0 ? Math.min(3, Math.max(0, gap - (lean > 0 ? leanReach(group, lean) : 0)) / standing) : 0;
-        let x = x0;
+        const standing = list.length - leanAt.size;
+        const air = standing > 0 ? Math.min(3, leftover / standing) : 0;
         list.forEach((it, j) => {
-          const leaning = lean > 0 && j >= list.length - m;
-          if (leaning && j === list.length - m) x += it.h * Math.sin(lean);
-          const f = { ...it, sec: si, bay: sg.bay, shelf: sg.shelf, x, y, lean: leaning ? lean : 0 };
-          x += leaning ? f.w / Math.cos(lean) + 1 : f.w + 1 + air;
+          const L = leanAt.get(j);
+          if (L && L.first) x += it.h * Math.sin(L.a);
+          const f = { ...it, sec: si, bay, shelf, x, y, lean: L ? L.a : 0 };
+          x += L ? (f.w / Math.cos(L.a) + 1) * squeeze : (f.w + 1 + air) * squeeze;
           chunks.get(key).push(films.length);
-          sec.films.push(films.length);
+          secs[si].films.push(films.length);
           idx.set(f.slug, films.length);
           films.push(f);
         });
+        runs.push({ ref, sec: si, bay, shelf, x0: start, x1: Math.max(start + 8, x), by: o.y });
+        if (ri < refs.length - 1) {
+          const next = secIndex.get(parseRef(refs[ri + 1])[0]);
+          bookends.push({ x: x + 1, y, bay, change: next !== si, hue: secs[next].hue });
+          x += BOOKEND * squeeze;
+        }
       });
-      sec.highlights = [...sec.films].sort((a, b) => films[a].rank - films[b].rank).slice(0, 3);
-      secs.push(sec);
-    });
-    const width = Math.min(bays, kRow) * (WU.bayW + WU.gap);
-    const height = Math.ceil(bays / kRow) * ROW_H;
-    wall.lay = { films, chunks, secs, runs, faces, idx, width, height, bays, k: kRow, origin };
+    }
+    for (const sec of secs) sec.highlights = [...sec.films].sort((a, b) => films[a].rank - films[b].rank).slice(0, 3);
+    // Edit mode keeps an empty bay at the end to drop pieces into.
+    const bays = maxBay + 1 + (edit.on ? 1 : 0);
+    const width = Math.min(bays, perRow) * (WU.bayW + WU.gap);
+    const height = Math.ceil(bays / perRow) * ROW_H;
+    wall.lay = { films, chunks, secs, runs, bookends, faces: [], idx, bucket, width, height, bays, k: perRow, origin };
     recolourSections();
+    renderTray();
   }
 
   // Screen <-> wall coordinates.
@@ -1767,15 +1806,8 @@
       return vhs ? `hsl(${hue} 10% ${10 + (hv % 9)}%)` : `hsl(${hue} ${32 + (hv % 22)}% ${f.year >= 2008 ? 36 + (hv % 14) : 24 + (hv % 14)}%)`;
     };
 
-    if (z < FAR) {
-      // FAR: each section is a coloured block on every shelf it covers.
-      for (const r of L.runs) {
-        if (!seen.has(r.bay)) continue;
-        ctx.fillStyle = secColor(L.secs[r.sec]);
-        ctx.fillRect(r.x0, r.by + WU.sign + r.shelf * WU.shelfH + 30, r.x1 - r.x0, WU.shelfH - 30 - WU.lip);
-      }
-    } else {
-      // MIDDLE + NEAR: every spine in view.
+    {
+      // Every spine in view (detail only up close).
       const near = z >= NEAR, text = z >= TEXT && !wall.lite;
       for (const b of inView) {
         for (let s = 0; s < WU.shelves; s++) {
@@ -1855,55 +1887,101 @@
         if (im) ctx.drawImage(im, fc.x, top, fc.w, fc.h);
         else { ctx.fillStyle = secColor(L.secs[fc.sec], fc); ctx.fillRect(fc.x, top, fc.w, fc.h); }
       }
-      // MIDDLE: three face-out boxes per section, standing in front.
-      if (!near) {
-        for (const sec of L.secs) {
-          for (const i of sec.highlights) {
-            const f = L.films[i];
-            if (f.x + 150 < x0 || f.x - 150 > x1 || f.y < y0 || f.y - 260 > y1) continue;
-            const w = 150, h = 225, x = f.x - w / 2, y = f.y - h + 6;
-            ctx.fillStyle = "rgba(0,0,0,0.55)";
-            ctx.fillRect(x + 6, y + 8, w, h);
-            const im = posterImg(f.slug);
-            if (im) ctx.drawImage(im, x, y, w, h);
-            else { ctx.fillStyle = secColor(sec, f); ctx.fillRect(x, y, w, h); }
-          }
+    }
+
+    // Bookends between pieces; where the section changes, tape on the shelf edge too.
+    if (z >= FAR) {
+      for (const be of L.bookends) {
+        if (!seen.has(be.bay) || be.x < x0 - 20 || be.x > x1 + 20) continue;
+        ctx.fillStyle = "#59636e";
+        ctx.fillRect(be.x, be.y - 110, BOOKEND - 3, 110);
+        ctx.fillStyle = "#8a96a3";
+        ctx.fillRect(be.x, be.y - 110, 2, 110);
+        if (be.change) {
+          ctx.fillStyle = `hsl(${be.hue} 70% 55%)`;
+          ctx.fillRect(be.x - 4, be.y, BOOKEND + 5, WU.lip);
         }
       }
     }
 
-    // Section signs: a tag where each section starts on a shelf, sized for the screen.
-    const fsz = Math.max(11, Math.min(15, 11 + (z - FAR) * 10)) * px;
-    ctx.font = `800 ${fsz}px Arial, sans-serif`;
-    ctx.textBaseline = "middle";
-    const tagged = new Set();
-    const boxes = [];
-    wall.signs = [];
-    // Edit mode: outline the selected section's shelves.
+    // From afar: each piece is a block in its section's colour, named.
+    // The blocks fade as you walk up, until only the spines are left.
+    const veil = z < FAR ? 0.82 : z < NEAR ? 0.82 * (1 - (z - FAR) / (NEAR - FAR)) : 0;
+    if (veil > 0.02) {
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      for (const r of L.runs) {
+        if (!seen.has(r.bay) || r.x1 < x0 || r.x0 > x1) continue;
+        const sec = L.secs[r.sec];
+        const top = r.by + WU.sign + r.shelf * WU.shelfH + 8, h = WU.shelfH - WU.lip - 10;
+        ctx.globalAlpha = veil;
+        ctx.fillStyle = `hsl(${sec.hue} 55% 38%)`;
+        ctx.fillRect(r.x0, top, r.x1 - r.x0, h);
+        ctx.globalAlpha = Math.min(1, veil * 1.2);
+        ctx.strokeStyle = `hsl(${sec.hue} 70% 65%)`;
+        ctx.lineWidth = 2 * px;
+        ctx.strokeRect(r.x0, top, r.x1 - r.x0, h);
+        // The name, as big as fits.
+        const label = sec.name.toUpperCase();
+        ctx.font = `800 100px Arial, sans-serif`;
+        const tw = ctx.measureText(label).width;
+        const size = Math.min(h * 0.42, ((r.x1 - r.x0) * 0.86 * 100) / tw);
+        if (size * z >= 7) {
+          ctx.font = `800 ${size}px Arial, sans-serif`;
+          ctx.fillStyle = "#fff";
+          ctx.fillText(label, (r.x0 + r.x1) / 2, top + h / 2);
+        }
+      }
+      ctx.globalAlpha = 1;
+      ctx.textAlign = "left";
+    }
+
+    // Edit mode: outline the selected section's pieces.
     const selSec = edit.on && edit.sel ? L.secs.findIndex((x) => x.id === edit.sel) : -1;
     if (selSec >= 0) {
       ctx.strokeStyle = "#40bcf4";
       ctx.lineWidth = 3 * px;
       ctx.setLineDash([10 * px, 6 * px]);
-      for (const r of L.runs) if (r.sec === selSec && seen.has(r.bay)) ctx.strokeRect(r.x0 - 6, r.by + WU.sign + r.shelf * WU.shelfH + 4, r.x1 - r.x0 + 12, WU.shelfH - WU.lip - 2);
+      for (const r of L.runs) if (r.sec === selSec && seen.has(r.bay)) ctx.strokeRect(r.x0 - 4, r.by + WU.sign + r.shelf * WU.shelfH + 4, r.x1 - r.x0 + 8, WU.shelfH - WU.lip - 2);
       ctx.setLineDash([]);
     }
-    for (const r of L.runs) {
-      if (!seen.has(r.bay)) continue;
-      const key = `${r.sec}:${r.bay}`;
-      if (tagged.has(key)) continue;
-      tagged.add(key);
-      const label = L.secs[r.sec].name.toUpperCase();
-      const tw = ctx.measureText(label).width + 12 * px;
-      const ty = r.by + WU.sign + (r.shelf + 1) * WU.shelfH - WU.lip / 2;
-      const th = 18 * px;
-      if (boxes.some((q) => r.x0 < q[0] + q[2] && q[0] < r.x0 + tw && ty - th / 2 < q[1] + q[3] && q[1] < ty + th / 2)) continue;
-      boxes.push([r.x0, ty - th / 2, tw, th]);
-      wall.signs.push([r.x0, ty - th / 2, tw, th, r.sec]);
-      ctx.fillStyle = z < FAR ? "rgba(15,19,23,0.75)" : "#f2eee3";
-      ctx.fillRect(r.x0, ty - th / 2, tw, th);
-      ctx.fillStyle = z < FAR ? "#fff" : "#14181c";
-      ctx.fillText(label, r.x0 + 6 * px, ty + px);
+    // Where a dragged piece would land.
+    if (wall.dropHint) {
+      const d = wall.dropHint, o = L.origin(d.bay);
+      ctx.fillStyle = d.ok ? "rgba(64,188,244,0.25)" : "rgba(255,90,90,0.25)";
+      ctx.strokeStyle = d.ok ? "#40bcf4" : "#ff5a5a";
+      ctx.lineWidth = 3 * px;
+      const top = o.y + WU.sign + d.shelf * WU.shelfH + 6;
+      ctx.fillRect(d.x, top, d.w, WU.shelfH - WU.lip - 8);
+      ctx.strokeRect(d.x, top, d.w, WU.shelfH - WU.lip - 8);
+    }
+
+    // Up close: laminated signs on the shelf edge. Each piece's sign slides
+    // along with you so there's always one in view.
+    if (veil < 0.3) {
+      const fsz = Math.max(10, Math.min(14, 10 + z * 4)) * px;
+      ctx.font = `800 ${fsz}px Arial, sans-serif`;
+      ctx.textBaseline = "middle";
+      const th = fsz + 8 * px;
+      for (const r of L.runs) {
+        if (!seen.has(r.bay) || r.x1 < x0 || r.x0 > x1) continue;
+        const sec = L.secs[r.sec];
+        const label = sec.name.toUpperCase();
+        const tw = ctx.measureText(label).width + 14 * px;
+        if (tw > r.x1 - r.x0 + 4) continue;
+        const sx = Math.min(Math.max(r.x0 + 4, x0 + 12 * px), r.x1 - tw - 2);
+        const ty = r.by + WU.sign + (r.shelf + 1) * WU.shelfH - WU.lip / 2;
+        ctx.fillStyle = "rgba(0,0,0,0.35)";
+        ctx.fillRect(sx + 2 * px, ty - th / 2 + 2 * px, tw, th);
+        ctx.fillStyle = "#f4f1e8";
+        ctx.fillRect(sx, ty - th / 2, tw, th);
+        ctx.fillStyle = `hsl(${sec.hue} 60% 45%)`;
+        ctx.fillRect(sx, ty - th / 2, 4 * px, th);
+        ctx.fillStyle = "rgba(255,255,255,0.35)"; // laminate shine
+        ctx.fillRect(sx, ty - th / 2, tw, th * 0.35);
+        ctx.fillStyle = "#14181c";
+        ctx.fillText(label, sx + 9 * px, ty + px);
+      }
     }
 
     // Hovered spine
@@ -2035,7 +2113,7 @@
       else drawSoon();
     }
     renderStagePath();
-    renderShape();
+    renderTray();
   }
 
   function bindCanvas(c) {
@@ -2052,6 +2130,12 @@
       drawSoon();
     }, { passive: false });
     c.addEventListener("mousedown", (e) => {
+      if (edit.on && e.button === 0 && wall.cam.z < NEAR) {
+        const p = toWall(e.offsetX, e.offsetY);
+        const { b, s: sh } = bayAt(p);
+        const run = wall.lay.runs.find((r) => r.bay === b && r.shelf === sh && p.x >= r.x0 - 4 && p.x <= r.x1 + 4);
+        if (run) { c.draggable = false; e.preventDefault(); return pieceDown(run.ref, "wall", e); }
+      }
       const i = filmAt(e.offsetX, e.offsetY);
       c.draggable = i != null; // on a spine: pick it up; elsewhere: pan
       if (i != null) return;
@@ -2073,10 +2157,9 @@
       // Edit mode: click a section (or its sign) to select it for shaping.
       if (clicked && edit.on) {
         const p = toWall(e.offsetX, e.offsetY);
-        const sg = (wall.signs || []).find((q) => p.x >= q[0] && p.x <= q[0] + q[2] && p.y >= q[1] && p.y <= q[1] + q[3]);
         const { b, s: sh } = bayAt(p);
-        const run = sg ? null : wall.lay.runs.find((r) => r.bay === b && r.shelf === sh && p.x >= r.x0 && p.x <= r.x1);
-        const si = sg ? sg[4] : run ? run.sec : -1;
+        const run = wall.lay.runs.find((r) => r.bay === b && r.shelf === sh && p.x >= r.x0 && p.x <= r.x1);
+        const si = run ? run.sec : -1;
         if (si >= 0) return selectSection(wall.lay.secs[si].id);
       }
       // Click from far or middle: step in toward that spot.
@@ -2144,38 +2227,106 @@
       `<button type="button" data-act="h-discard"${pending ? "" : " disabled"}>Discard</button>`;
   }
 
-  // The selected section's shape, in a small panel over the wall.
-  function renderShape() {
-    const box = $(".lbs-shape", root);
-    if (!box) return;
-    const id = edit.sel;
-    const show = edit.on && id && lib.cats.has(id) && lib.cats.get(id).genre === STOCKED;
-    box.hidden = !show;
+  /* The bucket: pieces that aren't on the wall. Drag them onto a shelf; drag
+   * a piece off the wall (from afar, where pieces show as blocks) back here. */
+  function renderTray() {
+    const tray = root && $(".lbs-tray", root);
+    if (!tray) return;
+    const show = edit.on && wall.level === "wall" && desk.mode === "store" && wall.lay;
+    tray.hidden = !show;
     if (!show) return;
-    const sh = shapeOf(id);
-    const sec = wall.lay && wall.lay.secs.find((x) => x.id === id);
-    const list = lib.genres.get(STOCKED).cats;
-    const at = list.indexOf(id);
-    const opt = (k, v, label) => `<button type="button" data-act="shape" data-k="${k}" data-v="${v}" class="${String(sh[k]) === String(v) ? "-on" : ""}">${label}</button>`;
-    box.innerHTML =
-      `<div class="lbs-shape-head"><b>Section shape: ${esc(nameOf(id))}</b><span>${fmt(lib.count.get(id) || 0)} films · ${sec ? sec.shelves : 0} shelves · ${at + 1} of ${list.length} on the wall</span></div>` +
-      `<div class="lbs-shape-row">` +
-      `<div><label>Starts</label><div class="lbs-seg">${opt("start", "shelf", "Next shelf")}${opt("start", "bay", "New bay")}</div></div>` +
-      `<div><label>Width (bays)</label><div class="lbs-seg">${opt("width", 0, "Same")}${opt("width", 1, "1")}${opt("width", 2, "2")}${opt("width", 3, "3")}${opt("width", 4, "4")}</div></div>` +
-      `<div><label>Room to grow</label><div class="lbs-seg"><button type="button" data-act="spare" data-v="-1"${sh.spare > 0 ? "" : " disabled"}>−</button><em>${sh.spare | 0} shel${(sh.spare | 0) === 1 ? "f" : "ves"}</em><button type="button" data-act="spare" data-v="1">+</button></div></div>` +
-      `<div><label>Order</label><div class="lbs-seg"><button type="button" data-act="nudge" data-v="-1"${at > 0 ? "" : " disabled"}>← Earlier</button><button type="button" data-act="nudge" data-v="1"${at < list.length - 1 ? "" : " disabled"}>Later →</button></div></div>` +
+    const list = wall.lay.bucket;
+    tray.innerHTML =
+      `<div class="lbs-tray-top"><b>Bucket</b><span>${list.length ? `${list.length} piece${list.length === 1 ? "" : "s"} off the wall. Drag onto a shelf.` : "Every piece is on the wall. Drag a block here to take it down."}</span>` +
+      `<button type="button" data-act="w-auto">Auto-arrange</button><button type="button" data-act="w-clear">Empty the wall</button></div>` +
+      `<div class="lbs-tray-list">` +
+      list.map((pc) => `<div class="lbs-piece" data-ref="${esc(pc.ref)}" style="width:${Math.round(14 + (pc.size / CAP) * 150)}px;--h:${secHue(pc.n)}" title="${esc(nameOf(pc.sec))}: piece ${pc.i + 1} of ${pc.of}, ${pc.count} films"><b>${esc(nameOf(pc.sec))}</b><span>${pc.i + 1}/${pc.of}</span></div>`).join("") +
       `</div>`;
   }
+
+  const pieceSize = (ref) => {
+    const r = wall.lay.runs.find((x) => x.ref === ref);
+    if (r) return r.x1 - r.x0;
+    const b = wall.lay.bucket.find((x) => x.ref === ref);
+    return b ? b.size : CAP;
+  };
+  const shelvesNow = () => JSON.parse(JSON.stringify((house().wall && house().wall.shelves) || wall.plan.shelves));
+
+  // Where a piece dropped at screen point (sx, sy) on the canvas would go.
+  function dropTarget(ref, sx, sy) {
+    const L = wall.lay, p = toWall(sx, sy);
+    const { b, s } = bayAt(p);
+    if (b < 0 || b >= L.bays || s < 0 || s >= WU.shelves) return null;
+    const key = `${b}:${s}`;
+    const refs = (wall.plan.shelves[key] || []).filter((r) => r !== ref);
+    const runs = refs.map((r) => L.runs.find((x) => x.ref === r)).filter(Boolean);
+    let at = runs.filter((r) => (r.x0 + r.x1) / 2 < p.x).length;
+    const size = pieceSize(ref);
+    const used = runs.reduce((n, r) => n + (r.x1 - r.x0), 0) + BOOKEND * runs.length;
+    const x = at === 0 ? L.origin(b).x + WU.pad : runs[at - 1].x1 + BOOKEND;
+    return { key, at, bay: b, shelf: s, x, w: Math.min(size, CAP), ok: used + size <= CAP * 1.01 };
+  }
+
+  function placePiece(ref, t) {
+    const sh = shelvesNow();
+    for (const k of Object.keys(sh)) sh[k] = sh[k].filter((r) => r !== ref);
+    (sh[t.key] ||= []).splice(t.at, 0, ref);
+    const [cid] = parseRef(ref);
+    houseEdit(`Placed ${nameOf(cid)}.`, (H) => { H.wall = { perRow: wall.plan.perRow, shelves: sh }; });
+  }
+  function unplacePiece(ref) {
+    const sh = shelvesNow();
+    for (const k of Object.keys(sh)) sh[k] = sh[k].filter((r) => r !== ref);
+    houseEdit(`Took ${nameOf(parseRef(ref)[0])} down to the bucket.`, (H) => { H.wall = { perRow: wall.plan.perRow, shelves: sh }; });
+  }
+
+  let pieceDrag = null; // { ref, ghost, from: "wall" | "tray", x, y, live }
+  function pieceDown(ref, from, e) {
+    pieceDrag = { ref, from, x: e.clientX, y: e.clientY, live: false };
+  }
+  window.addEventListener("mousemove", (e) => {
+    const d = pieceDrag;
+    if (!d) return;
+    if (!d.live) {
+      if (Math.abs(e.clientX - d.x) + Math.abs(e.clientY - d.y) < 5) return;
+      d.live = true;
+      const run = wall.lay.runs.find((x) => x.ref === d.ref);
+      const sec = lib.cats.get(parseRef(d.ref)[0]);
+      d.ghost = h("div", "lbs-piece lbs-piece-ghost", `<b>${esc(sec ? sec.name : "")}</b>`);
+      d.ghost.style.setProperty("--h", run ? wall.lay.secs[run.sec].hue : secHue(lib.genres.get(STOCKED).cats.indexOf(parseRef(d.ref)[0])));
+      d.ghost.style.width = `${Math.max(30, pieceSize(d.ref) * wall.cam.z)}px`;
+      document.body.append(d.ghost);
+    }
+    d.ghost.style.left = `${e.clientX + 6}px`;
+    d.ghost.style.top = `${e.clientY + 6}px`;
+    const c = wall.canvas, r = c.getBoundingClientRect();
+    const over = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom && !e.target.closest?.(".lbs-tray");
+    wall.dropHint = over ? dropTarget(d.ref, e.clientX - r.left, e.clientY - r.top) : null;
+    drawSoon();
+  });
+  window.addEventListener("mouseup", (e) => {
+    const d = pieceDrag;
+    if (!d) return;
+    pieceDrag = null;
+    if (d.ghost) d.ghost.remove();
+    const hint = wall.dropHint;
+    wall.dropHint = null;
+    if (!d.live) {
+      // A click on a block selects its section.
+      if (d.from === "wall") selectSection(parseRef(d.ref)[0]);
+      return drawSoon();
+    }
+    if (e.target.closest && e.target.closest(".lbs-tray")) { if (d.from === "wall") unplacePiece(d.ref); return drawSoon(); }
+    if (hint && hint.ok) return placePiece(d.ref, hint);
+    if (hint) toast("That piece doesn't fit on that shelf.");
+    drawSoon();
+  });
 
   function selectSection(id) {
     edit.sel = id;
     desk.col = id;
     renderFolders();
     drawSoon();
-  }
-
-  function setShape(id, patch, label) {
-    houseEdit(label, (H) => { H.shape[id] = { ...shapeOf(id), ...patch }; });
   }
 
   function renameFolder(id, name) {
@@ -2487,6 +2638,8 @@
     const id = btn.dataset.id;
     if (act === "logo-pick") return pickLogo(btn.dataset.slug, +btn.dataset.n);
     if (act === "edit") return toggleEdit(!edit.on);
+    if (act === "w-auto") return houseEdit("Auto-arranged the wall.", (H) => { H.wall = null; });
+    if (act === "w-clear") return houseEdit("Emptied the wall into the bucket.", (H) => { H.wall = { perRow: wall.plan.perRow, shelves: {} }; });
     if (act === "rename") { e.stopPropagation(); edit.renaming = id; edit.deleting = null; return renderFolders(); }
     if (act === "del") { e.stopPropagation(); edit.deleting = id; edit.renaming = null; return renderFolders(); }
     if (act === "del-yes") return deleteFolder(id);
@@ -2501,20 +2654,7 @@
       refresh();
       return toast("Discarded your unpublished changes.");
     }
-    if (act === "shape") {
-      const k = btn.dataset.k, v = k === "width" ? +btn.dataset.v : btn.dataset.v;
-      return setShape(edit.sel, { [k]: v }, `${nameOf(edit.sel)}: ${k === "width" ? (v ? `${v} bay${v === 1 ? "" : "s"} wide` : "same width as the section before") : v === "bay" ? "starts a new bay" : "follows on"}.`);
-    }
-    if (act === "spare") {
-      const n = Math.max(0, (shapeOf(edit.sel).spare | 0) + +btn.dataset.v);
-      return setShape(edit.sel, { spare: n }, `${nameOf(edit.sel)}: ${n} spare shel${n === 1 ? "f" : "ves"}.`);
-    }
-    if (act === "nudge") {
-      const list = lib.genres.get(STOCKED).cats;
-      const at = list.indexOf(edit.sel), to = at + +btn.dataset.v;
-      if (to < 0 || to >= list.length) return;
-      return reorderFolder(edit.sel, list[to], +btn.dataset.v > 0);
-    }
+
     if (act === "logo-build") { const b = $(".lbs-logobuild", root); b.hidden = !b.hidden; return renderLogoBuild(); }
     if (act === "logo-close") { $(".lbs-logobuild", root).hidden = true; return; }
     if (act === "logo-stop") { logoJob.running = false; return renderLogoBuild(); }
