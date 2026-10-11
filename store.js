@@ -1240,11 +1240,14 @@
             segs.push({ bay: b0 + j, shelf: r });
             if (++j >= k) { j = 0; if (++r >= WU.shelves) { r = 0; b0 = nextRow(b0 + k, k); } }
           }
-          bay = r || j ? b0 + k : b0;
+          // Fill out the block's last rows rather than leave them bare.
+          if (r || j) { while (r < WU.shelves) { segs.push({ bay: b0 + j, shelf: r }); if (++j >= k) { j = 0; r++; } } b0 += k; }
+          bay = b0;
           shelf = 0;
         }
         out.push(segs);
       }
+      if (last && shelf > 0) while (shelf < WU.shelves) last.push({ bay, shelf: shelf++ });
       return { out, bays: Math.max(1, bay + (shelf > 0 ? 1 : 0)) };
     }
     // Bays per row: whatever makes the wall about the pane's shape.
