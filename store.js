@@ -1170,7 +1170,7 @@
    *   start  "shelf" = carry on from the last section; "bay" = a fresh bay
    *   width  bays side by side; each shelf row runs across all of them
    *   spare  extra shelves to grow into */
-  const FACE_W = 112, FACE_H = 168, MAX_LEAN = 0.6;
+  const FACE_W = 112, FACE_H = 168, MAX_LEAN = 0.36; // about 20°
   const shapeOf = (cid) => ({ start: "shelf", width: 1, spare: 0, ...(house().shape[cid] || {}) });
   const footprint = (list) => list.reduce((n, f) => n + f.w + 1, 0);
   // Extra room a leaning group takes compared with standing up.
