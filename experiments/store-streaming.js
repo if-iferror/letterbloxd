@@ -1,5 +1,5 @@
 /*
- * Letternoxd Video Store (prototype: the Horror aisle, Main wing).
+ * LetterBloxd Video Store (prototype: the Horror aisle, Main wing).
  *
  * Opens over any Letterboxd page at #store. Every shelf is a Letterboxd
  * browse query sorted by popularity. A film sits on exactly one shelf: the
@@ -250,7 +250,7 @@
     if (!root) {
       root = h("div", "lbs-root");
       root.setAttribute("role", "dialog");
-      root.setAttribute("aria-label", "Letternøxd Video Store");
+      root.setAttribute("aria-label", "LetterBloxd Video Store");
       document.body.append(root);
       root.addEventListener("click", onClick);
     }
@@ -279,7 +279,7 @@
     root.innerHTML =
       `<header class="lbs-top">` +
       `<div class="lbs-top-inner">` +
-      `<div class="lbs-brand">letternøxd <span>video store</span></div>` +
+      `<div class="lbs-brand">LetterBloxd <span>video store</span></div>` +
       `<nav class="lbs-wings" aria-label="Wings">` +
       WINGS.map((w) =>
         `<button type="button" class="lbs-wing${w.id === wing ? " -on" : ""}${w.open ? "" : " -soon"}" data-wing="${w.id}"${w.open ? "" : ' aria-disabled="true"'}>` +
@@ -452,7 +452,7 @@
     const strip = h("section", "lbs-home");
     strip.innerHTML =
       `<a class="lbs-home-door" href="#store">` +
-      `<span class="lbs-home-kicker">letternøxd video store</span>` +
+      `<span class="lbs-home-kicker">LetterBloxd video store</span>` +
       `<span class="lbs-home-title">The Horror aisle is open</span>` +
       `<span class="lbs-home-sub">${SHELVES.length + 1} shelves, every film in one place. Walk in →</span>` +
       `</a>`;

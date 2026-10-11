@@ -1,5 +1,5 @@
 /*
- * Letternoxd Video Store (prototype: the Horror wing, Main collection).
+ * LetterBloxd Video Store (prototype: the Horror wing, Main collection).
  *
  * Opens over any Letterboxd page at #store, laid out like a real store:
  *   WING    Horror. One long wall you walk along.
@@ -450,7 +450,7 @@
     if (!root) {
       root = h("div", "lbs-root");
       root.setAttribute("role", "dialog");
-      root.setAttribute("aria-label", "Letternøxd Video Store");
+      root.setAttribute("aria-label", "LetterBloxd Video Store");
       document.body.append(root);
       root.addEventListener("click", onClick);
       root.addEventListener("input", onInput);
@@ -488,7 +488,7 @@
     const total = stock ? stock.films.length : COLLECTIONS[0].count;
     root.innerHTML =
       `<header class="lbs-top">` +
-      `<div class="lbs-brand">letternøxd <span>video store</span></div>` +
+      `<div class="lbs-brand">LetterBloxd <span>video store</span></div>` +
       (DESK_ONLY
         ? `<div class="lbs-wing-sign"><b>Sorting desk</b></div>`
         : `<div class="lbs-wing-sign"><b>Horror</b><span>wing</span></div>`) +
@@ -1883,7 +1883,7 @@
     const strip = h("section", "lbs-home");
     strip.innerHTML =
       `<a class="lbs-home-door" href="#store">` +
-      `<span class="lbs-home-kicker">letternøxd video store</span>` +
+      `<span class="lbs-home-kicker">LetterBloxd video store</span>` +
       (DESK_ONLY
         ? `<span class="lbs-home-title">The Sorting Desk is open</span><span class="lbs-home-sub">File films into genres, categories and subcategories. Start with Horror →</span>`
         : `<span class="lbs-home-title">The Horror wing is open</span><span class="lbs-home-sub">${AISLES.length + 1} aisles, every film on one shelf, A to Z. Walk in →</span>`) +
