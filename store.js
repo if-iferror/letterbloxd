@@ -1569,9 +1569,9 @@
             if (f.year && f.year < 1990) { ctx.fillStyle = "rgba(235,232,222,0.85)"; ctx.fillRect(f.x + 2, top + 22, f.w - 4, f.h - 50); }
             // Title art from TMDB, turned on its side, when there is one.
             const vhs = f.year && f.year < 1990;
-            const L = z >= LOGO_Z ? logoImg(f.slug, z >= 1.6 ? "w300" : "w185") || (z >= 1.6 ? logoImg(f.slug, "w185") : null) : null;
-            if (L) {
-              const iw = L.img.naturalWidth || 300, ih = L.img.naturalHeight || 100;
+            const lg = z >= LOGO_Z ? logoImg(f.slug, z >= 1.6 ? "w300" : "w185") || (z >= 1.6 ? logoImg(f.slug, "w185") : null) : null;
+            if (lg) {
+              const iw = lg.img.naturalWidth || 300, ih = lg.img.naturalHeight || 100;
               const a = iw / ih;
               // Along the spine (local x, from 8 units above the shelf upward):
               // the logo sits in [s0, s1], the year near the top as before.
@@ -1579,7 +1579,7 @@
               let len = Math.min(room, thick * a), th = len / a;
               if (th > thick) { th = thick; len = th * a; }
               const bgL = vhs ? 0.8 : own ? relLum(rgbOf(own)) : 0.03;
-              const src = contrast(L.lum, bgL) >= 2 ? L.img : logoInk(L, bgL > 0.35 ? "#15181b" : "#f4f1ea");
+              const src = contrast(lg.lum, bgL) >= 2 ? lg.img : logoInk(lg, bgL > 0.35 ? "#15181b" : "#f4f1ea");
               ctx.save();
               ctx.translate(f.x + f.w / 2, f.y - 8);
               ctx.rotate(-Math.PI / 2);
