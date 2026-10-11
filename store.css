@@ -1747,3 +1747,7 @@ html.lbs-open {
   color: #678;
   line-height: 1.4;
 }
+
+.lbs-editing .lbs-credit {
+  display: none;
+}
