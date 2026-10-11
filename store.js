@@ -252,7 +252,7 @@
   // Your own moves and folders ("Mine"). Kept in this browser only.
   const MINE_KEY = `${NS}:store:mine:v1`;
   let mine = readJSON(MINE_KEY, null) || {};
-  mine = { place: {}, cats: {}, subs: {}, recent: [], view: "community", sort: {}, held: [], ...mine };
+  mine = { place: {}, cats: {}, subs: {}, recent: [], view: "community", sort: {}, held: [], colors: {}, ...mine };
   const saveMine = () => writeJSON(MINE_KEY, mine);
 
   let lib = null; // built from stock + mine; see buildLibrary()
@@ -568,8 +568,8 @@
         if (e.button !== 0) return;
         const pc = edit.on && e.target.closest(".lbs-tray .lbs-piece");
         if (pc) { e.preventDefault(); return grabDown({ kind: "piece", cid: pc.dataset.cid, from: "tray" }, e); }
-        const dv = e.target.closest(".lbs-tray .lbs-dvd");
-        if (dv) { e.preventDefault(); grabDown({ kind: "dvd", slug: dv.dataset.slug, name: dv.dataset.name, from: "tray" }, e); }
+        const dv = e.target.closest(".lbs-tray .lbs-dvd, .lbs-pk, .lbs-sp-chip");
+        if (dv && !e.target.closest("button")) { e.preventDefault(); grabDown({ kind: "dvd", slug: dv.dataset.slug, name: dv.dataset.name, from: dv.classList.contains("lbs-sp-chip") ? "card" : "tray" }, e); }
       });
       root.addEventListener("dblclick", (e) => {
         const row = edit.on && e.target.closest(".lbs-folder");
@@ -623,6 +623,8 @@
     if (stock && DESK_ONLY) {
       buildLibrary();
       root.classList.add("lbs-desk-only");
+      root.classList.toggle("lbs-browsing", !edit.on);
+      if (!edit.on) desk.mode = "store";
       hall.innerHTML = deskHTML();
       desk.open = true;
       if (desk.folder === undefined) desk.folder = STOCKED;
@@ -881,6 +883,9 @@
       `<div class="lbs-zoom"><button type="button" data-act="zoom-out" aria-label="Zoom out">−</button><button type="button" data-act="fit">Fit</button><button type="button" data-act="zoom-in" aria-label="Zoom in">+</button></div></div>` +
       `<div class="lbs-aisles"></div><canvas class="lbs-canvas" draggable="false" aria-label="Horror wall. Scroll to move, pinch or Ctrl-scroll to zoom, drag a spine to a folder."></canvas>` +
       `<div class="lbs-tip" hidden></div><div class="lbs-sortpick" hidden></div>` +
+      `<div class="lbs-find"><select class="lbs-find-type" aria-label="Search for"><option value="film">Movie</option><option value="actor" disabled>Actor (soon)</option><option value="director" disabled>Director (soon)</option><option value="crew" disabled>Crew (soon)</option></select>` +
+      `<label class="lbs-find-box">${ICON_SEARCH}<input type="search" class="lbs-find-q" placeholder="Find a movie in the store" autocomplete="off" spellcheck="false"></label>` +
+      `<ul class="lbs-find-list" hidden></ul><div class="lbs-card" hidden></div></div>` +
       `<div class="lbs-logopick" hidden></div><div class="lbs-logobuild" hidden></div>` +
       `<p class="lbs-credit" hidden>Title logos from <a href="https://www.themoviedb.org/" target="_blank" rel="noopener">TMDB</a>. This product uses the TMDB API but is not endorsed or certified by TMDB.</p>` +
       `</div>` +
@@ -891,7 +896,12 @@
       `<div class="lbs-tray" data-drop="@inv"></div>` +
       `</div>` +
       `</section>` +
+      `<div class="lbs-pocket" hidden></div>` +
+      `<div class="lbs-filmview" hidden></div>` +
+      `<div class="lbs-sortpanel" hidden></div>` +
+      `<div class="lbs-ask" hidden></div>` +
       `<div class="lbs-deskbar">` +
+      `<button type="button" class="lbs-pocket-tab" data-act="pocket">${ICON_UP}<span>Inventory</span><em></em></button>` +
       `<button type="button" class="lbs-desk-toggle" data-act="desk">${ICON_UP}<span>Sorting desk</span></button>` +
       `<div class="lbs-deskbar-path"></div>` +
       `<div class="lbs-view" role="group" aria-label="Whose shelves"><button type="button" data-view="community">Community</button><button type="button" data-view="mine">Mine <span></span></button></div>` +
@@ -1088,6 +1098,8 @@
   function renderFolders() {
     renderEditBar();
     renderTray();
+    renderPocket();
+    if (ui.sortFilm) renderSortPanel();
     if (desk.open && desk.mode === "list") renderFilms();
   }
 
@@ -1459,6 +1471,8 @@
    * browser ("RRGGBBrrggbb" per film). Later this can be seeded from a shared
    * file so nobody has to build it themselves. */
   const COLOR_KEY = `${NS}:store:colors:v1`;
+  // A film's colours: your own pick if you made one, else the poster's.
+  const colorOf = (slug) => (mine.colors && mine.colors[slug] ? mine.colors[slug] + ((colors[slug] || "").slice(6) || mine.colors[slug]) : colors[slug]);
   const colors = readJSON(COLOR_KEY, {});
   const colorJob = { running: false, done: 0, total: 0 };
   let colorSaveTimer = 0;
@@ -1783,7 +1797,8 @@
     const list = readJSON(SUGGEST_KEY, []).filter((s) => !(s.type === "logo" && s.slug === slug));
     list.push({ type: "logo", slug, tmdb: e && e[0], path: n === -1 ? null : e && e[1 + n], at: Date.now() });
     writeJSON(SUGGEST_KEY, list.slice(-500));
-    $(".lbs-logopick", root).hidden = true;
+    const lp = $(".lbs-logopick", root);
+    if (lp) lp.hidden = true;
     drawSoon();
     toast(n === 0 ? "Back to the first logo." : "Saved. It'll count as your vote once community voting opens.");
   }
@@ -1839,7 +1854,7 @@
 
     const secColor = (sec, f) => {
       if (!f) return sec.avg || `hsl(${sec.hue} 38% 34%)`;
-      const own = colors[f.slug];
+      const own = colorOf(f.slug);
       if (own) return `#${own.slice(0, 6)}`;
       const hv = f ? hash(f.slug) : 0;
       const hue = sec.hue + ((hv % 37) - 18);
@@ -1889,7 +1904,7 @@
             if (near && !wall.lite && ctx.roundRect) { ctx.beginPath(); ctx.roundRect(f.x, top, f.w, f.h, 1.6); ctx.fill(); }
             else ctx.fillRect(f.x, top, f.w, f.h);
             if (!near || wall.lite) continue;
-            const own = colors[f.slug];
+            const own = colorOf(f.slug);
             // Light from the left: a soft highlight down the left edge (three
             // stacked strips make a cheap gradient) and a thin shadow on the right.
             const e = f.w * 0.05;
@@ -2079,6 +2094,16 @@
       }
     }
 
+    // A film you jumped to blinks.
+    if (wall.flash && L.films[wall.flash.i] && Math.floor(performance.now() / 300) % 2 === 0) {
+      const f = L.films[wall.flash.i];
+      ctx.save();
+      if (f.lean) { ctx.translate(f.x, f.y); ctx.rotate(-f.lean); ctx.translate(-f.x, -f.y); }
+      ctx.strokeStyle = "#ffd447";
+      ctx.lineWidth = 4 * px;
+      ctx.strokeRect(f.x - 2, f.y - f.h - 2, f.w + 4, f.h + 4);
+      ctx.restore();
+    }
     // Hovered spine
     if (wall.hover != null && z >= NEAR) {
       const f = L.films[wall.hover];
@@ -2287,9 +2312,10 @@
       const i = filmAt(e.offsetX, e.offsetY);
       if (i != null && openLogoPicker(i, e.offsetX, e.offsetY)) { e.preventDefault(); showTip(null); }
     });
-    c.addEventListener("dblclick", (e) => {
+    c.addEventListener("click", (e) => {
+      if (edit.on) return;
       const i = filmAt(e.offsetX, e.offsetY);
-      if (i != null) window.open(`/film/${wall.lay.films[i].slug}/`, "_blank", "noopener");
+      if (i != null) { showTip(null); openFilm(wall.lay.films[i].slug, wall.lay.films[i].name); }
     });
     c.tabIndex = 0;
     c.addEventListener("keydown", (e) => {
@@ -2308,6 +2334,265 @@
     }).observe(c);
   }
 
+  /* ---------------- browsing (everyone) ----------------
+   * The wall fills the screen. Find films from the search box (top right),
+   * click a spine for the full box and its details, carry films around in
+   * your inventory (the tab at the bottom). Taking a film off the shelf is
+   * just for you and doesn't change the store. */
+  const ui = { film: null, pane: null, details: new Map(), pocket: false, sortFilm: null, sortFolder: STOCKED, sortAdding: null, findSeq: 0, card: null };
+
+  async function filmDetails(slug) {
+    if (ui.details.has(slug)) return ui.details.get(slug);
+    const p = fetch(`/film/${slug}/`, { credentials: "include" })
+      .then((r) => r.text())
+      .then((t) => {
+        const d = new DOMParser().parseFromString(t, "text/html");
+        const meta = (sel) => d.querySelector(sel)?.getAttribute("content") || "";
+        const dirLabel = meta('meta[name="twitter:label1"]');
+        return {
+          director: /direct/i.test(dirLabel) ? meta('meta[name="twitter:data1"]') : "",
+          rating: meta('meta[name="twitter:data2"]').replace(" out of 5", ""),
+          synopsis: meta('meta[property="og:description"]') || meta('meta[name="description"]'),
+          tagline: (d.querySelector(".tagline")?.textContent || "").trim(),
+          runtime: ((d.querySelector(".text-footer")?.textContent || "").match(/(\d+)\s*mins?/) || [])[1] || "",
+          cast: [...d.querySelectorAll(".cast-list a.text-slug, .cast-list a")].map((a) => a.textContent.trim()).filter(Boolean).slice(0, 6),
+        };
+      })
+      .catch(() => ({}));
+    ui.details.set(slug, p);
+    return p;
+  }
+  const caseName = (y) => (y && y < 1990 ? "VHS" : y && y < 2008 ? "DVD" : "Blu-ray");
+  const whereIs = (slug) => { const sub = lib.place.get(slug); return sub && lib.subs.has(sub) ? pathOf(sub) : null; };
+  const filmActs = (slug, name, extra = "") => {
+    const a = (act, label, cls = "") => `<button type="button" class="lbs-fact ${cls}" data-act="${act}" data-slug="${esc(slug)}" data-name="${esc(name)}">${label}</button>`;
+    return `<div class="lbs-facts">${extra}${a("f-hold", "Add to inventory")}${a("f-jump", "Jump to section")}${a("f-edit", "Edit")}${a("f-sort", "Sort")}</div>`;
+  };
+
+  // The box itself: front cover facing you, spine and top in perspective.
+  function boxHTML(slug, name, big) {
+    const y = yearOf(name), own = colorOf(slug);
+    const spine = own ? `#${own.slice(0, 6)}` : "#2c3440";
+    const w = big ? 230 : 120, h = Math.round(w * 1.42), d = Math.round((y && y < 1990 ? 0.2 : y && y < 2008 ? 0.12 : 0.1) * w * 1.4);
+    const ink = own && lum(rgbOf(own)) > 0.62 ? "#14181c" : "#fff";
+    const lp = logoPath(slug);
+    return (
+      `<div class="lbs-box" style="--w:${w}px;--h:${h}px;--d:${d}px;--spine:${spine};--top:${caseTop(y)};--ink:${ink}">` +
+      `<div class="lbs-box3d">` +
+      `<div class="lbs-face -front"><img data-poster="${esc(slug)}" alt=""></div>` +
+      `<div class="lbs-face -spine"><span class="lbs-spine-year">${y || ""}</span>${lp ? `<img class="lbs-spine-logo" src="${TMDB_IMG}w300/${esc(lp)}" alt="" crossorigin="anonymous">` : `<b>${esc(titleOf(name))}</b>`}</div>` +
+      `<div class="lbs-face -top"><i></i></div>` +
+      `</div></div>`
+    );
+  }
+  function fillPosters(el, big) {
+    el.querySelectorAll("img[data-poster]").forEach((im) => posterFor(im.dataset.poster).then(([a, b]) => (im.src = big ? b || a : a)).catch(() => {}));
+  }
+
+  async function openFilm(slug, name) {
+    ui.film = { slug, name };
+    ui.pane = null;
+    renderFilm();
+    const det = await filmDetails(slug);
+    if (ui.film && ui.film.slug === slug) renderFilm(det);
+  }
+  function closeFilm() {
+    ui.film = null;
+    const v = root && $(".lbs-filmview", root);
+    if (v) v.hidden = true;
+  }
+  function renderFilm(det) {
+    const v = $(".lbs-filmview", root);
+    if (!v || !ui.film) return;
+    const { slug, name } = ui.film;
+    const y = yearOf(name), path = whereIs(slug);
+    det = det || {};
+    const e = logoEntry(slug);
+    let pane = "";
+    if (ui.pane === "edit") {
+      const own = colorOf(slug);
+      const cur = logoPicks[slug] ?? 0;
+      pane =
+        `<div class="lbs-fpane"><b>Edit this box</b>` +
+        `<label class="lbs-fcolor">Case colour <input type="color" class="lbs-f-color" value="#${own ? own.slice(0, 6) : "2c3440"}" data-slug="${esc(slug)}">` +
+        (mine.colors[slug] ? `<button type="button" data-act="f-color-reset" data-slug="${esc(slug)}">Use the poster's colour</button>` : "") + `</label>` +
+        `<div class="lbs-flogos">` +
+        (e && e.length > 1 ? e.slice(1).map((pth, n) => `<button type="button" data-act="logo-pick" data-slug="${esc(slug)}" data-n="${n}" class="${cur === n ? "-on" : ""}" style="background:#${own ? own.slice(0, 6) : "2c3440"}"><img src="${TMDB_IMG}w185/${esc(pth)}" alt="Logo ${n + 1}"></button>`).join("") : "") +
+        `<button type="button" data-act="logo-pick" data-slug="${esc(slug)}" data-n="-1" class="-plain${cur === -1 ? " -on" : ""}">Plain title</button>` +
+        `</div>` +
+        (e && e[0] ? `<a class="lbs-fmore" href="https://www.themoviedb.org/movie/${e[0]}/images/logos" target="_blank" rel="noopener">Upload more on TMDB ↗</a>` : "") +
+        `</div>`;
+    }
+    v.innerHTML =
+      `<div class="lbs-fwrap" role="dialog" aria-label="${esc(titleOf(name))}">` +
+      `<button type="button" class="lbs-fclose" data-act="f-close" aria-label="Close">${ICON_CLOSE}</button>` +
+      `<div class="lbs-fbox">${boxHTML(slug, name, true)}</div>` +
+      `<div class="lbs-finfo">` +
+      `<h2>${esc(titleOf(name))} <span>${y || ""}</span></h2>` +
+      `<p class="lbs-fmeta">${[det.director && `Directed by <b>${esc(det.director)}</b>`, det.runtime && `${det.runtime} min`, det.rating && `★ ${esc(det.rating)}`, caseName(y)].filter(Boolean).join(" · ")}</p>` +
+      (det.tagline ? `<p class="lbs-ftag">${esc(det.tagline)}</p>` : "") +
+      (det.synopsis ? `<p class="lbs-fsyn">${esc(det.synopsis)}</p>` : det.director === undefined ? `<p class="lbs-fsyn -wait">Loading details…</p>` : "") +
+      (det.cast && det.cast.length ? `<p class="lbs-fcast">With ${det.cast.map(esc).join(", ")}</p>` : "") +
+      `<p class="lbs-fwhere">${path ? `On the shelf in <b>${path.map(esc).join(" › ")}</b>` : "Not in the store yet"}</p>` +
+      filmActs(slug, name) +
+      pane +
+      `<a class="lbs-flink" href="/film/${esc(slug)}/" target="_blank" rel="noopener">Open on Letterboxd ↗</a>` +
+      `</div></div>`;
+    v.hidden = false;
+    fillPosters(v, true);
+  }
+
+  // Inventory (browsing): a drawer that slides up from the tab at the bottom.
+  function renderPocket() {
+    const pk = root && $(".lbs-pocket", root);
+    const tab = root && $(".lbs-pocket-tab", root);
+    if (!pk || !tab) return;
+    const held = mine.held || [];
+    tab.querySelector("em").textContent = held.length ? fmt(held.length) : "";
+    tab.classList.toggle("-open", ui.pocket);
+    pk.hidden = !ui.pocket || edit.on;
+    if (pk.hidden) return;
+    pk.innerHTML =
+      `<div class="lbs-pocket-top"><b>Inventory</b><span>${held.length ? "Drag a film onto a shelf or a folder, or hover it for options." : "Drag films off the shelves to carry them around. It doesn't change the store."}</span><button type="button" data-act="pocket">Close</button></div>` +
+      `<div class="lbs-pocket-list lbs-tray-drop">` +
+      held.map(([slug, name]) =>
+        `<div class="lbs-pk" data-slug="${esc(slug)}" data-name="${esc(name)}">` +
+        `<img data-poster="${esc(slug)}" alt="" draggable="false"><b>${esc(titleOf(name))}</b>` +
+        `<div class="lbs-pk-over"><button type="button" class="lbs-pk-return" data-act="f-return" data-slug="${esc(slug)}" data-name="${esc(name)}">Return to shelf</button>` +
+        `<button type="button" data-act="f-open" data-slug="${esc(slug)}" data-name="${esc(name)}">Details</button><button type="button" data-act="f-jump" data-slug="${esc(slug)}" data-name="${esc(name)}">Jump to section</button>` +
+        `<button type="button" data-act="f-edit" data-slug="${esc(slug)}" data-name="${esc(name)}">Edit</button><button type="button" data-act="f-sort" data-slug="${esc(slug)}" data-name="${esc(name)}">Sort</button></div>` +
+        `</div>`).join("") +
+      `</div>`;
+    fillPosters(pk, false);
+  }
+
+  // Fly to a film on the wall and make it blink.
+  function jumpTo(slug, name) {
+    closeFilm();
+    $(".lbs-card", root) && ($(".lbs-card", root).hidden = true);
+    if (desk.mode !== "store") { desk.mode = "store"; renderDesk(); }
+    if (wall.level !== "wall") { wall.level = "wall"; showStage(); }
+    requestAnimationFrame(() => {
+      const L = wall.lay, i = L && L.idx.get(slug);
+      if (i == null) return toast(`‘${titleOf(name || slug)}’ isn't on the shelves yet.`);
+      const f = L.films[i];
+      flyTo(f.x + f.w / 2, f.y - f.h / 2, 1.3);
+      wall.flash = { i, until: performance.now() + 2400 };
+      const tick = () => { drawSoon(); if (wall.flash && performance.now() < wall.flash.until) setTimeout(tick, 120); else { wall.flash = null; drawSoon(); } };
+      tick();
+    });
+  }
+
+  // Sort: the folders, on the right. Drag the film in, or press Move here.
+  function openSort(slug, name) {
+    ui.sortFilm = [slug, name];
+    const sub = lib.place.get(slug);
+    ui.sortFolder = sub && lib.subs.has(sub) ? lib.subs.get(sub).cat : STOCKED;
+    renderSortPanel();
+  }
+  function renderSortPanel() {
+    const sp = $(".lbs-sortpanel", root);
+    if (!sp) return;
+    if (!ui.sortFilm) { sp.hidden = true; return; }
+    const [slug, name] = ui.sortFilm;
+    const p = partsOf(ui.sortFolder);
+    const ids = !ui.sortFolder ? [...lib.genres.keys()] : p.cat ? lib.cats.get(p.cat).subs : lib.genres.get(p.genre).cats;
+    const level = !ui.sortFolder ? null : p.cat ? "sub" : "cat";
+    const here = lib.place.get(slug);
+    const row = (id) =>
+      `<li class="lbs-folder${here === id || (lib.cats.has(id) && here && here.startsWith(id + "/")) ? " -here" : ""}" data-act="sp-open" data-id="${esc(id)}" data-drop="${esc(id)}">${ICON_FOLDER}<span class="lbs-folder-name">${esc(nameOf(id))}</span><span class="lbs-n">${fmt(lib.count.get(id) || 0)}</span>` +
+      `<button type="button" class="lbs-move-here" data-act="sp-move" data-id="${esc(id)}">Move here</button>${lib.subs.has(id) ? "" : '<i class="lbs-chev">›</i>'}</li>`;
+    const adder = level
+      ? ui.sortAdding === ui.sortFolder
+        ? `<li class="lbs-adding"><input type="text" class="lbs-sp-new" maxlength="40" placeholder="${level === "cat" ? "New section" : "New subsection"}"></li>`
+        : `<li class="lbs-add"><button type="button" data-act="sp-add">+ Add ${level === "cat" ? "section" : "subsection"}</button></li>`
+      : "";
+    sp.innerHTML =
+      `<div class="lbs-sp-top"><b>Sort</b><button type="button" data-act="sp-close" aria-label="Close">${ICON_CLOSE}</button></div>` +
+      `<div class="lbs-sp-film"><div class="lbs-dvd lbs-sp-chip" data-slug="${esc(slug)}" data-name="${esc(name)}" style="--c:${colorOf(slug) ? `#${colorOf(slug).slice(0, 6)}` : "#2c3440"}">${esc(titleOf(name))}</div><small>Drag it into a folder${here && lib.subs.has(here) ? `. Now in ${esc(pathOf(here).slice(1).join(" › "))}` : ""}</small></div>` +
+      `<div class="lbs-where">` +
+      `<button type="button" class="lbs-up" data-act="sp-up"${ui.sortFolder ? "" : " disabled"}>${ICON_UP}</button>` +
+      `<button type="button" class="lbs-crumb" data-act="sp-open" data-id="">All genres</button>` +
+      (ui.sortFolder ? pathOf(ui.sortFolder).map((n, k, all) => { const id = [p.genre, p.cat, p.sub][k]; return `<i>›</i><button type="button" class="lbs-crumb" data-act="sp-open" data-id="${esc(id)}" data-drop="${esc(id)}">${esc(n)}</button>`; }).join("") : "") +
+      `</div><ul class="lbs-sp-list">${ids.map(row).join("")}${adder}</ul>`;
+    sp.hidden = false;
+    const inp = $(".lbs-sp-new", sp);
+    if (inp) inp.focus();
+  }
+
+  // A small yes/no question over the store.
+  function ask(text, yes) {
+    const box = $(".lbs-ask", root);
+    box.innerHTML = `<div class="lbs-ask-card"><p>${text}</p><div><button type="button" data-act="ask-no">No</button><button type="button" data-act="ask-yes" class="-go">Yes, change it</button></div></div>`;
+    box.hidden = false;
+    box._yes = yes;
+  }
+
+  // A film from your inventory dropped on the wall.
+  function browseDrop(slug, name, t) {
+    const from = filmSection(slug);
+    const back = () => { releaseFilm(slug); renderPocket(); };
+    if (!t.cid || t.cid === from) { back(); drawSoon(); return toast(`‘${titleOf(name)}’ is back on the shelf.`); }
+    ask(`This is not the movie's original category${from ? ` (${esc(nameOf(from))})` : ""}. Change it to <b>${esc(nameOf(t.cid))}</b>?`, () => {
+      back();
+      moveFilms([[slug, name]], t.sub || `${t.cid}/general`);
+    });
+  }
+
+  // The search box: matches as you type, in the store first, then all of Letterboxd.
+  let findTimer = 0;
+  function runFind(q) {
+    const list = $(".lbs-find-list", root);
+    q = q.trim();
+    $(".lbs-card", root).hidden = true;
+    if (q.length < 1) { list.hidden = true; return; }
+    const nq = q.toLowerCase();
+    const local = [];
+    for (const [slug, name] of stock.films) {
+      const t = titleOf(name).toLowerCase();
+      const k = t.startsWith(nq) ? 0 : t.includes(" " + nq) ? 1 : t.includes(nq) ? 2 : -1;
+      if (k >= 0) local.push([k, slug, name]);
+      if (local.length > 400) break;
+    }
+    local.sort((a, b) => a[0] - b[0]);
+    const item = (slug, name, inStore) => {
+      const path = inStore ? whereIs(slug) : null;
+      return `<li data-act="find-pick" data-slug="${esc(slug)}" data-name="${esc(name)}"><img data-poster="${esc(slug)}" alt=""><div><b>${esc(titleOf(name))}</b> <span>${yearOf(name) || ""}</span><small>${path ? esc(path.slice(1).join(" › ")) : "Not in the store"}</small></div></li>`;
+    };
+    const top = local.slice(0, 8);
+    list.innerHTML = (top.length ? top.map(([, s, n]) => item(s, n, true)).join("") : `<li class="-none">Nothing in the store matches yet.</li>`) + `<li class="-more">Searching all of Letterboxd…</li>`;
+    list.hidden = false;
+    fillPosters(list, false);
+    const seq = ++ui.findSeq;
+    clearTimeout(findTimer);
+    findTimer = setTimeout(async () => {
+      let more = [];
+      try {
+        const j = await fetch(`/s/autocompletefilm?q=${encodeURIComponent(q)}&limit=12`, { credentials: "include" }).then((r) => r.json());
+        const have = new Set(top.map(([, s]) => s));
+        more = (j.data || []).map((f) => [f.slug || String(f.url || "").split("/").filter(Boolean).pop(), `${f.name}${f.releaseYear ? ` (${f.releaseYear})` : ""}`]).filter(([s]) => s && !have.has(s)).slice(0, 6);
+      } catch {}
+      if (seq !== ui.findSeq) return;
+      const m = list.querySelector(".-more");
+      if (m) m.outerHTML = more.length ? `<li class="-head">All of Letterboxd</li>` + more.map(([s, n]) => item(s, n, lib.place.has(s))).join("") : "";
+      fillPosters(list, false);
+    }, 200);
+  }
+  function showCard(slug, name) {
+    const card = $(".lbs-card", root);
+    $(".lbs-find-list", root).hidden = true;
+    const path = whereIs(slug);
+    card.innerHTML =
+      `<button type="button" class="lbs-card-x" data-act="card-close" aria-label="Close">${ICON_CLOSE}</button>` +
+      `<div class="lbs-card-body"><button type="button" class="lbs-card-poster" data-act="f-open" data-slug="${esc(slug)}" data-name="${esc(name)}"><img data-poster="${esc(slug)}" alt=""></button>` +
+      `<div><b>${esc(titleOf(name))}</b> <span>${yearOf(name) || ""}</span>` +
+      `<p>${path ? `${esc(path[1] || "")}${path[2] ? ` › ${esc(path[2])}` : ""}` : "Not in the store yet"}</p>` +
+      `<button type="button" class="lbs-card-more" data-act="f-open" data-slug="${esc(slug)}" data-name="${esc(name)}">See the box and details</button></div></div>` +
+      filmActs(slug, name);
+    card.hidden = false;
+    fillPosters(card, true);
+  }
+
   /* ---------------- editing the store (moderators) ---------------- */
 
   function toggleEdit(on) {
@@ -2315,6 +2600,8 @@
     edit.renaming = edit.deleting = null;
     if (!on) edit.sel = null;
     root.classList.toggle("lbs-editing", on);
+    root.classList.toggle("lbs-browsing", !on);
+    if (!on) { desk.mode = "store"; closeFilm(); }
     const b = $(".lbs-edit-toggle", root);
     if (b) { b.setAttribute("aria-pressed", on); b.textContent = on ? "Done editing" : "Edit store"; }
     refresh();
@@ -2530,7 +2817,7 @@
     for (const f of here) { const d = Math.abs(f.x + f.w / 2 - p.x); if (d < best) { best = d; near = f; } }
     const after = near ? p.x > near.x + near.w / 2 : true;
     const same = filmSection(slug) === cid;
-    const ok = !same || sortOf(cid) === "index";
+    const ok = !edit.on || !same || sortOf(cid) === "index";
     const lineX = near ? (after ? near.x + near.w + 1 : near.x - 1) : run.x0;
     return { dvd: true, cid, target: near && near.slug, sub: near && near.sub, after, ok, same, bay: b, shelf: sh, x: lineX - 2, w: 4 };
   }
@@ -2584,12 +2871,17 @@
     d.ghost.style.top = `${e.clientY + 8}px`;
     const c = wall.canvas, r = c.getBoundingClientRect();
     const over = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
-    wall.dropHint = over ? (d.kind === "piece" ? (d.pour ? pourTarget(d, e.clientX - r.left, e.clientY - r.top) : d.group ? groupTarget(d, e.clientX - r.left, e.clientY - r.top) : dropTarget(d, e.clientX - r.left, e.clientY - r.top)) : edit.on ? dvdTarget(d.slug, e.clientX - r.left, e.clientY - r.top) : null) : null;
+    wall.dropHint = over ? (d.kind === "piece" ? (d.pour ? pourTarget(d, e.clientX - r.left, e.clientY - r.top) : d.group ? groupTarget(d, e.clientX - r.left, e.clientY - r.top) : dropTarget(d, e.clientX - r.left, e.clientY - r.top)) : dvdTarget(d.slug, e.clientX - r.left, e.clientY - r.top)) : null;
     root.querySelectorAll(".lbs-folder.-over").forEach((el) => el.classList.remove("-over"));
     const folder = d.kind === "dvd" && document.elementFromPoint(e.clientX, e.clientY)?.closest?.(".lbs-folder[data-drop]");
     // Hold a film over a folder to open it, as when dragging.
     if (folder && folder.dataset.drop && (lib.genres.has(folder.dataset.drop) || lib.cats.has(folder.dataset.drop))) {
-      if (d.spring !== folder.dataset.drop) { d.spring = folder.dataset.drop; clearTimeout(d.springT); d.springT = setTimeout(() => { if (grab === d) openFolder(d.spring); }, 600); }
+      if (d.spring !== folder.dataset.drop) {
+        d.spring = folder.dataset.drop;
+        const inSort = !!folder.closest(".lbs-sortpanel");
+        clearTimeout(d.springT);
+        d.springT = setTimeout(() => { if (grab !== d) return; if (inSort) { ui.sortFolder = d.spring; renderSortPanel(); } else openFolder(d.spring); }, 600);
+      }
     } else { d.spring = null; clearTimeout(d.springT); }
     if (folder) folder.classList.add("-over");
     drawSoon();
@@ -2607,7 +2899,7 @@
       return drawSoon();
     }
     const el = document.elementFromPoint(e.clientX, e.clientY);
-    const toTray = el && el.closest && el.closest(".lbs-tray");
+    const toTray = el && el.closest && el.closest(".lbs-tray, .lbs-pocket, .lbs-pocket-tab");
     if (d.kind === "piece") {
       if (toTray && d.group) {
         const keep = new Set(groupRefs(grabCid(d)).map((r) => r.ref));
@@ -2629,6 +2921,7 @@
       if (d.from === "tray") releaseFilm(d.slug);
       return moveFilms([[d.slug, d.name]], folder.dataset.drop);
     }
+    if (!edit.on) { if (hint) return browseDrop(d.slug, d.name, hint); return drawSoon(); }
     if (hint && hint.ok) return dropDvd(d.slug, d.name, hint);
     if (hint && !hint.ok) toast(`To arrange ${nameOf(hint.cid)} by hand, click its sign and choose “Index”.`);
     drawSoon();
@@ -2921,7 +3214,7 @@
   }
 
   function onDrop(e) {
-    const inv = !dragFolder && dragging && e.target.closest && e.target.closest(".lbs-tray");
+    const inv = !dragFolder && dragging && e.target.closest && e.target.closest(".lbs-tray, .lbs-pocket, .lbs-pocket-tab");
     if (inv) { e.preventDefault(); const films = dragging; onDragEnd(); return holdFilms(films); }
     if (dragFolder) {
       const d = folderDrop(e), id = dragFolder;
@@ -2985,8 +3278,28 @@
     }
     const act = btn.dataset.act;
     const id = btn.dataset.id;
-    if (act === "logo-pick") return pickLogo(btn.dataset.slug, +btn.dataset.n);
+    if (act === "logo-pick") { pickLogo(btn.dataset.slug, +btn.dataset.n); if (ui.film) renderFilm(); return; }
     if (act === "edit") return toggleEdit(!edit.on);
+    {
+      const fs = btn.dataset.slug, fn = btn.dataset.name || (ui.film && ui.film.name) || fs;
+      if (act === "f-close") return closeFilm();
+      if (act === "f-open") return openFilm(fs, fn);
+      if (act === "f-hold") { holdFilms([[fs, fn]]); ui.pocket = true; renderPocket(); return toast(`‘${titleOf(fn)}’ is in your inventory.`); }
+      if (act === "f-jump") return jumpTo(fs, fn);
+      if (act === "f-edit") { if (!ui.film || ui.film.slug !== fs) { ui.film = { slug: fs, name: fn }; filmDetails(fs).then((d) => ui.film && ui.film.slug === fs && renderFilm(d)); } ui.pane = ui.pane === "edit" ? null : "edit"; return renderFilm(); }
+      if (act === "f-sort") return openSort(fs, fn);
+      if (act === "f-return") { releaseFilm(fs); renderPocket(); drawSoon(); return toast(`‘${titleOf(fn)}’ is back on the shelf.`); }
+      if (act === "f-color-reset") { delete mine.colors[fs]; saveMine(); drawSoon(); return renderFilm(); }
+      if (act === "pocket") { ui.pocket = !ui.pocket; return renderPocket(); }
+      if (act === "find-pick") return showCard(fs, fn);
+      if (act === "card-close") { $(".lbs-card", root).hidden = true; return; }
+      if (act === "sp-close") { ui.sortFilm = null; return renderSortPanel(); }
+      if (act === "sp-open") { e.stopPropagation(); ui.sortFolder = id || null; ui.sortAdding = null; return renderSortPanel(); }
+      if (act === "sp-up") { const p = partsOf(ui.sortFolder); ui.sortFolder = p.sub ? p.cat : p.cat ? p.genre : null; return renderSortPanel(); }
+      if (act === "sp-move") { e.stopPropagation(); moveFilms([ui.sortFilm], id); return renderSortPanel(); }
+      if (act === "sp-add") { ui.sortAdding = ui.sortFolder; return renderSortPanel(); }
+      if (act === "ask-no" || act === "ask-yes") { const box = $(".lbs-ask", root); box.hidden = true; if (act === "ask-yes" && box._yes) box._yes(); box._yes = null; return; }
+    }
     if (act === "sort") return setSort(id, btn.dataset.v);
     if (act === "grab") { edit.grab = btn.dataset.v; return renderTray(); }
     if (act === "w-clear") return houseEdit("Everything is back in the inventory.", (H) => { H.wall = { perRow: wall.plan.perRow, shelves: {} }; });
@@ -3091,6 +3404,16 @@
   }
 
   function onInput(e) {
+    if (e.target.classList.contains("lbs-find-q")) return runFind(e.target.value);
+    if (e.target.classList.contains("lbs-f-color")) {
+      mine.colors[e.target.dataset.slug] = e.target.value.slice(1);
+      saveMine();
+      if (wall.lay) recolourSections();
+      drawSoon();
+      const box = $(".lbs-filmview .lbs-box", root);
+      if (box) box.style.setProperty("--spine", e.target.value);
+      return;
+    }
     if (e.target.classList.contains("lbs-fq")) {
       desk.q = e.target.value;
       if (desk.mode === "store" && desk.q) desk.mode = "list";
@@ -3105,6 +3428,31 @@
   }
 
   function onFieldKey(e) {
+    if (e.target.classList.contains("lbs-find-q")) {
+      const items = [...root.querySelectorAll(".lbs-find-list li[data-slug]")];
+      const at = items.findIndex((li) => li.classList.contains("-on"));
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        const n = items.length ? (at + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length : -1;
+        items.forEach((li, k) => li.classList.toggle("-on", k === n));
+      } else if (e.key === "Enter") {
+        const li = items[at >= 0 ? at : 0];
+        if (li) { e.preventDefault(); showCard(li.dataset.slug, li.dataset.name); }
+      } else if (e.key === "Escape") { $(".lbs-find-list", root).hidden = true; $(".lbs-card", root).hidden = true; }
+      return;
+    }
+    if (e.target.classList.contains("lbs-sp-new")) {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        const level = partsOf(ui.sortFolder).cat ? "sub" : "cat";
+        const parent = ui.sortFolder;
+        addFolder(level, parent, e.target.value);
+        ui.sortAdding = null;
+        if (desk.folder && desk.folder !== parent) ui.sortFolder = desk.folder;
+        renderSortPanel();
+      } else if (e.key === "Escape") { e.preventDefault(); ui.sortAdding = null; renderSortPanel(); }
+      return;
+    }
     if (e.target.classList.contains("lbs-rename")) {
       if (e.key === "Enter") { e.preventDefault(); renameFolder(edit.renaming, e.target.value); }
       else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); edit.renaming = null; renderFolders(); }
