@@ -1214,9 +1214,18 @@
   const BAR_MIN_VISITS = 15; // and not before 15 Letterboxd page loads
   const BAR_EVERY_MS = 7 * 864e5; // then at most once a week
   const BAR_QUIET_AFTER_SEND_MS = 30 * 864e5; // and not for 30 days after you send feedback
-  const barState = { installedAt: 0, lastAuto: 0, noAuto: false, open: false, ...readJSON(BAR_KEY, {}) };
-  if (!barState.installedAt) barState.installedAt = Date.now();
-  const saveBar = () => writeJSON(BAR_KEY, barState);
+  const BAR_DEFAULTS = { installedAt: 0, lastAuto: 0, lastSent: 0, visits: 0, noAuto: false, open: false };
+  const barState = { ...BAR_DEFAULTS, ...readJSON(BAR_KEY, {}) };
+  // Re-read before every write, so two open tabs never overwrite each other's
+  // changes (e.g. a "dismiss permanently" in one tab). `patch` may be a function
+  // of the freshly stored state.
+  function saveBar(patch) {
+    const fresh = { ...BAR_DEFAULTS, ...readJSON(BAR_KEY, {}) };
+    Object.assign(fresh, typeof patch === "function" ? patch(fresh) : patch);
+    if (!fresh.installedAt) fresh.installedAt = Date.now();
+    writeJSON(BAR_KEY, fresh);
+    Object.assign(barState, fresh);
+  }
   const ICON_CUP = svg(
     "0 0 24 24",
     '<path d="M4 9h12v5.5A4.5 4.5 0 0 1 11.5 19h-3A4.5 4.5 0 0 1 4 14.5z" fill="currentColor"/><path d="M16 10.5h1.6a2.4 2.4 0 0 1 0 4.8H16" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8 3.5c-.7.9-.7 1.8 0 2.7M11.5 3.5c-.7.9-.7 1.8 0 2.7" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>'
@@ -1233,20 +1242,19 @@
   function injectBar() {
     if (!FEEDBACK_BAR || barEl || !document.body) return;
     const now = Date.now();
-    barState.visits = (barState.visits || 0) + 1;
     // A pop-up lasts for this page only: if you ignore it, it's gone next page.
     let popNow = false;
-    if (
-      !barState.noAuto &&
-      now - barState.installedAt > BAR_GRACE_MS &&
-      barState.visits >= BAR_MIN_VISITS &&
-      now - (barState.lastAuto || 0) > BAR_EVERY_MS &&
-      now - (barState.lastSent || 0) > BAR_QUIET_AFTER_SEND_MS
-    ) {
-      barState.lastAuto = now;
-      popNow = true;
-    }
-    saveBar();
+    saveBar((st) => {
+      const visits = st.visits + 1;
+      popNow =
+        !st.noAuto &&
+        st.installedAt > 0 &&
+        now - st.installedAt > BAR_GRACE_MS &&
+        visits >= BAR_MIN_VISITS &&
+        now - st.lastAuto > BAR_EVERY_MS &&
+        now - st.lastSent > BAR_QUIET_AFTER_SEND_MS;
+      return popNow ? { visits, lastAuto: now } : { visits };
+    });
 
     barEl = document.createElement("aside");
     barEl.className = `${NS}-bar`;
@@ -1261,14 +1269,16 @@
       `<form class="${NS}-bar-form"><input class="${NS}-bar-input" type="text" maxlength="2000" autocomplete="off" ` +
       `placeholder="Feedback? Suggestions? Insults? Type here and hit enter!" aria-label="Send feedback about LetterBloxd" ` +
       `title="Sends your message, the extension version, your browser and OS, the kind of page you're on (never its address) and your LetterBloxd settings. Nothing else."></form>` +
-      `<button type="button" class="${NS}-bar-dismiss" data-tip="Dismiss permanently" aria-label="Dismiss permanently">ø</button>` +
+      `<button type="button" class="${NS}-bar-dismiss" data-tip="Dismiss permanently" aria-label="Dismiss permanently">${svg("0 0 24 24", '<circle cx="12" cy="12" r="7.2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M7.4 16.6L16.6 7.4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>')}</button>` +
+      `<button type="button" class="${NS}-bar-close" title="Hide" aria-label="Hide">${svg("0 0 24 24", '<path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>')}</button>` +
       `</div>`;
 
     const input = barEl.querySelector(`.${NS}-bar-input`);
     barEl.querySelector(`.${NS}-bar-tab`).addEventListener("click", () => setBarOpen(true, true));
     barEl.querySelector(`.${NS}-bar-collapse`).addEventListener("click", () => setBarOpen(false));
+    barEl.querySelector(`.${NS}-bar-close`).addEventListener("click", () => setBarOpen(false));
     barEl.querySelector(`.${NS}-bar-dismiss`).addEventListener("click", () => {
-      barState.noAuto = true;
+      saveBar({ noAuto: true });
       setBarOpen(false);
     });
     // Keep Letterboxd's keyboard shortcuts out of the text box.
@@ -1288,8 +1298,7 @@
           if (!r.declined) toast(r.reason || "Couldn't send your feedback.", true);
           return;
         }
-        barState.lastSent = Date.now();
-        saveBar();
+        saveBar({ lastSent: Date.now() });
         input.blur();
         toast("Submitted!");
       });
@@ -1302,8 +1311,7 @@
   // `remember`: keep it open across pages (you opened it yourself).
   function setBarOpen(open, focus = false, remember = true) {
     if (remember) {
-      barState.open = open;
-      saveBar();
+      saveBar({ open });
     }
     if (!barEl) return;
     barEl.dataset.open = String(open);
