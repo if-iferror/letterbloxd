@@ -255,6 +255,33 @@
   mine = { place: {}, cats: {}, subs: {}, recent: [], view: "community", sort: {}, held: [], colors: {}, wash: {}, ...mine };
   const saveMine = () => writeJSON(MINE_KEY, mine);
 
+  /* What everyone has changed (the store's shared edits), folded by the
+   * backend into one small state file and fetched once per visit. Layers:
+   * built-in defaults < house plan < shared edits < your own edits. */
+  let shared = { place: {}, logo: {}, color: {}, wash: {}, franchises: {}, cats: {}, subs: {} };
+  function applySharedState(data) {
+    const next = { place: {}, logo: {}, color: {}, wash: {}, franchises: {}, cats: {}, subs: {} };
+    const parse = (v) => { try { return typeof v === "string" && /^[\[{"]|^null$|^-?\d/.test(v) ? JSON.parse(v) : v; } catch { return v; } };
+    for (const [kind, target, raw] of Object.values((data && data.edits) || {})) {
+      const v = parse(raw);
+      if (v == null || v === "") continue;
+      if (kind === "place") next.place[target] = v;
+      else if (kind === "logo") next.logo[target] = v === "plain" ? -1 : v;
+      else if (kind === "color") next.color[target] = String(v).replace("#", "");
+      else if (kind === "wash") next.wash[target] = v;
+      else if (kind === "franchise" && v.films) next.franchises[target] = v;
+      else if (kind === "add-section" && v.parent) next.cats[target] = { genre: v.parent, name: v.name };
+      else if (kind === "add-subsection" && v.parent) next.subs[target] = { cat: v.parent, name: v.name };
+    }
+    shared = next;
+  }
+  // Franchises: shared ones (films as slugs) plus your own (films as [slug, name]).
+  function allFranchises() {
+    const out = {};
+    for (const [id, f] of Object.entries(shared.franchises)) out[id] = { ...f, films: f.films.map((x) => (Array.isArray(x) ? x : [x, (lib && lib.names.get(x)) || x])) };
+    return Object.assign(out, mine.franchises || {});
+  }
+
   let lib = null; // built from stock + mine; see buildLibrary()
   let defaults = null; // slug -> sub id, the house placement
 
@@ -281,6 +308,13 @@
     let id = base;
     for (let n = 2; lib.cats.has(id) || lib.subs.has(id) || house().cats[id] || house().subs[id]; n++) id = `${base}-${n}`;
     return id;
+  }
+
+  let sharedLoaded = false;
+  function loadSharedEdits() {
+    if (sharedLoaded) return;
+    sharedLoaded = true;
+    ext("state", {}).then((data) => { applySharedState(data); refresh(); }).catch(() => {});
   }
 
   function loadSharedHouse() {
@@ -356,9 +390,11 @@
     }
     const H = house();
     for (const [id, c] of Object.entries(H.cats)) if (genres.has(c.genre) && !cats.has(id)) addCat({ id, genre: c.genre, name: c.name, house: true, order: 1 });
+    for (const [id, c] of Object.entries(shared.cats)) if (genres.has(c.genre) && !cats.has(id)) addCat({ id, genre: c.genre, name: c.name, order: 1 });
     for (const [id, c] of Object.entries(mine.cats)) if (genres.has(c.genre) && !cats.has(id)) addCat({ id, genre: c.genre, name: c.name, own: true, order: 1 });
     for (const c of cats.values()) addSub({ id: `${c.id}/general`, cat: c.id, name: "General", order: 99 });
     for (const [id, s] of Object.entries(H.subs)) if (cats.has(s.cat) && !subs.has(id)) addSub({ id, cat: s.cat, name: s.name, house: true, order: 50 });
+    for (const [id, s] of Object.entries(shared.subs)) if (cats.has(s.cat) && !subs.has(id)) addSub({ id, cat: s.cat, name: s.name, order: 50 });
     for (const [id, s] of Object.entries(mine.subs)) if (cats.has(s.cat) && !subs.has(id)) addSub({ id, cat: s.cat, name: s.name, own: true, order: 50 });
     // Deleted folders (never a genre, "Everything Else" or "General").
     for (const id of H.hidden) {
@@ -386,6 +422,7 @@
       place.set(slug, sub);
       if (name && !names.has(slug)) names.set(slug, name);
     }
+    if (!edit.on) for (const [slug, sub] of Object.entries(shared.place)) if (subs.has(sub)) place.set(slug, sub);
     if (mine.view === "mine" && !edit.on) {
       for (const [slug, [sub, name]] of Object.entries(mine.place)) {
         if (!subs.has(sub)) continue;
@@ -394,7 +431,7 @@
       }
     }
     // Franchises: every film sits where #1 sits.
-    for (const fr of Object.values(mine.franchises || {})) {
+    for (const fr of Object.values(allFranchises())) {
       const lead = fr.films.find(([s]) => place.has(s));
       if (!lead) continue;
       const at = place.get(lead[0]);
@@ -1209,7 +1246,7 @@
   }
   // A franchise's films come together, in franchise order, where #1 falls.
   function groupFranchises(list) {
-    const frs = Object.values(mine.franchises || {});
+    const frs = Object.values(allFranchises());
     if (!frs.length) return list;
     const owner = new Map();
     frs.forEach((fr, k) => fr.films.forEach(([s], i) => owner.set(s, [k, i])));
@@ -1432,8 +1469,8 @@
     }
     for (const sec of secs) sec.highlights = [...sec.films].sort((a, b) => films[a].rank - films[b].rank).slice(0, 3);
     // Franchise stickers: one per unbroken run of a franchise on a shelf.
-    const frList = Object.values(mine.franchises || {});
-    const frIds = Object.keys(mine.franchises || {});
+    const frList = Object.values(allFranchises());
+    const frIds = Object.keys(allFranchises());
     const stickers = [];
     for (const list of chunks.values()) {
       let run = null;
@@ -1519,7 +1556,10 @@
    * file so nobody has to build it themselves. */
   const COLOR_KEY = `${NS}:store:colors:v1`;
   // A film's colours: your own pick if you made one, else the poster's.
-  const colorOf = (slug) => (mine.colors && mine.colors[slug] ? mine.colors[slug] + ((colors[slug] || "").slice(6) || mine.colors[slug]) : colors[slug]);
+  const colorOf = (slug) => {
+    const pick = (mine.colors && mine.colors[slug]) || shared.color[slug];
+    return pick ? pick + ((colors[slug] || "").slice(6) || pick) : colors[slug];
+  };
   const colors = readJSON(COLOR_KEY, {});
   const colorJob = { running: false, done: 0, total: 0 };
   let colorSaveTimer = 0;
@@ -1629,7 +1669,7 @@
   const logoEntry = (slug) => logoIndex.films[slug] || (logoShared && logoShared[slug]) || null;
   // The logo on a film's spine: your pick (a TMDB path), "plain" (-1), or the index's first.
   function logoPath(slug) {
-    const pick = logoPicks[slug];
+    const pick = slug in logoPicks ? logoPicks[slug] : shared.logo[slug];
     if (pick === -1) return null;
     if (typeof pick === "string" && pick) return pick;
     const e = logoEntry(slug);
@@ -2096,7 +2136,7 @@
                 let len = Math.min(span, thick * a), th = len / a;
                 if (th > thick) { th = thick; len = th * a; }
                 // Logo colour wash: off unless chosen for this film (Edit).
-                const wash = mine.wash && mine.wash[f.slug];
+                const wash = (mine.wash && mine.wash[f.slug]) || shared.wash[f.slug];
                 ctx.drawImage(wash ? logoInk(lg, wash) : lg.img, mid - len / 2, -th / 2, len, th);
               } else {
                 ctx.font = `700 ${fs}px "Helvetica Neue", Arial, sans-serif`;
@@ -2412,6 +2452,7 @@
       runColorJob();
       loadSharedLogos();
       loadSharedHouse();
+      loadSharedEdits();
       const fresh = wall.canvas !== canvas;
       wall.canvas = canvas;
       buildLayout();
@@ -2513,7 +2554,7 @@
       // A franchise sticker on the back wall: edit its colour and title art.
       const p = toWall(e.offsetX, e.offsetY);
       const st = (wall.lay.stickers || []).find((q) => p.x >= q.x0 - 2 && p.x <= q.x1 + 2 && p.y <= q.y && p.y >= q.y - (WU.shelfH - WU.lip));
-      if (st && st.id) { const fr = mine.franchises[st.id]; if (fr) { openFranchise(fr.films[0][0], fr.films[0][1]); ui.fr.sticker = true; renderFranchise(); } }
+      if (st && st.id) { const fr = allFranchises()[st.id]; if (fr) { openFranchise(fr.films[0][0], fr.films[0][1]); ui.fr.sticker = true; renderFranchise(); } }
     });
     c.tabIndex = 0;
     c.addEventListener("keydown", (e) => {

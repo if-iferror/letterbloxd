@@ -92,23 +92,54 @@ async function storeLogos({ id }) {
   for (const m of html.matchAll(/\/t\/p\/w500\/([A-Za-z0-9]+\.(?:png|svg))/g)) seen.add(m[1]);
   return { ok: true, data: [...seen] };
 }
+// The store's shared-edits backend (see tools/store-backend.gs). Until it's
+// set up, edits go to the feedback form, marked [store].
+const STORE = {
+  form: "", // .../formResponse of "LetterBloxd store edits"
+  entries: { kind: "", target: "", value: "", meta: "" },
+  state: "", // the web app URL (doGet)
+};
 async function storeEdit({ kind, target, value }) {
   if (!(await haveConsent())) return { ok: false, reason: "not allowed" };
-  const e = FORM.entries;
   const body = new URLSearchParams();
-  body.set(e.text, `[store] ${String(kind).slice(0, 40)} ${String(target).slice(0, 200)}`);
-  body.set(e.details, JSON.stringify({ v: api.runtime.getManifest().version, kind, target, value, at: new Date().toISOString() }).slice(0, 4000));
+  const meta = JSON.stringify({ v: api.runtime.getManifest().version, at: new Date().toISOString() });
+  let url = FORM.url;
+  if (STORE.form) {
+    url = STORE.form;
+    body.set(STORE.entries.kind, String(kind).slice(0, 60));
+    body.set(STORE.entries.target, String(target).slice(0, 300));
+    body.set(STORE.entries.value, JSON.stringify(value ?? null).slice(0, 8000));
+    body.set(STORE.entries.meta, meta);
+  } else {
+    body.set(FORM.entries.text, `[store] ${String(kind).slice(0, 40)} ${String(target).slice(0, 200)}`);
+    body.set(FORM.entries.details, JSON.stringify({ kind, target, value, meta }).slice(0, 4000));
+  }
   try {
-    await fetch(FORM.url, { method: "POST", mode: "no-cors", body });
+    await fetch(url, { method: "POST", mode: "no-cors", body });
     return { ok: true };
   } catch {
     return { ok: false, reason: "offline" };
+  }
+}
+// Everyone's edits, folded: fetched at most every 5 minutes.
+let stateCache = null;
+async function storeState() {
+  if (!STORE.state) return { ok: true, data: { edits: {} } };
+  if (stateCache && Date.now() - stateCache.at < 300000) return { ok: true, data: stateCache.data };
+  try {
+    const r = await fetch(STORE.state, { credentials: "omit" });
+    const data = await r.json();
+    stateCache = { at: Date.now(), data };
+    return { ok: true, data };
+  } catch {
+    return stateCache ? { ok: true, data: stateCache.data } : { ok: false, reason: "offline" };
   }
 }
 
 api.runtime.onMessage.addListener((msg, _sender, reply) => {
   if (msg && msg.type === "store:logos") { storeLogos(msg.payload || {}).then(reply, () => reply({ ok: false })); return true; }
   if (msg && msg.type === "store:edit") { storeEdit(msg.payload || {}).then(reply, () => reply({ ok: false })); return true; }
+  if (msg && msg.type === "store:state") { storeState().then(reply, () => reply({ ok: false })); return true; }
   if (!msg || msg.type !== "feedback") return;
   send(msg.payload || {}).then(reply);
   return true; // reply later
