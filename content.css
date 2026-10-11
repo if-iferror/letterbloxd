@@ -761,6 +761,36 @@ li.lbni-tinted.lbni-pinned:not(:has(:focus-visible)) > .lbni-ind {
   border-radius: 50%;
   color: #9ab;
 }
+/* ø: dismiss permanently, with its own quick tooltip */
+.lbni-bar-dismiss {
+  position: relative;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1;
+}
+.lbni-bar-dismiss::after {
+  content: attr(data-tip);
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  padding: 4px 8px;
+  border-radius: 3px;
+  background: #def;
+  color: #14181c;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s;
+}
+.lbni-bar-dismiss:hover::after,
+.lbni-bar-dismiss:focus-visible::after {
+  opacity: 1;
+}
 /* Collapse arrow points up: the bar goes back up. */
 .lbni-bar-collapse svg {
   transform: rotate(-90deg);
@@ -830,15 +860,3 @@ li.lbni-tinted.lbni-pinned:not(:has(:focus-visible)) > .lbni-ind {
   top: 8px;
 }
 
-.lbni-bar-info {
-  flex: none;
-  margin-left: 6px;
-  color: #678;
-  font-size: 14px;
-  cursor: help;
-  outline: none;
-}
-.lbni-bar-info:hover,
-.lbni-bar-info:focus {
-  color: #def;
-}
