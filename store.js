@@ -1421,6 +1421,7 @@
     const have = !!readJSON(TMDB_KEY, "");
     const pct = logoJob.done ? Math.round((logoJob.found / logoJob.done) * 100) : 0;
     const counted = Object.keys(logoIndex.films).length;
+    if (!logoJob.running) logoJob.found = Object.values(logoIndex.films).filter((e) => e.length > 1).length;
     box.innerHTML =
       `<b>Title logos from TMDB</b>` +
       `<p>Matches each Horror film to TMDB and keeps its first logo. Your TMDB key stays in this browser; it's only used for this.</p>` +
