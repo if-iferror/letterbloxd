@@ -2316,8 +2316,8 @@
       `<div class="lbs-tray-top"><b>Workspace</b><span>${list.length ? `${list.length} piece${list.length === 1 ? "" : "s"} waiting.` : "Every piece is on the wall."} Drag pieces up onto shelves; zoom out to move them, zoom in to pull DVDs down here.</span>` +
       `<button type="button" data-act="w-auto">Auto-arrange</button><button type="button" data-act="w-clear">Everything down</button></div>` +
       `<div class="lbs-tray-list">` +
-      list.map((pc) => `<div class="lbs-piece" data-ref="${esc(pc.ref)}" style="width:${Math.round(14 + (pc.size / CAP) * 150)}px;--h:${secHue(pc.n)}" title="${esc(nameOf(pc.sec))}: piece ${pc.i + 1} of ${pc.of}, ${pc.count} films"><b>${esc(nameOf(pc.sec))}</b><span>${pc.i + 1}/${pc.of}</span></div>`).join("") +
       held.map(spine).join("") +
+      list.map((pc) => `<div class="lbs-piece" data-ref="${esc(pc.ref)}" style="width:${Math.round(14 + (pc.size / CAP) * 150)}px;--h:${secHue(pc.n)}" title="${esc(nameOf(pc.sec))}: piece ${pc.i + 1} of ${pc.of}, ${pc.count} films"><b>${esc(nameOf(pc.sec))}</b><span>${pc.i + 1}/${pc.of}</span></div>`).join("") +
       `</div>`;
   }
 
