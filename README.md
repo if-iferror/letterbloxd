@@ -1,38 +1,49 @@
 # LetterBloxd
 
-**Mark films "Not interested," add badges.** A free, open-source extension for Letterboxd, with a one-click watchlist button too.
+**Block the films you'll never watch.** A free, open-source extension for Letterboxd that adds a Block button, a tidier filter menu, status badges and one-click watchlisting.
 
-Letterboxd lets you hide films you've watched or watchlisted, but there's no way to say "I've seen the trailer, I'm never watching this." LetterBloxd adds that.
+Letterboxd can hide films you've watched or watchlisted, but there's no way to say "I've seen the trailer, I'm never watching this." LetterBloxd adds that.
 
-> Unofficial. LetterBloxd is a fan-made browser extension and isn't affiliated with or endorsed by Letterboxd.
+> Unofficial. LetterBloxd is a fan-made extension and isn't affiliated with or endorsed by Letterboxd.
 
 ## What's new in 1.3.0
 
-- New name: Letternoxd is now **LetterBloxd**, with a new icon.
+- New name (formerly Letternoxd) and a new icon.
 - The film-page button is now **Block**.
-- Ratings badges: a white outlined star and your rating; the Icons style no longer adds a rating pill under the badge.
-- Hover buttons on large posters (film pages, reviews, diary) are sized to match the poster.
-- The watchlist button sits in Letterboxd's own hover bar and reacts like Watch and Like.
-- Works in Firefox too.
-- A feedback bar (the megaphone tab at the top right) and a Buy Me a Coffee link.
+- Badges come in two styles: **Icons** or **Ratings**.
+- A feedback bar (the megaphone tab at the top right).
+- Works in Firefox.
 
-## What it does
+## Features
 
-- **Not interested (⃠)**: hover any poster and click ⃠ in the top-right corner. On a film's own page, use **Block** next to Watch / Like / Watchlist.
-- **A tidier filter menu**: Letterboxd's Show/Hide pairs become one row each (Show · Fade · Hide · Only), with Not interested, Liked and Watchlist fades added alongside its own "Fade watched films". Faded films keep their badges so you can tell them apart.
-- **One-click watchlist**: a watchlist button sits in each poster's hover bar, so you no longer need the "…" menu.
-- **Status badges**: a small badge in each poster's top-left corner. Choose the style with "Badges" in the eye menu: **Icons** (green eye for seen, orange heart for loved, blue clock for your watchlist), **Ratings** (a white star and your rating, e.g. ☆ 3.5) or **Off**.
-- **Rate in one click**: on hover, the top-left "…" becomes your rating ("☆ 3.5"), or "☆ Rate" for films you've seen but not rated. Click it to rate.
-- **Coloured fades**: fade watched films toward dark green, loved films toward dark orange and watchlist films toward dark blue, each on its own, so you can still tell them apart.
-- **Changed your mind?** Watching, loving or watchlisting a film takes it off "not interested" automatically, and its ⃠ stays greyed out until you undo those.
-- **Seen it? Off the watchlist.** Marking a film watched (or loving it) takes it off your watchlist too.
-- **Instant**: everything updates the moment you click, and films you've marked are hidden before the page finishes drawing.
+**Block films**
+- Hover any poster and click **Ø** in the top-right corner, or click **Block** on a film's page.
+- Blocked films are saved to a private "Not Interested" list on your own Letterboxd account, so they follow you to any computer.
 
-## Where your data lives
+**A tidier filter menu** (the eye icon above any film grid)
+- Not interested, Watched, Liked and Watchlist each get one row: **Show · Fade · Hide · Only**.
+- Fades are coloured and independent: watched toward green, liked toward orange, watchlist toward blue, so you can tell them apart at a glance.
 
-Films you mark are saved to a **private list called "Not Interested"** on your own Letterboxd account (the extension creates it the first time you click ⃠). Nothing is lost if you reinstall or switch computers, and you can edit the list on Letterboxd like any other.
+**Badges**
+- A small badge in each poster's corner. Pick a style under **Badges** in the eye menu: **Icons** (seen, loved, watchlisted), **Ratings** (☆ 3.5) or **Off**.
 
-LetterBloxd only talks to letterboxd.com, as you, and keeps its settings in your browser. The one exception is feedback: if you type into the feedback bar and press Enter, your message goes to the developer along with the extension version, your browser and OS, the kind of page you were on (never its address) and your LetterBloxd settings. No username, nothing else. Firefox asks before the first send. Details in [PRIVACY.md](PRIVACY.md).
+**Quick actions**
+- **Watchlist in one click** from each poster's hover bar, without the "…" menu.
+- **Rate in one click**: on hover, the "…" becomes your rating (☆ 3.5), or ☆ Rate if you've seen it but not rated it.
+
+**Tidies up after you**
+- Watching, liking or watchlisting a blocked film unblocks it automatically.
+- Marking a film watched takes it off your watchlist.
+- Everything updates the moment you click, and blocked films are hidden before the page finishes drawing.
+
+**Feedback**
+- A feedback bar (the megaphone tab at the top right). Type and press Enter.
+
+## Your data
+
+Blocked films live in a private "Not Interested" list on your Letterboxd account; edit it like any other list. Settings stay in your browser.
+
+LetterBloxd only talks to letterboxd.com, as you. The one exception is feedback you choose to send: your message, plus the extension version, your browser and OS, the kind of page you were on (never its address) and your LetterBloxd settings. No username, nothing else. Firefox asks before the first send. Details in [PRIVACY.md](PRIVACY.md).
 
 ## Install
 
@@ -62,17 +73,17 @@ Firefox removes temporary add-ons when it restarts, so for everyday use install 
 
 ## Good to know
 
-- The filter works after each page loads, so a page may show a few fewer posters than usual. A note under the grid says how many were hidden.
+- Pages may show a few fewer posters than usual; a note under the grid says how many were hidden.
 - Page totals (e.g. "1,234 films") still count hidden films.
 - Desktop browsers only; the Letterboxd apps aren't affected.
-- It relies on how Letterboxd's website works today, so a redesign may need an update.
+- A Letterboxd redesign may need an update.
 
 ## Troubleshooting
 
 Open the browser console on a Letterboxd page and run:
 
 - `lbNotInterested.state()` to see what the extension knows (your list, saved films, settings).
-- `lbNotInterested.resync()` to re-read your "Not Interested" list now. It otherwise refreshes every 6 hours, when you return to a tab after 10 minutes, and whenever you click ⃠.
+- `lbNotInterested.resync()` to re-read your "Not Interested" list now. It otherwise refreshes every 6 hours, when you return to a tab after 10 minutes, and whenever you click Ø.
 
 ## License
 
