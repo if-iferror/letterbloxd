@@ -49,7 +49,7 @@ LetterBloxd only talks to letterboxd.com, as you. The one exception is feedback 
 
 **From the Chrome Web Store** (Chrome, Arc, Brave, Edge): *link coming soon*.
 
-**From Firefox Add-ons** (Firefox 128 or later): *link coming soon*.
+**From Firefox Add-ons** (Firefox 142 or later): *link coming soon*.
 
 The same files work in both browsers.
 
