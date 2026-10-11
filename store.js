@@ -393,6 +393,13 @@
         if (!names.has(slug)) names.set(slug, name);
       }
     }
+    // Franchises: every film sits where #1 sits.
+    for (const fr of Object.values(mine.franchises || {})) {
+      const lead = fr.films.find(([s]) => place.has(s));
+      if (!lead) continue;
+      const at = place.get(lead[0]);
+      for (const [s, n] of fr.films) { place.set(s, at); if (!names.has(s)) names.set(s, n); }
+    }
     // A film whose folder was deleted drops one level: to its category's
     // General, or to the genre's Everything Else.
     const home = (sub) => {
@@ -1194,6 +1201,26 @@
   const sortOf = (cid) => (!edit.on && mine.sort[cid]) || house().sort[cid] || "title";
   // A section's films in shelf order (held films left out).
   function sectionOrder(cid) {
+    return groupFranchises(sectionOrderRaw(cid));
+  }
+  // A franchise's films come together, in franchise order, where #1 falls.
+  function groupFranchises(list) {
+    const frs = Object.values(mine.franchises || {});
+    if (!frs.length) return list;
+    const owner = new Map();
+    frs.forEach((fr, k) => fr.films.forEach(([s], i) => owner.set(s, [k, i])));
+    const out = [], done = new Set();
+    const bySlug = new Map(list.map((f) => [f.slug, f]));
+    for (const f of list) {
+      const o = owner.get(f.slug);
+      if (!o) { out.push(f); continue; }
+      if (done.has(o[0])) continue;
+      done.add(o[0]);
+      for (const [s] of frs[o[0]].films) if (bySlug.has(s)) out.push({ ...bySlug.get(s), fr: o[0] });
+    }
+    return out;
+  }
+  function sectionOrderRaw(cid) {
     const H = house();
     const held = new Set(H.held.map(([slug]) => slug));
     const list = [];
@@ -1222,9 +1249,9 @@
   function sectionStock() {
     const out = new Map();
     lib.genres.get(STOCKED).cats.forEach((cid, n) => {
-      const items = sectionOrder(cid).map(({ slug, name, sub }) => {
+      const items = sectionOrder(cid).map(({ slug, name, sub, fr }) => {
         const y = yearOf(name);
-        return { slug, name, year: y, w: spineW(y), h: spineH(y), sub, rank: lib.rank.get(slug) ?? 1e9 };
+        return { slug, name, year: y, w: spineW(y), h: spineH(y), sub, fr, rank: lib.rank.get(slug) ?? 1e9 };
       });
       out.set(cid, { id: cid, n, items, total: footprint(items) });
     });
@@ -1400,11 +1427,24 @@
       });
     }
     for (const sec of secs) sec.highlights = [...sec.films].sort((a, b) => films[a].rank - films[b].rank).slice(0, 3);
+    // Franchise stickers: one per unbroken run of a franchise on a shelf.
+    const frList = Object.values(mine.franchises || {});
+    const stickers = [];
+    for (const list of chunks.values()) {
+      let run = null;
+      for (const i of list) {
+        const f = films[i];
+        if (f.fr != null && run && run.fr === f.fr) { run.x1 = f.x + f.w; run.h = Math.max(run.h, f.h); continue; }
+        if (run) stickers.push(run);
+        run = f.fr != null ? { fr: f.fr, x0: f.x, x1: f.x + f.w, y: f.y, h: f.h, bay: f.bay, lead: frList[f.fr] && frList[f.fr].films[0][0], name: frList[f.fr] && frList[f.fr].name } : null;
+      }
+      if (run) stickers.push(run);
+    }
     // Edit mode keeps an empty bay at the end to drop pieces into.
     const bays = edit.on ? Math.max(maxBay + 2, Math.ceil(totalShelves / WU.shelves) + 1) : maxBay + 1;
     const width = Math.min(bays, perRow) * (WU.bayW + WU.gap);
     const height = Math.ceil(bays / perRow) * ROW_H;
-    wall.lay = { films, chunks, secs, runs, bookends, faces: [], idx, bucket, held: H.held, width, height, bays, k: perRow, origin };
+    wall.lay = { films, chunks, secs, runs, bookends, stickers, faces: [], idx, bucket, held: H.held, width, height, bays, k: perRow, origin };
     recolourSections();
     renderTray();
   }
@@ -1903,6 +1943,38 @@
       const vhs = f.year && f.year < 1990;
       return vhs ? `hsl(${hue} 10% ${10 + (hv % 9)}%)` : `hsl(${hue} ${32 + (hv % 22)}% ${f.year >= 2008 ? 36 + (hv % 14) : 24 + (hv % 14)}%)`;
     };
+
+    // Franchise stickers on the back wall: a colour block the width of the
+    // set, with #1's title art in the gap above the boxes.
+    if (z >= FAR && L.stickers) {
+      for (const st of L.stickers) {
+        if (!seen.has(st.bay) || st.x1 < x0 || st.x0 > x1) continue;
+        const own = colorOf(st.lead);
+        const top = st.y - (WU.shelfH - WU.lip) + 5;
+        ctx.fillStyle = own ? `#${own.slice(0, 6)}` : "#5a4a7a";
+        if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(st.x0 - 2, top, st.x1 - st.x0 + 4, st.y - top - 2, 3); ctx.fill(); }
+        else ctx.fillRect(st.x0 - 2, top, st.x1 - st.x0 + 4, st.y - top - 2);
+        ctx.fillStyle = "rgba(255,255,255,0.12)";
+        ctx.fillRect(st.x0 - 2, top, st.x1 - st.x0 + 4, 3);
+        const band = st.y - st.h - 3 - (top + 2);
+        if (band < 6) continue;
+        const lg = z >= LOGO_Z ? logoImg(st.lead, "w300") : null;
+        const bw = st.x1 - st.x0 - 8;
+        if (lg) {
+          const a = (lg.img.naturalWidth || 300) / (lg.img.naturalHeight || 100);
+          let w = Math.min(bw, band * a), hh = w / a;
+          const src = contrast(lg.lum, own ? relLum(rgbOf(own)) : 0.03) >= 2 ? lg.img : logoInk(lg, own && relLum(rgbOf(own)) > 0.35 ? "#15181b" : "#f4f1ea");
+          ctx.drawImage(src, (st.x0 + st.x1) / 2 - w / 2, top + 2 + (band - hh) / 2, w, hh);
+        } else if (z >= NEAR) {
+          ctx.font = `800 ${Math.min(band * 0.8, 16)}px Arial, sans-serif`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillStyle = own && lum(rgbOf(own)) > 0.6 ? "#14181c" : "#fff";
+          ctx.fillText((st.name || "").toUpperCase(), (st.x0 + st.x1) / 2, top + 2 + band / 2, bw);
+          ctx.textAlign = "left";
+        }
+      }
+    }
 
     {
       // Every spine in view (detail only up close).
@@ -2422,6 +2494,7 @@
   const whereIs = (slug) => { const sub = lib.place.get(slug); return sub && lib.subs.has(sub) ? pathOf(sub) : null; };
   const filmActs = (slug, name, extra = "") => {
     const a = (act, label, cls = "") => `<button type="button" class="lbs-fact ${cls}" data-act="${act}" data-slug="${esc(slug)}" data-name="${esc(name)}">${label}</button>`;
+    if (!lib.place.has(slug)) return `<div class="lbs-facts">${extra}${a("req-add", "Request addition", "-go")}${a("f-hold", "Add to inventory")}</div>`;
     return `<div class="lbs-facts">${extra}${a("f-hold", "Add to inventory")}${a("f-jump", "Jump to section")}${a("f-edit", "Edit")}${a("f-sort", "Sort")}</div>`;
   };
 
@@ -2540,11 +2613,17 @@
     });
   }
 
-  // Sort: the folders, on the right. Drag the film in, or press Move here.
+  /* Sort: where a film lives. Two columns, sections on the left and the
+   * chosen section's subsections on the right; pick a subsection and Move,
+   * or drag the film's tag onto one. Films only ever live in subsections. */
   function openSort(slug, name) {
     ui.sortFilm = [slug, name];
     const sub = lib.place.get(slug);
-    ui.sortFolder = sub && lib.subs.has(sub) ? lib.subs.get(sub).cat : STOCKED;
+    const p = sub && lib.subs.has(sub) ? partsOf(sub) : { genre: STOCKED };
+    ui.sortGenre = p.genre || STOCKED;
+    ui.sortCat = p.cat || null;
+    ui.sortSub = null;
+    ui.sortAdding = null;
     renderSortPanel();
   }
   function renderSortPanel() {
@@ -2552,35 +2631,139 @@
     if (!sp) return;
     if (!ui.sortFilm) { sp.hidden = true; return; }
     const [slug, name] = ui.sortFilm;
-    const p = partsOf(ui.sortFolder);
-    const ids = !ui.sortFolder ? [...lib.genres.keys()] : p.cat ? lib.cats.get(p.cat).subs : lib.genres.get(p.genre).cats;
-    const level = !ui.sortFolder ? null : p.cat ? "sub" : "cat";
     const here = lib.place.get(slug);
-    const row = (id) =>
-      `<li class="lbs-folder${here === id || (lib.cats.has(id) && here && here.startsWith(id + "/")) ? " -here" : ""}" data-act="sp-open" data-id="${esc(id)}" data-drop="${esc(id)}">${ICON_FOLDER}<span class="lbs-folder-name">${esc(nameOf(id))}</span><span class="lbs-n">${fmt(lib.count.get(id) || 0)}</span>` +
-      `<button type="button" class="lbs-move-here" data-act="sp-move" data-id="${esc(id)}">Move here</button>${lib.subs.has(id) ? "" : '<i class="lbs-chev">›</i>'}</li>`;
-    const adder = level
-      ? ui.sortAdding === ui.sortFolder
-        ? `<li class="lbs-adding"><input type="text" class="lbs-sp-new" maxlength="40" placeholder="${level === "cat" ? "New section" : "New subsection"}"></li>`
-        : `<li class="lbs-add"><button type="button" data-act="sp-add">+ Add ${level === "cat" ? "section" : "subsection"}</button></li>`
-      : "";
+    const herePath = here && lib.subs.has(here) ? pathOf(here) : null;
+    const g = lib.genres.get(ui.sortGenre) || lib.genres.get(STOCKED);
+    if (ui.sortCat && !lib.cats.has(ui.sortCat)) ui.sortCat = null;
+    const cats = g.cats;
+    const hue = (cid) => { const sec = wall.lay && wall.lay.secs.find((x) => x.id === cid); return sec ? `hsl(${sec.hue} 60% 50%)` : "#567"; };
+    const catRow = (cid) =>
+      `<li class="lbs-sp-row${ui.sortCat === cid ? " -sel" : ""}" data-act="sp-cat" data-id="${esc(cid)}"><i style="background:${hue(cid)}"></i><span>${esc(nameOf(cid))}</span>${here && here.startsWith(cid + "/") ? '<em>here</em>' : ""}<small>${fmt(lib.count.get(cid) || 0)}</small></li>`;
+    const subRow = (sid) =>
+      `<li class="lbs-sp-row lbs-folder${ui.sortSub === sid ? " -sel" : ""}${here === sid ? " -here" : ""}" data-act="sp-sub" data-id="${esc(sid)}" data-drop="${esc(sid)}"><span>${esc(nameOf(sid))}</span>${here === sid ? '<em>here</em>' : ""}<small>${fmt(lib.count.get(sid) || 0)}</small></li>`;
+    const adding = (lvl) =>
+      ui.sortAdding === lvl
+        ? `<li class="lbs-sp-new-row"><input type="text" class="lbs-sp-new" data-level="${lvl}" maxlength="40" placeholder="${lvl === "cat" ? "Name the new section" : "Name the new subsection"}"></li>`
+        : `<li class="lbs-sp-add"><button type="button" data-act="sp-add" data-level="${lvl}">+ New ${lvl === "cat" ? "section" : "subsection"}</button></li>`;
+    const target = ui.sortSub && ui.sortSub !== here ? ui.sortSub : null;
+    const fr = franchiseOf(slug);
     sp.innerHTML =
-      `<div class="lbs-sp-top"><b>Sort</b><button type="button" data-act="sp-close" aria-label="Close">${ICON_CLOSE}</button></div>` +
-      `<div class="lbs-sp-film"><div class="lbs-dvd lbs-sp-chip" data-slug="${esc(slug)}" data-name="${esc(name)}" style="--c:${colorOf(slug) ? `#${colorOf(slug).slice(0, 6)}` : "#2c3440"}">${esc(titleOf(name))}</div><small>Drag it into a folder${here && lib.subs.has(here) ? `. Now in ${esc(pathOf(here).slice(1).join(" › "))}` : ""}</small></div>` +
-      `<div class="lbs-where">` +
-      `<button type="button" class="lbs-up" data-act="sp-up"${ui.sortFolder ? "" : " disabled"}>${ICON_UP}</button>` +
-      `<button type="button" class="lbs-crumb" data-act="sp-open" data-id="">All genres</button>` +
-      (ui.sortFolder ? pathOf(ui.sortFolder).map((n, k, all) => { const id = [p.genre, p.cat, p.sub][k]; return `<i>›</i><button type="button" class="lbs-crumb" data-act="sp-open" data-id="${esc(id)}" data-drop="${esc(id)}">${esc(n)}</button>`; }).join("") : "") +
-      `</div><ul class="lbs-sp-list">${ids.map(row).join("")}${adder}</ul>`;
+      `<div class="lbs-sp-head">` +
+      `<div class="lbs-sp-film"><img data-poster="${esc(slug)}" alt=""><div class="lbs-sp-chip" data-slug="${esc(slug)}" data-name="${esc(name)}" title="Drag onto a subsection"><b>${esc(titleOf(name))}</b> <span>${yearOf(name) || ""}</span><small>${herePath ? `Now in ${esc(herePath.slice(1).join(" › "))}` : "Not on the shelves yet"}</small></div></div>` +
+      `<button type="button" class="lbs-sp-x" data-act="sp-close" aria-label="Close">${ICON_CLOSE}</button></div>` +
+      `<div class="lbs-sp-genre"><label>Genre <select class="lbs-sp-genre-pick">${[...lib.genres.values()].map((x) => `<option value="${esc(x.id)}"${x.id === g.id ? " selected" : ""}>${esc(x.name)}</option>`).join("")}</select></label></div>` +
+      `<div class="lbs-sp-cols">` +
+      `<div class="lbs-sp-col"><h5>Sections</h5><ul>${cats.map(catRow).join("")}${adding("cat")}</ul></div>` +
+      `<div class="lbs-sp-col"><h5>${ui.sortCat ? esc(nameOf(ui.sortCat)) : "Subsections"}</h5><ul>${ui.sortCat ? lib.cats.get(ui.sortCat).subs.map(subRow).join("") + adding("sub") : '<li class="lbs-sp-hint">Pick a section</li>'}</ul></div>` +
+      `</div>` +
+      `<div class="lbs-sp-foot">` +
+      `<button type="button" class="lbs-sp-move" data-act="sp-move"${target ? "" : " disabled"}>${target ? `Move to ${esc(nameOf(target))}` : "Pick a subsection"}</button>` +
+      `<button type="button" class="lbs-sp-ghost" data-act="fr-open">${fr ? `Franchise: ${esc(fr.name)}` : "Add to franchise"}</button>` +
+      `<button type="button" class="lbs-sp-link" data-act="req-remove-film">Request removal</button>` +
+      `</div>`;
     sp.hidden = false;
+    fillPosters(sp, false);
     const inp = $(".lbs-sp-new", sp);
     if (inp) inp.focus();
   }
 
-  // A small yes/no question over the store.
-  function ask(text, yes) {
+  /* Franchises: films that belong together on the shelf, in a set order.
+   * They all sit where the first one would, as one block, with a sticker
+   * on the back wall behind them. */
+  const franchises = () => mine.franchises || (mine.franchises = {});
+  const franchiseOf = (slug) => { for (const [id, f] of Object.entries(franchises())) if (f.films.some(([s]) => s === slug)) return { id, ...f }; return null; };
+  function openFranchise(slug, name) {
+    const fr = franchiseOf(slug);
+    ui.fr = fr ? { id: fr.id, name: fr.name, films: fr.films.slice() } : { id: null, name: `${titleOf(name)} series`, films: [[slug, name]] };
+    renderFranchise();
+  }
+  function renderFranchise() {
     const box = $(".lbs-ask", root);
-    box.innerHTML = `<div class="lbs-ask-card"><p>${text}</p><div><button type="button" data-act="ask-no">No</button><button type="button" data-act="ask-yes" class="-go">Yes, change it</button></div></div>`;
+    const fr = ui.fr;
+    if (!fr) { box.hidden = true; return; }
+    box.innerHTML =
+      `<div class="lbs-fr" role="dialog" aria-label="Franchise">` +
+      `<div class="lbs-fr-top"><input type="text" class="lbs-fr-name" value="${esc(fr.name)}" maxlength="60" aria-label="Franchise name"><button type="button" class="lbs-sp-x" data-act="fr-close" aria-label="Close">${ICON_CLOSE}</button></div>` +
+      `<p>Drag to set the order. They'll sit together on the shelf where #1 would go.</p>` +
+      `<ol class="lbs-fr-list">` +
+      fr.films.map(([s, n], i) => `<li draggable="true" data-i="${i}"><img data-poster="${esc(s)}" alt="" draggable="false"><b>${i + 1}</b><span>${esc(titleOf(n))}</span><button type="button" data-act="fr-drop" data-i="${i}" aria-label="Remove">${ICON_CLOSE}</button></li>`).join("") +
+      `</ol>` +
+      `<label class="lbs-fr-find">${ICON_SEARCH}<input type="search" class="lbs-fr-q" placeholder="Add another film…" autocomplete="off"></label><ul class="lbs-fr-results" hidden></ul>` +
+      `<div class="lbs-fr-foot">${fr.id ? '<button type="button" class="lbs-sp-link" data-act="fr-delete">Undo franchise</button>' : "<span></span>"}<button type="button" class="lbs-sp-move" data-act="fr-save"${fr.films.length > 1 ? "" : " disabled"}>Save franchise</button></div>` +
+      `</div>`;
+    box.hidden = false;
+    fillPosters(box, false);
+  }
+  function franchiseSearch(q) {
+    const list = $(".lbs-fr-results", root);
+    q = q.trim().toLowerCase();
+    if (!q) { list.hidden = true; return; }
+    const have = new Set(ui.fr.films.map(([s]) => s));
+    const hits = [];
+    for (const [slug, name] of stock.films) {
+      if (have.has(slug)) continue;
+      if (titleOf(name).toLowerCase().includes(q)) hits.push([slug, name]);
+      if (hits.length >= 8) break;
+    }
+    list.innerHTML = hits.length ? hits.map(([s, n]) => `<li data-act="fr-add" data-slug="${esc(s)}" data-name="${esc(n)}"><b>${esc(titleOf(n))}</b> <span>${yearOf(n) || ""}</span></li>`).join("") : `<li class="-none">No store films match.</li>`;
+    list.hidden = false;
+  }
+  function saveFranchise() {
+    const fr = ui.fr;
+    fr.name = ($(".lbs-fr-name", root)?.value || fr.name).trim() || fr.name;
+    const id = fr.id || `fr-${slugify(fr.name)}-${Date.now().toString(36)}`;
+    // A film can only be in one franchise.
+    for (const [oid, o] of Object.entries(franchises())) if (oid !== id) o.films = o.films.filter(([s]) => !fr.films.some(([x]) => x === s));
+    franchises()[id] = { name: fr.name, films: fr.films };
+    for (const [oid, o] of Object.entries(franchises())) if (o.films.length < 2) delete franchises()[oid];
+    saveMine();
+    shareEdit("franchise", id, { name: fr.name, films: fr.films.map(([s]) => s) });
+    ui.fr = null;
+    renderFranchise();
+    refresh();
+    toast(`Saved “${fr.name}”: ${fr.films.length} films kept together on the shelf.`);
+  }
+
+  // Requests and shared edits: kept here, and sent to the store's log.
+  function shareEdit(kind, target, value) {
+    const q = mine.queue || (mine.queue = []);
+    q.push({ kind, target, value, at: Date.now() });
+    if (q.length > 500) q.splice(0, q.length - 500);
+    saveMine();
+    ext("edit", { kind, target, value }).catch(() => {});
+  }
+  function requestRemoval(kind, id, label) {
+    ask(`Ask a moderator to remove <b>${esc(label)}</b> from the store?`, () => {
+      shareEdit(`remove-${kind}`, id, null);
+      toast("Thanks. A moderator will take a look.");
+    }, "Yes, ask");
+  }
+  function requestAddition(slug, name) {
+    shareEdit("add-film", slug, name);
+    toast(`Thanks. ‘${titleOf(name)}’ is on the list to add.`);
+  }
+
+  // Talk to the extension's background page (fetches, shared edits) through bridge.js.
+  let extSeq = 0;
+  function ext(type, payload) {
+    return new Promise((ok, fail) => {
+      const id = `x${++extSeq}${Date.now()}`;
+      const on = (e) => {
+        if (e.source !== window || !e.data || e.data.__lbni !== "ext-result" || e.data.id !== id) return;
+        window.removeEventListener("message", on);
+        clearTimeout(t);
+        e.data.ok ? ok(e.data.data) : fail(new Error(e.data.reason || "failed"));
+      };
+      const t = setTimeout(() => { window.removeEventListener("message", on); fail(new Error("no answer")); }, 15000);
+      window.addEventListener("message", on);
+      window.postMessage({ __lbni: "ext", id, type, payload }, location.origin);
+    });
+  }
+
+  // A small yes/no question over the store.
+  function ask(text, yes, yesLabel) {
+    const box = $(".lbs-ask", root);
+    box.innerHTML = `<div class="lbs-ask-card"><p>${text}</p><div><button type="button" data-act="ask-no">No</button><button type="button" data-act="ask-yes" class="-go">${yesLabel || "Yes, change it"}</button></div></div>`;
     box.hidden = false;
     box._yes = yes;
   }
@@ -2614,7 +2797,7 @@
     local.sort((a, b) => a[0] - b[0]);
     const item = (slug, name, inStore) => {
       const path = inStore ? whereIs(slug) : null;
-      return `<li data-act="find-pick" data-slug="${esc(slug)}" data-name="${esc(name)}"><img data-poster="${esc(slug)}" alt=""><div><b>${esc(titleOf(name))}</b> <span>${yearOf(name) || ""}</span><small>${path ? esc(path.slice(1).join(" › ")) : "Not in the store"}</small></div></li>`;
+      return `<li data-act="find-pick" data-slug="${esc(slug)}" data-name="${esc(name)}"><img data-poster="${esc(slug)}" alt=""><div><b>${esc(titleOf(name))}</b> <span>${yearOf(name) || ""}</span><small>${path ? esc(path.slice(1).join(" › ")) : "Not in the store"}</small></div>${path ? "" : `<button type="button" class="lbs-find-req" data-act="req-add" data-slug="${esc(slug)}" data-name="${esc(name)}">Request addition</button>`}</li>`;
     };
     const top = local.slice(0, 8);
     list.innerHTML = (top.length ? top.map(([, s, n]) => item(s, n, true)).join("") : `<li class="-none">Nothing in the store matches yet.</li>`) + `<li class="-more">Searching all of Letterboxd…</li>`;
@@ -2943,7 +3126,7 @@
         d.spring = folder.dataset.drop;
         const inSort = !!folder.closest(".lbs-sortpanel");
         clearTimeout(d.springT);
-        d.springT = setTimeout(() => { if (grab !== d) return; if (inSort) { ui.sortFolder = d.spring; renderSortPanel(); } else openFolder(d.spring); }, 600);
+        d.springT = setTimeout(() => { if (grab !== d || inSort) return; openFolder(d.spring); }, 600);
       }
     } else { d.spring = null; clearTimeout(d.springT); }
     if (folder) folder.classList.add("-over");
@@ -3175,7 +3358,10 @@
   }
 
   let dragFolder = null;
+  let frDrag = null;
   function onDragStart(e) {
+    const fl = e.target.closest && e.target.closest(".lbs-fr-list li");
+    if (fl) { frDrag = +fl.dataset.i; e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", "x"); return; }
     const frow = edit.on && e.target.closest && e.target.closest(".lbs-folder[draggable=true]");
     if (frow) {
       dragFolder = frow.dataset.id;
@@ -3214,6 +3400,7 @@
   }
 
   function onDragEnd() {
+    frDrag = null;
     dragging = null;
     dragFolder = null;
     root.classList.remove("lbs-dragging-folder");
@@ -3240,6 +3427,12 @@
   }
 
   function onDragOver(e) {
+    if (frDrag != null) {
+      const li = e.target.closest && e.target.closest(".lbs-fr-list li");
+      root.querySelectorAll(".lbs-fr-list li.-before").forEach((x) => x.classList.remove("-before"));
+      if (li) { e.preventDefault(); li.classList.add("-before"); }
+      return;
+    }
     if (dragFolder) {
       const d = folderDrop(e);
       root.querySelectorAll(".-before, .-after, .-over").forEach((el) => el.classList.remove("-before", "-after", "-over"));
@@ -3280,6 +3473,17 @@
   }
 
   function onDrop(e) {
+    if (frDrag != null) {
+      const li = e.target.closest && e.target.closest(".lbs-fr-list li");
+      const from = frDrag;
+      frDrag = null;
+      if (!li || !ui.fr) return;
+      e.preventDefault();
+      const to = +li.dataset.i;
+      const [m] = ui.fr.films.splice(from, 1);
+      ui.fr.films.splice(to, 0, m);
+      return renderFranchise();
+    }
     const inv = !dragFolder && dragging && e.target.closest && e.target.closest(".lbs-tray, .lbs-pocket, .lbs-pocket-tab");
     if (inv) { e.preventDefault(); const films = dragging; onDragEnd(); return holdFilms(films); }
     if (dragFolder) {
@@ -3360,11 +3564,20 @@
       if (act === "find-pick") return showCard(fs, fn);
       if (act === "card-close") { $(".lbs-card", root).hidden = true; return; }
       if (act === "sp-close") { ui.sortFilm = null; return renderSortPanel(); }
-      if (act === "sp-open") { e.stopPropagation(); ui.sortFolder = id || null; ui.sortAdding = null; return renderSortPanel(); }
-      if (act === "sp-up") { const p = partsOf(ui.sortFolder); ui.sortFolder = p.sub ? p.cat : p.cat ? p.genre : null; return renderSortPanel(); }
-      if (act === "sp-move") { e.stopPropagation(); moveFilms([ui.sortFilm], id); return renderSortPanel(); }
-      if (act === "sp-add") { ui.sortAdding = ui.sortFolder; return renderSortPanel(); }
-      if (act === "ask-no" || act === "ask-yes") { const box = $(".lbs-ask", root); box.hidden = true; if (act === "ask-yes" && box._yes) box._yes(); box._yes = null; return; }
+      if (act === "sp-cat") { ui.sortCat = id; ui.sortSub = null; ui.sortAdding = null; return renderSortPanel(); }
+      if (act === "sp-sub") { ui.sortSub = id; return renderSortPanel(); }
+      if (act === "sp-move") { if (!ui.sortSub) return; moveFilms([ui.sortFilm], ui.sortSub); ui.sortSub = null; return renderSortPanel(); }
+      if (act === "sp-add") { ui.sortAdding = btn.dataset.level; return renderSortPanel(); }
+      if (act === "fr-open") return openFranchise(ui.sortFilm[0], ui.sortFilm[1]);
+      if (act === "fr-close") { ui.fr = null; return renderFranchise(); }
+      if (act === "fr-drop") { ui.fr.films.splice(+btn.dataset.i, 1); return renderFranchise(); }
+      if (act === "fr-add") { ui.fr.films.push([fs, fn]); ui.fr.name = $(".lbs-fr-name", root)?.value || ui.fr.name; renderFranchise(); return $(".lbs-fr-q", root)?.focus(); }
+      if (act === "fr-save") return saveFranchise();
+      if (act === "fr-delete") { delete franchises()[ui.fr.id]; saveMine(); shareEdit("franchise", ui.fr.id, null); ui.fr = null; renderFranchise(); refresh(); return toast("Franchise undone."); }
+      if (act === "req-remove-film") return requestRemoval("film", ui.sortFilm[0], titleOf(ui.sortFilm[1]));
+      if (act === "req-remove") { $(".lbs-sortpick", root).hidden = true; return requestRemoval("section", id, nameOf(id)); }
+      if (act === "req-add") { e.stopPropagation(); return requestAddition(fs, fn); }
+      if (act === "ask-no" || act === "ask-yes") { const box = $(".lbs-ask", root); box.hidden = true; const y = box._yes; box._yes = null; if (act === "ask-yes" && y) y(); return; }
     }
     if (act === "sort") return setSort(id, btn.dataset.v);
     if (act === "grab") { edit.grab = btn.dataset.v; return renderTray(); }
@@ -3470,6 +3683,9 @@
   }
 
   function onInput(e) {
+    if (e.target.classList.contains("lbs-fr-q")) return franchiseSearch(e.target.value);
+    if (e.target.classList.contains("lbs-fr-name")) { if (ui.fr) ui.fr.name = e.target.value; return; }
+    if (e.target.classList.contains("lbs-sp-genre-pick")) { ui.sortGenre = e.target.value; ui.sortCat = null; ui.sortSub = null; return renderSortPanel(); }
     if (e.target.classList.contains("lbs-find-q")) return runFind(e.target.value);
     if (e.target.classList.contains("lbs-f-color")) {
       mine.colors[e.target.dataset.slug] = e.target.value.slice(1);
@@ -3510,11 +3726,11 @@
     if (e.target.classList.contains("lbs-sp-new")) {
       if (e.key === "Enter") {
         e.preventDefault();
-        const level = partsOf(ui.sortFolder).cat ? "sub" : "cat";
-        const parent = ui.sortFolder;
+        const level = e.target.dataset.level;
+        const parent = level === "cat" ? ui.sortGenre : ui.sortCat;
         addFolder(level, parent, e.target.value);
         ui.sortAdding = null;
-        if (desk.folder && desk.folder !== parent) ui.sortFolder = desk.folder;
+        if (desk.folder && desk.folder !== parent) { if (level === "cat") ui.sortCat = desk.folder; else ui.sortSub = desk.folder; }
         renderSortPanel();
       } else if (e.key === "Escape") { e.preventDefault(); ui.sortAdding = null; renderSortPanel(); }
       return;
