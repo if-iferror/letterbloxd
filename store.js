@@ -2212,7 +2212,7 @@
     const b = $(".lbs-edit-toggle", root);
     if (b) { b.setAttribute("aria-pressed", on); b.textContent = on ? "Done editing" : "Edit store"; }
     refresh();
-    if (on) toast("Editing the house plan: what everyone sees. Drag films and folders, click a section to shape it.");
+    if (on) toast("Editing the house plan: what everyone sees. Zoom out to drag section pieces between shelves and the bucket.");
   }
 
   function renderEditBar() {
