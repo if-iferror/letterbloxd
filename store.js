@@ -1140,10 +1140,12 @@
    */
   const WALL_ORDER = ["gothic", "haunted", "creepy", "vampires", "madsci", "creature", "zombies", "extreme", "slashers", "giallo", "eighties", "jhorror", "comedy", "rest"];
   const HUES = [282, 262, 220, 350, 160, 95, 120, 8, 0, 35, 315, 190, 48, 210];
-  const WU = { bayW: 1000, gap: 36, pad: 22, sign: 80, shelfH: 200, shelves: 6, lip: 14 };
+  const WU = { bayW: 1000, gap: 36, pad: 5, sign: 80, shelfH: 200, shelves: 6, lip: 14 };
   const ROW_H = WU.sign + WU.shelves * WU.shelfH + 150; // a row of bays plus the floor between rows
   const FAR = 0.09, NEAR = 0.45, TEXT = 0.8, ZMIN = 0.02, ZMAX = 2.6;
   const DEPTH_X = 4, DEPTH_Y = 5; // the sliver of top and side we see
+  // Case plastic, as seen on top: VHS clamshells (darkest), DVDs, Blu-rays.
+  const caseTop = (y) => (y && y < 1990 ? "#141517" : y && y < 2008 ? "#25272b" : "#1d5aa6");
   const BAND = 22; // colour band at the top of a spine; the year sits in it
   const yearInk = (own) => (own && lum(rgbOf(own.slice(6))) > 0.55 ? "rgba(10,12,14,0.8)" : "rgba(255,255,255,0.85)");
   const reduceMotion = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -1869,12 +1871,18 @@
               ctx.fill();
               ctx.fillStyle = "rgba(0,0,0,0.38)";
               ctx.fill();
-              ctx.fillStyle = body;
+              // The top is bare case plastic: VHS clamshell, DVD, Blu-ray.
+              ctx.fillStyle = caseTop(f.year);
               ctx.beginPath();
               ctx.moveTo(f.x, top); ctx.lineTo(f.x + DEPTH_X, top - DEPTH_Y); ctx.lineTo(f.x + f.w + DEPTH_X, top - DEPTH_Y); ctx.lineTo(f.x + f.w, top);
               ctx.fill();
-              ctx.fillStyle = "rgba(255,255,255,0.28)";
-              ctx.fill();
+              // the seam where the case opens
+              ctx.strokeStyle = "rgba(0,0,0,0.55)";
+              ctx.lineWidth = Math.max(px, 0.6);
+              ctx.beginPath();
+              ctx.moveTo(f.x + DEPTH_X * 0.55, top - DEPTH_Y * 0.55);
+              ctx.lineTo(f.x + f.w + DEPTH_X * 0.55, top - DEPTH_Y * 0.55);
+              ctx.stroke();
             }
             ctx.fillStyle = body;
             ctx.fillRect(f.x, top, f.w, f.h);
@@ -1882,22 +1890,23 @@
             const own = colors[f.slug];
             // the poster's accent colour as a band across the top, with the year in it
             if (own) { ctx.fillStyle = `#${own.slice(6)}`; ctx.fillRect(f.x, top, f.w, BAND); }
-            // a little plastic: lit edge, VHS label band
+            // a little plastic: a lit edge
             ctx.fillStyle = "rgba(255,255,255,0.10)";
             ctx.fillRect(f.x, top, Math.max(px, f.w * 0.18), f.h);
-            if (f.year && f.year < 1990) { ctx.fillStyle = "rgba(235,232,222,0.85)"; ctx.fillRect(f.x + 2, top + 22, f.w - 4, f.h - 50); }
             // Title art from TMDB, turned on its side, when there is one.
-            const vhs = f.year && f.year < 1990;
+            // Spine coordinates below run up from 8 units above the shelf; the
+            // top of the case is at f.h - 8, the colour band just under it.
+            const yearAt = f.h - 8 - BAND / 2;
             const lg = z >= LOGO_Z ? logoImg(f.slug, z >= 1.6 ? "w300" : "w185") || (z >= 1.6 ? logoImg(f.slug, "w185") : null) : null;
             if (lg) {
               const iw = lg.img.naturalWidth || 300, ih = lg.img.naturalHeight || 100;
               const a = iw / ih;
               // Along the spine (local x, from 8 units above the shelf upward):
               // the logo sits in [s0, s1], the year near the top as before.
-              const s0 = vhs ? 34 : 10, s1 = f.h - 34, room = s1 - s0, thick = f.w - (vhs ? 6 : 3);
+              const s0 = 4, s1 = f.h - 8 - BAND - 4, room = s1 - s0, thick = f.w - 3;
               let len = Math.min(room, thick * a), th = len / a;
               if (th > thick) { th = thick; len = th * a; }
-              const bgL = vhs ? 0.8 : own ? relLum(rgbOf(own)) : 0.03;
+              const bgL = own ? relLum(rgbOf(own)) : 0.03;
               const src = contrast(lg.lum, bgL) >= 2 ? lg.img : logoInk(lg, bgL > 0.35 ? "#15181b" : "#f4f1ea");
               ctx.save();
               ctx.translate(f.x + f.w / 2, f.y - 8);
@@ -1906,8 +1915,9 @@
               if (text) {
                 ctx.font = `600 ${Math.min(f.w * 0.62, 10) * 0.8}px Arial, sans-serif`;
                 ctx.textBaseline = "middle";
+                ctx.textAlign = "center";
                 ctx.fillStyle = yearInk(own);
-                ctx.fillText(String(f.year || ""), f.h - BAND / 2, 0);
+                ctx.fillText(String(f.year || ""), yearAt, 0);
               }
               ctx.restore();
             } else if (text) {
@@ -1917,17 +1927,17 @@
               const fs = Math.min(f.w * 0.62, 10);
               ctx.font = `700 ${fs}px "Helvetica Neue", Arial, sans-serif`;
               const light = own && lum(rgbOf(own)) > 0.58;
-              ctx.fillStyle = f.year && f.year < 1990 ? "#1a1a1a" : light ? "rgba(10,12,14,0.9)" : "rgba(255,255,255,0.92)";
+              ctx.fillStyle = light ? "rgba(10,12,14,0.9)" : "rgba(255,255,255,0.92)";
               ctx.textBaseline = "middle";
               let t = titleOf(f.name).toUpperCase();
-              const vhs = f.year && f.year < 1990;
-              const start = vhs ? 34 : 8; // VHS: write on the white label
-              const room = f.h - start - 30;
+              const start = 4;
+              const room = f.h - 8 - BAND - start - 4;
               if (ctx.measureText(t).width > room) { while (t.length > 3 && ctx.measureText(t + "…").width > room) t = t.slice(0, -1); t += "…"; }
               ctx.fillText(t, start, 0);
               ctx.font = `600 ${fs * 0.8}px Arial, sans-serif`;
+              ctx.textAlign = "center";
               ctx.fillStyle = yearInk(own);
-              ctx.fillText(String(f.year || ""), f.h - BAND / 2, 0);
+              ctx.fillText(String(f.year || ""), yearAt, 0);
               ctx.restore();
             }
             } finally { if (f.lean) ctx.restore(); }
