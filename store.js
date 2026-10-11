@@ -1205,7 +1205,7 @@
   const caseTop = (y) => (y && y < 1990 ? "#141517" : y && y < 2008 ? "#25272b" : "#1d5aa6");
   const YEAR_ZONE = 18; // the year sits in this much of the bottom of a spine
   const CASE_END = 3, LAMINATE = 5, PAPER_IN = CASE_END + LAMINATE; // paper wrap stops short of the case ends
-  const PAPER_TOP = PAPER_IN - 3; // ...a little less at the top
+  const PAPER_TOP = PAPER_IN - 3; // where the paper wrap starts and ends (same at both ends)
   const CORNER = 1.6; // rounded case corners
   const YEAR_FS = 6.6; // the year: one size on every format
   // The year: white, unless the spine is too light for it.
@@ -1438,8 +1438,11 @@
         let leftover = 0;
         if (groups && list.length) {
           for (let g = 0; g < groups; g++) {
-            const end = Math.round(((g + 1) * list.length) / groups);
-            const m = Math.min(6, Math.max(1, end - Math.round((g * list.length) / groups)));
+            let end = Math.round(((g + 1) * list.length) / groups);
+            while (end > 0 && list[end - 1].fr != null) end--; // franchises always stand
+            let m = Math.min(6, Math.max(1, end - Math.round((g * list.length) / groups)));
+            while (m > 0 && list.slice(end - m, end).some((x) => x.fr != null)) m--;
+            if (m < 1 || end < 1) { leftover += per; continue; }
             const grp = list.slice(end - m, end);
             const reach = leanReach(grp, MAX_LEAN);
             const a = solveLean(grp, Math.min(per, reach));
@@ -2012,13 +2015,14 @@
       for (const st of L.stickers) {
         if (!seen.has(st.bay) || st.x1 < x0 || st.x0 > x1) continue;
         const own = st.color || colorOf(st.lead);
-        const top = st.y - (WU.shelfH - WU.lip) + 5;
+        const top = st.y - (WU.shelfH - WU.lip) + 1;
+        const bottom = st.y - spineH(2020) - 4; // stops just above the shortest (Blu-ray) boxes
         ctx.fillStyle = own ? `#${own.slice(0, 6)}` : "#5a4a7a";
-        if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(st.x0 - 2, top, st.x1 - st.x0 + 4, st.y - top - 2, 3); ctx.fill(); }
-        else ctx.fillRect(st.x0 - 2, top, st.x1 - st.x0 + 4, st.y - top - 2);
+        if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(st.x0 - 2, top, st.x1 - st.x0 + 4, bottom - top, [0, 0, 3, 3]); ctx.fill(); }
+        else ctx.fillRect(st.x0 - 2, top, st.x1 - st.x0 + 4, bottom - top);
         ctx.fillStyle = "rgba(255,255,255,0.12)";
         ctx.fillRect(st.x0 - 2, top, st.x1 - st.x0 + 4, 3);
-        const band = st.y - st.h - 3 - (top + 2);
+        const band = bottom - 2 - (top + 2);
         if (band < 6) continue;
         const lg = z >= LOGO_Z ? (st.logo ? logoImgPath(st.logo, "w300") : logoImg(st.lead, "w300")) : null;
         const bw = st.x1 - st.x0 - 8;
@@ -2055,28 +2059,31 @@
             // so each box shows a sliver of its top and of its right-hand
             // face (the cover edge). Neighbours drawn after cover most of it.
             if (near && !wall.lite) {
-              ctx.fillStyle = body;
-              ctx.beginPath();
-              ctx.moveTo(f.x + f.w, top); ctx.lineTo(f.x + f.w + DEPTH_X, top - DEPTH_Y); ctx.lineTo(f.x + f.w + DEPTH_X, f.y - DEPTH_Y); ctx.lineTo(f.x + f.w, f.y);
-              ctx.fill();
-              ctx.fillStyle = "rgba(0,0,0,0.38)";
-              ctx.fill();
-              // The top is bare case plastic: VHS clamshell, DVD, Blu-ray.
-              // Its front and back edges follow the case's rounded corners.
+              // The case as a solid: its rounded outline swept back from the
+              // back face to the front, so every corner stays rounded.
               const r = Math.min(CORNER, f.w / 2);
-              ctx.fillStyle = caseTop(f.year);
-              ctx.beginPath();
-              ctx.moveTo(f.x, top + r);
-              ctx.quadraticCurveTo(f.x, top, f.x + r, top);
-              ctx.lineTo(f.x + f.w - r, top);
-              ctx.quadraticCurveTo(f.x + f.w, top, f.x + f.w, top + r);
-              ctx.lineTo(f.x + f.w + DEPTH_X, top + r - DEPTH_Y);
-              ctx.quadraticCurveTo(f.x + f.w + DEPTH_X, top - DEPTH_Y, f.x + f.w - r + DEPTH_X, top - DEPTH_Y);
-              ctx.lineTo(f.x + r + DEPTH_X, top - DEPTH_Y);
-              ctx.quadraticCurveTo(f.x + DEPTH_X, top - DEPTH_Y, f.x + DEPTH_X, top + r - DEPTH_Y);
-              ctx.closePath();
-              ctx.fill();
-              // the seam where the case opens
+              const plastic = caseTop(f.year);
+              ctx.fillStyle = plastic;
+              for (let k = 3; k >= 1; k--) {
+                const t = k / 3;
+                ctx.beginPath();
+                if (ctx.roundRect) ctx.roundRect(f.x + DEPTH_X * t, top - DEPTH_Y * t, f.w, f.h, r);
+                else ctx.rect(f.x + DEPTH_X * t, top - DEPTH_Y * t, f.w, f.h);
+                ctx.fill();
+              }
+              // The right-hand face is the edge of the front cover: the same
+              // plastic, laminate and paper bands as the spine, in shadow.
+              const side = (ya, yb, color) => {
+                ctx.fillStyle = color;
+                ctx.beginPath();
+                ctx.moveTo(f.x + f.w, ya); ctx.lineTo(f.x + f.w + DEPTH_X, ya - DEPTH_Y); ctx.lineTo(f.x + f.w + DEPTH_X, yb - DEPTH_Y); ctx.lineTo(f.x + f.w, yb);
+                ctx.fill();
+              };
+              side(top + CASE_END, top + CASE_END + LAMINATE, "rgba(255,255,255,0.14)");
+              side(f.y - CASE_END - LAMINATE, f.y - CASE_END, "rgba(255,255,255,0.14)");
+              side(top + PAPER_TOP, f.y - PAPER_TOP, body);
+              side(top + r, f.y - r, "rgba(0,0,0,0.4)");
+              // the seam on top, where the two halves of the case meet
               ctx.strokeStyle = "rgba(0,0,0,0.55)";
               ctx.lineWidth = Math.max(px, 0.6);
               ctx.beginPath();
@@ -2094,7 +2101,7 @@
               ctx.fillRect(f.x, top + CASE_END, f.w, LAMINATE);
               ctx.fillRect(f.x, f.y - CASE_END - LAMINATE, f.w, LAMINATE);
               ctx.fillStyle = body;
-              ctx.fillRect(f.x, top + PAPER_TOP, f.w, f.h - PAPER_TOP - PAPER_IN);
+              ctx.fillRect(f.x, top + PAPER_TOP, f.w, f.h - 2 * PAPER_TOP);
             } else {
               ctx.fillStyle = body;
               ctx.fillRect(f.x, top, f.w, f.h);
@@ -2141,7 +2148,8 @@
               } else {
                 ctx.font = `700 ${fs}px "Helvetica Neue", Arial, sans-serif`;
                 const light = own && lum(rgbOf(own)) > 0.58;
-                ctx.fillStyle = light ? "rgba(10,12,14,0.9)" : "rgba(255,255,255,0.92)";
+                const washT = (mine.wash && mine.wash[f.slug]) || shared.wash[f.slug];
+                ctx.fillStyle = washT || (light ? "rgba(10,12,14,0.9)" : "rgba(255,255,255,0.92)");
                 const t = titleOf(f.name).toUpperCase();
                 const tw = ctx.measureText(t).width;
                 if (tw <= span) ctx.fillText(t, mid, 0);
@@ -2614,14 +2622,20 @@
     const y = yearOf(name), own = colorOf(slug);
     const spine = own ? `#${own.slice(0, 6)}` : "#2c3440";
     // The cover art (2:3) fills the paper area exactly; the case is as wide as that.
-    const h = big ? 330 : 170, inset = big ? 8 : 5, w = Math.round(((h - 2 * inset) * 2) / 3), d = Math.round((y && y < 1990 ? 0.2 : y && y < 2008 ? 0.12 : 0.1) * w * 1.4);
+    const h = big ? 330 : 170, inset = big ? 7 : 4, w = Math.round(((h - 2 * inset) * 2) / 3), d = Math.round((y && y < 1990 ? 0.2 : y && y < 2008 ? 0.12 : 0.1) * w * 1.4);
     const ink = own && lum(rgbOf(own)) > 0.62 ? "#14181c" : "#fff";
     const lp = logoPath(slug);
+    const wash = (mine.wash && mine.wash[slug]) || shared.wash[slug];
+    const logoEl = lp
+      ? wash
+        ? `<span class="lbs-spine-logo -wash" style="--logo:url(${TMDB_IMG}w300/${esc(lp)});background:${esc(wash)}"></span>`
+        : `<img class="lbs-spine-logo" src="${TMDB_IMG}w300/${esc(lp)}" alt="" crossorigin="anonymous">`
+      : `<b${wash ? ` style="color:${esc(wash)}"` : ""}>${esc(titleOf(name))}</b>`;
     return (
       `<div class="lbs-box" style="--w:${w}px;--h:${h}px;--d:${d}px;--in:${inset}px;--spine:${spine};--top:${caseTop(y)};--ink:${ink}">` +
       `<div class="lbs-box3d">` +
       `<div class="lbs-face -front"><img data-poster="${esc(slug)}" alt=""></div>` +
-      `<div class="lbs-face -spine"><div class="lbs-spine-paper">${lp ? `<img class="lbs-spine-logo" src="${TMDB_IMG}w300/${esc(lp)}" alt="" crossorigin="anonymous">` : `<b>${esc(titleOf(name))}</b>`}<span class="lbs-spine-year">${y || ""}</span></div></div>` +
+      `<div class="lbs-face -spine"><div class="lbs-spine-paper">${logoEl}<span class="lbs-spine-year">${y || ""}</span></div></div>` +
       `<div class="lbs-face -top"><i></i></div>` +
       `</div></div>`
     );
@@ -2698,7 +2712,10 @@
     pk.hidden = !ui.pocket || edit.on;
     if (pk.hidden) return;
     pk.innerHTML =
-      `<div class="lbs-pocket-top"><b>Inventory</b><span>${held.length ? "Drag a film onto a shelf or a folder, or hover it for options." : "Drag films off the shelves to carry them around. It doesn't change the store."}</span><button type="button" data-act="pocket">Close</button></div>` +
+      `<div class="lbs-pocket-top"><b>Inventory</b><span>${held.length ? "Drag a film onto a shelf or a folder, or hover it for options." : "Drag films off the shelves to carry them around. It doesn't change the store."}</span>` +
+      `<button type="button" data-act="mine-save" title="Download your shelves, picks and inventory as a file">Back up my store</button>` +
+      `<label class="lbs-restore" title="Load a backup file">Restore<input type="file" accept="application/json,.json" class="lbs-restore-file" hidden></label>` +
+      `<button type="button" data-act="pocket">Close</button></div>` +
       `<div class="lbs-pocket-list lbs-tray-drop">` +
       held.map(([slug, name]) =>
         `<div class="lbs-pk" data-slug="${esc(slug)}" data-name="${esc(name)}">` +
@@ -2709,6 +2726,35 @@
         `</div>`).join("") +
       `</div>`;
     fillPosters(pk, false);
+  }
+
+  // Your own store (shelves you moved things to, picks, franchises,
+  // inventory) lives in this browser. A backup file keeps it safe.
+  function backupMine() {
+    const data = { app: "LetterBloxd", kind: "my-store", v: 1, at: new Date().toISOString(), mine, logoPicks };
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 1)], { type: "application/json" }));
+    a.download = `letterbloxd-my-store-${data.at.slice(0, 10)}.json`;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  }
+  function restoreMine(file) {
+    const rd = new FileReader();
+    rd.onload = () => {
+      let data;
+      try { data = JSON.parse(rd.result); } catch { return toast("That file isn't a LetterBloxd backup."); }
+      if (!data || data.kind !== "my-store" || !data.mine) return toast("That file isn't a LetterBloxd backup.");
+      ask(`Replace your store with the backup from <b>${esc(String(data.at || "").slice(0, 10))}</b>?`, () => {
+        mine = { place: {}, cats: {}, subs: {}, recent: [], view: "community", sort: {}, held: [], colors: {}, wash: {}, ...data.mine };
+        saveMine();
+        for (const k of Object.keys(logoPicks)) delete logoPicks[k];
+        Object.assign(logoPicks, data.logoPicks || {});
+        writeJSON(LOGO_PICK_KEY, logoPicks);
+        refresh();
+        toast("Your store is back.");
+      }, "Yes, restore");
+    };
+    rd.readAsText(file);
   }
 
   // Fly to a film on the wall and make it blink.
@@ -3702,6 +3748,7 @@
       if (act === "f-return") { releaseFilm(fs); renderPocket(); drawSoon(); return toast(`‘${titleOf(fn)}’ is back on the shelf.`); }
       if (act === "f-color-reset") { delete mine.colors[fs]; saveMine(); drawSoon(); return renderFilm(); }
       if (act === "pocket") { ui.pocket = !ui.pocket; return renderPocket(); }
+      if (act === "mine-save") return backupMine();
       if (act === "find-pick") return showCard(fs, fn);
       if (act === "card-close") { $(".lbs-card", root).hidden = true; return; }
       if (act === "sp-close") { ui.sortFilm = null; return renderSortPanel(); }
@@ -3825,6 +3872,7 @@
   }
 
   function onInput(e) {
+    if (e.target.classList.contains("lbs-restore-file")) { const f = e.target.files && e.target.files[0]; e.target.value = ""; if (f) restoreMine(f); return; }
     if (e.target.classList.contains("lbs-f-wash") || e.target.classList.contains("lbs-f-washc")) {
       const ws = e.target.dataset.slug, pane = e.target.closest(".lbs-fpane");
       const on = pane.querySelector(".lbs-f-wash").checked, col = pane.querySelector(".lbs-f-washc").value;
@@ -3832,6 +3880,8 @@
       pane.querySelector(".lbs-f-washc").disabled = !on;
       saveMine();
       drawSoon();
+      const fb = $(".lbs-filmview .lbs-fbox", root);
+      if (fb && ui.film) { fb.innerHTML = boxHTML(ui.film.slug, ui.film.name, true); fillPosters(fb, true); }
       clearTimeout(ui.washT);
       ui.washT = setTimeout(() => shareEdit("wash", ws, on ? col : null), 1200);
       return;

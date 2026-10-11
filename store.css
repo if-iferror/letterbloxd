@@ -2290,8 +2290,8 @@ html.lbs-open {
   position: absolute;
   left: 0;
   right: 0;
-  top: 8px;
-  bottom: 8px;
+  top: var(--in, 7px);
+  bottom: var(--in, 7px);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -3017,4 +3017,19 @@ html.lbs-open {
   display: block;
   margin-bottom: 8px;
   color: #fff;
+}
+
+.lbs-spine-logo.-wash {
+  display: block;
+  height: calc(var(--d) - 4px);
+  -webkit-mask: var(--logo) center / contain no-repeat;
+  mask: var(--logo) center / contain no-repeat;
+}
+
+.lbs-restore {
+  border-radius: 3px;
+  padding: 4px 10px;
+  background: #2c3440;
+  color: #def;
+  cursor: pointer;
 }
