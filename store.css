@@ -670,7 +670,7 @@ html.lbs-open {
   bottom: var(--deskbar, 40px);
   z-index: 5;
   display: grid;
-  grid-template-columns: minmax(300px, 1fr) minmax(420px, 1.25fr);
+  grid-template-columns: minmax(0, 1fr) 300px;
   height: min(60%, 560px);
   min-height: 300px;
   background: #14181c;
@@ -1776,4 +1776,89 @@ html.lbs-open {
 .lbs-grabtype button.-on {
   background: #40bcf4;
   color: #0b1014;
+}
+
+/* ---------- inventory (right column) and folders view ---------- */
+.lbs-inv .lbs-tray {
+  flex: 1;
+  height: auto;
+  min-height: 0;
+  margin-top: 0;
+  overflow-y: auto;
+  box-shadow: none;
+  background: transparent;
+  padding: 0;
+}
+.lbs-tray.-over {
+  box-shadow: inset 0 0 0 2px #40bcf4;
+  border-radius: 4px;
+}
+.lbs-tray-top {
+  margin-bottom: 10px;
+  font-size: 13px;
+}
+.lbs-tray-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.lbs-tray-tools > span:last-child {
+  display: flex;
+  gap: 6px;
+}
+.lbs-tray-tools button {
+  padding: 4px 9px;
+  border: 0;
+  border-radius: 3px;
+  background: #2c3440;
+  color: #def;
+  font: 600 11.5px Arial, sans-serif;
+  cursor: pointer;
+}
+.lbs-tray h4 {
+  margin: 12px 0 6px;
+  color: #678;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.lbs-tray-list.-films {
+  flex-direction: column;
+  align-items: stretch;
+  flex-wrap: nowrap;
+  gap: 3px;
+  min-height: 60px;
+}
+.lbs-tray-list.-films .lbs-dvd {
+  max-width: none;
+}
+.lbs-tray-empty {
+  margin: 0;
+  padding: 10px;
+  border: 1px dashed #384350;
+  border-radius: 4px;
+  color: #678;
+  font-size: 12px;
+  line-height: 1.4;
+}
+.lbs-browse {
+  list-style: none;
+}
+.lbs-browse ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.lbs-browse .lbs-folder {
+  padding: 9px 10px;
+  font-size: 13.5px;
+}
+.lbs-browse .lbs-folder-name small {
+  color: #678;
+  font-size: 11px;
+}
+.lbs-where .lbs-up {
+  margin-right: 4px;
 }

@@ -252,7 +252,7 @@
   // Your own moves and folders ("Mine"). Kept in this browser only.
   const MINE_KEY = `${NS}:store:mine:v1`;
   let mine = readJSON(MINE_KEY, null) || {};
-  mine = { place: {}, cats: {}, subs: {}, recent: [], view: "community", sort: {}, ...mine };
+  mine = { place: {}, cats: {}, subs: {}, recent: [], view: "community", sort: {}, held: [], ...mine };
   const saveMine = () => writeJSON(MINE_KEY, mine);
 
   let lib = null; // built from stock + mine; see buildLibrary()
@@ -565,8 +565,8 @@
       root.addEventListener("drop", onDrop);
       root.addEventListener("contextmenu", onContextMenu);
       root.addEventListener("mousedown", (e) => {
-        if (!edit.on || e.button !== 0) return;
-        const pc = e.target.closest(".lbs-tray .lbs-piece");
+        if (e.button !== 0) return;
+        const pc = edit.on && e.target.closest(".lbs-tray .lbs-piece");
         if (pc) { e.preventDefault(); return grabDown({ kind: "piece", cid: pc.dataset.cid, from: "tray" }, e); }
         const dv = e.target.closest(".lbs-tray .lbs-dvd");
         if (dv) { e.preventDefault(); grabDown({ kind: "dvd", slug: dv.dataset.slug, name: dv.dataset.name, from: "tray" }, e); }
@@ -625,7 +625,7 @@
       root.classList.add("lbs-desk-only");
       hall.innerHTML = deskHTML();
       desk.open = true;
-      if (!desk.folder) desk.folder = desk.col = STOCKED;
+      if (desk.folder === undefined) desk.folder = STOCKED;
       $(".lbs-drawer", root).hidden = false;
       renderDesk();
       $(".lbs-fq", root)?.focus();
@@ -852,9 +852,8 @@
 
   const desk = {
     open: false,
-    mode: "store", // left side: "store" (the floor) or "list"
-    folder: null, // what the left pane lists (genre, category or subcategory id)
-    col: null, // how far the right-hand columns are opened
+    mode: "store", // left side: "store" (the wall) or "list" (the folders)
+    folder: STOCKED, // the open folder (null = all genres)
     scope: "folder", // left search: "folder" or "all"
     q: "", // left search text
     fq: "", // folder search text
@@ -871,7 +870,7 @@
       `<section class="lbs-drawer" aria-label="Sorting desk" hidden>` +
       `<div class="lbs-films">` +
       `<div class="lbs-films-top">` +
-      `<div class="lbs-mode" role="group" aria-label="Show"><button type="button" data-mode="store">Store</button><button type="button" data-mode="list">List</button></div>` +
+      `<div class="lbs-mode" role="group" aria-label="Show"><button type="button" data-mode="store">Wall</button><button type="button" data-mode="list">Folders</button></div>` +
       `<label class="lbs-search">${ICON_SEARCH}<input type="search" class="lbs-fq" placeholder="Search films" autocomplete="off"></label>` +
       `<div class="lbs-scope" role="group" aria-label="Search in"><button type="button" data-scope="folder">This folder</button><button type="button" data-scope="all">All of Letterboxd</button></div>` +
       `</div>` +
@@ -881,19 +880,15 @@
       `<div class="lbs-stage-top"><div class="lbs-stage-path"></div>` +
       `<div class="lbs-zoom"><button type="button" data-act="zoom-out" aria-label="Zoom out">−</button><button type="button" data-act="fit">Fit</button><button type="button" data-act="zoom-in" aria-label="Zoom in">+</button></div></div>` +
       `<div class="lbs-aisles"></div><canvas class="lbs-canvas" draggable="false" aria-label="Horror wall. Scroll to move, pinch or Ctrl-scroll to zoom, drag a spine to a folder."></canvas>` +
-      `<div class="lbs-tray" hidden></div>` +
       `<div class="lbs-tip" hidden></div><div class="lbs-sortpick" hidden></div>` +
       `<div class="lbs-logopick" hidden></div><div class="lbs-logobuild" hidden></div>` +
       `<p class="lbs-credit" hidden>Title logos from <a href="https://www.themoviedb.org/" target="_blank" rel="noopener">TMDB</a>. This product uses the TMDB API but is not endorsed or certified by TMDB.</p>` +
       `</div>` +
       `<ul class="lbs-rows" role="listbox" aria-multiselectable="true"></ul>` +
       `</div>` +
-      `<div class="lbs-folders">` +
+      `<div class="lbs-folders lbs-inv">` +
       `<div class="lbs-editbar" hidden></div>` +
-      `<label class="lbs-search">${ICON_SEARCH}<input type="search" class="lbs-dq" placeholder="Search folders" autocomplete="off"></label>` +
-      `<div class="lbs-crumbs"></div>` +
-      `<div class="lbs-cols"></div>` +
-      `<div class="lbs-recent"></div>` +
+      `<div class="lbs-tray" data-drop="@inv"></div>` +
       `</div>` +
       `</section>` +
       `<div class="lbs-deskbar">` +
@@ -914,7 +909,6 @@
       d.hidden = false;
       if (!desk.folder) {
         desk.folder = aisleHere() || STOCKED;
-        desk.col = desk.folder;
       }
       renderDesk();
     } else {
@@ -964,13 +958,13 @@
     root.querySelectorAll(".lbs-scope button").forEach((b) => b.classList.toggle("-on", b.dataset.scope === desk.scope));
     const field = $(".lbs-fq", root);
     if (field && field.value !== desk.q) field.value = desk.q;
-    field.placeholder = desk.scope === "all" ? "Search all of Letterboxd" : `Search ${nameOf(desk.folder) || "this folder"}`;
+    field.placeholder = desk.scope === "all" ? "Search all of Letterboxd" : desk.mode === "list" && !partsOf(desk.folder).sub ? `Search folders${desk.folder ? ` in ${nameOf(desk.folder)}` : ""}` : `Search ${nameOf(desk.folder) || "films"}`;
 
     const moving = $(".lbs-moving", root);
     moving.hidden = !desk.moving;
     if (desk.moving) {
       const n = desk.moving.length;
-      moving.innerHTML = `Moving <b>${n === 1 ? esc(titleOf(desk.moving[0][1])) : `${n} films`}</b>. Pick a folder on the right, then <b>Move here</b>. <button type="button" data-act="cancel-move">Cancel</button>`;
+      moving.innerHTML = `Moving <b>${n === 1 ? esc(titleOf(desk.moving[0][1])) : `${n} films`}</b>. Open a folder, then <b>Move here</b>. <button type="button" data-act="cancel-move">Cancel</button>`;
     }
 
     root.querySelectorAll(".lbs-mode button").forEach((b) => b.classList.toggle("-on", b.dataset.mode === desk.mode));
@@ -978,6 +972,10 @@
     where.hidden = list.hidden = storeMode;
     $(".lbs-stage", root).hidden = !storeMode;
     if (storeMode) return showStage();
+
+    // Folders: a folder that holds folders shows those; a subcategory shows its films.
+    const here = partsOf(desk.folder);
+    if (desk.scope !== "all" && !here.sub) return renderBrowser(where, list);
 
     let films;
     if (desk.scope === "all") {
@@ -987,7 +985,7 @@
       const all = filmsIn(desk.folder);
       const q = desk.q.trim().toLowerCase();
       films = q ? all.filter(([, name]) => name.toLowerCase().includes(q)) : all;
-      where.innerHTML = `${pathHTML(desk.folder, "open")}<span>· ${fmt(films.length)} film${films.length === 1 ? "" : "s"}${q ? " match" : ""}</span>`;
+      where.innerHTML = `${crumbsHTML()}<span>· ${fmt(films.length)} film${films.length === 1 ? "" : "s"}${q ? " match" : ""}</span>`;
     }
 
     if (rowIo) rowIo.disconnect();
@@ -1033,91 +1031,69 @@
     }, 220);
   }
 
-  // Right: folders.
-  function renderFolders() {
-    const field = $(".lbs-dq", root);
-    if (field && field.value !== desk.fq) field.value = desk.fq;
-    const crumbs = $(".lbs-crumbs", root);
-    const cols = $(".lbs-cols", root);
-    const moveBtn = (id) => (desk.moving ? `<button type="button" class="lbs-move-here" data-act="move-here" data-id="${esc(id)}">Move here</button>` : "");
-    const cnt = (id) => `<span class="lbs-n">${fmt(lib.count.get(id) || 0)}</span>`;
-    const own = (o) => (o && o.own ? `<em class="lbs-proposed" title="Only you can see this until a moderator approves it">proposed</em>` : "");
+  const crumbsHTML = () =>
+    `<button type="button" class="lbs-up" data-act="up" aria-label="Up one level"${desk.folder ? "" : " disabled"}>${ICON_UP}</button>` +
+    `<button type="button" class="lbs-crumb" data-act="open" data-id="" data-drop="">All genres</button>` +
+    (desk.folder ? `<i aria-hidden="true">›</i>${pathHTML(desk.folder, "open")}` : "");
 
-    const q = desk.fq.trim().toLowerCase();
-    if (q) {
-      crumbs.innerHTML = `<span class="lbs-hint">Folders matching “${esc(desk.fq.trim())}”</span>`;
-      const hits = [
-        ...[...lib.genres.values()].filter((g) => g.name.toLowerCase().includes(q)).map((g) => g.id),
-        ...[...lib.cats.values()].filter((c) => c.name.toLowerCase().includes(q)).map((c) => c.id),
-        ...[...lib.subs.values()].filter((s) => s.name.toLowerCase().includes(q)).map((s) => s.id),
-      ].slice(0, 80);
-      cols.innerHTML =
-        `<ul class="lbs-hits">` +
-        (hits.length
-          ? hits
-              .map((id) => {
-                const parts = pathOf(id);
-                return `<li class="lbs-folder" data-act="open" data-id="${esc(id)}" data-drop="${esc(id)}">${ICON_FOLDER}<span class="lbs-hit-path">${parts.slice(0, -1).map(esc).join(" › ")}${parts.length > 1 ? " › " : ""}<b>${esc(parts.at(-1))}</b></span>${cnt(id)}${moveBtn(id)}</li>`;
-              })
-              .join("")
-          : `<li class="lbs-rows-empty">No folders match. Make one with + New in the columns.</li>`) +
-        `</ul>`;
-    } else {
-      const p = partsOf(desk.col);
-      crumbs.innerHTML =
-        `<button type="button" class="lbs-up" data-act="up" aria-label="Up one level"${p.genre ? "" : " disabled"}>${ICON_UP}</button>` +
-        `<button type="button" class="lbs-crumb" data-act="col" data-id="">All genres</button>` +
-        (desk.col ? `<i aria-hidden="true">›</i>${pathHTML(desk.col, "open")}` : "");
-      const tools = (id, o) =>
-        !edit.on || lib.genres.has(id)
-          ? ""
-          : `<span class="lbs-tools">` +
-            (o && o.own ? `<button type="button" data-act="approve" data-id="${esc(id)}" title="Approve: add to the house plan">✓</button>` : "") +
-            (isFixed(id) ? "" : `<button type="button" data-act="rename" data-id="${esc(id)}" title="Rename">✎</button><button type="button" data-act="del" data-id="${esc(id)}" title="Delete">✕</button>`) +
-            `</span>`;
-      const item = (id, sel, hasKids, o) => {
-        if (edit.on && edit.renaming === id)
-          return `<li class="lbs-adding"><input type="text" class="lbs-rename" maxlength="40" value="${esc(nameOf(id))}"></li>`;
-        if (edit.on && edit.deleting === id) {
-          const n = lib.count.get(id) || 0;
-          const to = lib.cats.has(id) ? "Everything Else" : "General";
-          return `<li class="lbs-confirm">Delete <b>${esc(nameOf(id))}</b>?${n ? ` Its ${fmt(n)} film${n === 1 ? "" : "s"} go to ${to}.` : ""} <button type="button" data-act="del-yes" data-id="${esc(id)}">Delete</button><button type="button" data-act="del-no">Keep</button></li>`;
-        }
-        const drag = edit.on && !lib.genres.has(id);
-        return (
-          `<li class="lbs-folder${sel ? " -sel" : ""}${desk.folder === id ? " -open" : ""}${edit.on && edit.sel === id ? " -editsel" : ""}" data-act="open" data-id="${esc(id)}" data-drop="${esc(id)}"${drag ? ' draggable="true"' : ""}>` +
-          `${ICON_FOLDER}<span class="lbs-folder-name">${esc(nameOf(id))}</span>${own(o)}${cnt(id)}${tools(id, o)}${hasKids ? '<i class="lbs-chev" aria-hidden="true">›</i>' : ""}${moveBtn(id)}</li>`
-        );
-      };
-      const adder = (level, parent) =>
-        desk.adding && desk.adding.level === level && desk.adding.parent === parent
-          ? `<li class="lbs-adding"><input type="text" class="lbs-new" maxlength="40" placeholder="${level === "cat" ? "New category" : "New subcategory"}"></li>`
-          : `<li class="lbs-add"><button type="button" data-act="add" data-level="${level}" data-parent="${esc(parent)}">+ New ${level === "cat" ? "category" : "subcategory"}</button></li>`;
-      const col1 = [...lib.genres.values()].map((g) => item(g.id, p.genre === g.id, true)).join("");
-      const col2 = p.genre ? lib.genres.get(p.genre).cats.map((c) => item(c, p.cat === c, true, lib.cats.get(c))).join("") + adder("cat", p.genre) : "";
-      const col3 = p.cat ? lib.cats.get(p.cat).subs.map((s) => item(s, p.sub === s, false, lib.subs.get(s))).join("") + adder("sub", p.cat) : "";
-      cols.innerHTML =
-        `<ul class="lbs-col" aria-label="Genres">${col1}</ul>` +
-        `<ul class="lbs-col" aria-label="Categories">${col2 || '<li class="lbs-col-hint">Pick a genre</li>'}</ul>` +
-        `<ul class="lbs-col" aria-label="Subcategories">${col3 || '<li class="lbs-col-hint">Pick a category</li>'}</ul>`;
-      cols.querySelectorAll(".lbs-col").forEach((ul) => {
-        const sel = ul.querySelector(".-sel");
-        if (sel) sel.scrollIntoView({ block: "nearest" });
-      });
-      const input = $(".lbs-new, .lbs-rename", cols);
-      if (input) { input.focus(); if (input.classList.contains("lbs-rename")) input.select(); }
+  // A folder row (with the editing tools in edit mode).
+  function folderRow(id) {
+    const o = lib.cats.get(id) || lib.subs.get(id);
+    if (edit.on && edit.renaming === id) return `<li class="lbs-adding"><input type="text" class="lbs-rename" maxlength="40" value="${esc(nameOf(id))}"></li>`;
+    if (edit.on && edit.deleting === id) {
+      const n = lib.count.get(id) || 0;
+      return `<li class="lbs-confirm">Delete <b>${esc(nameOf(id))}</b>?${n ? ` Its ${fmt(n)} film${n === 1 ? "" : "s"} go to ${lib.cats.has(id) ? "Everything Else" : "General"}.` : ""} <button type="button" data-act="del-yes" data-id="${esc(id)}">Delete</button><button type="button" data-act="del-no">Keep</button></li>`;
     }
-    renderEditBar();
+    const tools = !edit.on || lib.genres.has(id) ? "" :
+      `<span class="lbs-tools">` +
+      (o && o.own ? `<button type="button" data-act="approve" data-id="${esc(id)}" title="Approve: add to the house plan">✓</button>` : "") +
+      (isFixed(id) ? "" : `<button type="button" data-act="rename" data-id="${esc(id)}" title="Rename">✎</button><button type="button" data-act="del" data-id="${esc(id)}" title="Delete">✕</button>`) +
+      `</span>`;
+    const kids = lib.genres.has(id) || lib.cats.has(id);
+    const own = o && o.own ? `<em class="lbs-proposed" title="Only you can see this until a moderator approves it">proposed</em>` : "";
+    const move = desk.moving ? `<button type="button" class="lbs-move-here" data-act="move-here" data-id="${esc(id)}">Move here</button>` : "";
+    return (
+      `<li class="lbs-folder${edit.on && edit.sel === id ? " -editsel" : ""}" data-act="open" data-id="${esc(id)}" data-drop="${esc(id)}"${edit.on && !lib.genres.has(id) ? ' draggable="true"' : ""}>` +
+      `${ICON_FOLDER}<span class="lbs-folder-name">${esc(nameOf(id))}</span>${own}<span class="lbs-n">${fmt(lib.count.get(id) || 0)}</span>${tools}${kids ? '<i class="lbs-chev" aria-hidden="true">›</i>' : ""}${move}</li>`
+    );
+  }
 
-    const recent = (mine.recent || []).filter((id) => lib.subs.has(id)).slice(0, 5);
-    $(".lbs-recent", root).innerHTML = recent.length
-      ? `<span class="lbs-hint">Recent</span>` + recent.map((id) => `<button type="button" class="lbs-chip" data-act="open" data-id="${esc(id)}" data-drop="${esc(id)}" title="${esc(pathOf(id).join(" › "))}">${esc(pathOf(id).slice(1).join(" › "))}</button>`).join("")
-      : `<span class="lbs-hint">Drop a film on any folder, path or chip. Hold over a folder to open it.</span>`;
+  // The folders view: the open folder's folders, like a file browser.
+  function renderBrowser(where, list) {
+    const p = partsOf(desk.folder);
+    const q = desk.q.trim().toLowerCase();
+    let ids, adder = "";
+    if (q) {
+      // Search: folders anywhere below this one.
+      const under = (id) => !desk.folder || id === desk.folder || id.startsWith(desk.folder + "/") || partsOf(id).genre === desk.folder || partsOf(id).cat === desk.folder;
+      ids = [...lib.cats.keys(), ...lib.subs.keys(), ...lib.genres.keys()].filter((id) => under(id) && nameOf(id).toLowerCase().includes(q)).slice(0, 120);
+      where.innerHTML = `${crumbsHTML()}<span>· ${fmt(ids.length)} folder${ids.length === 1 ? "" : "s"} match</span>`;
+    } else {
+      ids = !desk.folder ? [...lib.genres.keys()] : p.cat ? lib.cats.get(p.cat).subs : lib.genres.get(p.genre).cats;
+      const level = !desk.folder ? null : p.cat ? "sub" : "cat";
+      if (level) {
+        adder =
+          desk.adding && desk.adding.level === level && desk.adding.parent === desk.folder
+            ? `<li class="lbs-adding"><input type="text" class="lbs-new" maxlength="40" placeholder="${level === "cat" ? "New category" : "New subcategory"}"></li>`
+            : `<li class="lbs-add"><button type="button" data-act="add" data-level="${level}" data-parent="${esc(desk.folder)}">+ New ${level === "cat" ? "category" : "subcategory"}</button></li>`;
+      }
+      where.innerHTML = `${crumbsHTML()}<span>· ${fmt(ids.length)} folder${ids.length === 1 ? "" : "s"}</span>`;
+    }
+    list.innerHTML = `<li class="lbs-browse"><ul>${ids.map((id) => (q ? folderRow(id).replace('<span class="lbs-folder-name">', `<span class="lbs-folder-name"><small>${esc(pathOf(id).slice(0, -1).join(" › "))}${pathOf(id).length > 1 ? " › " : ""}</small>`) : folderRow(id))).join("")}${adder}</ul></li>`;
+    const input = $(".lbs-new, .lbs-rename", list);
+    if (input) { input.focus(); if (input.classList.contains("lbs-rename")) input.select(); }
+  }
+
+  // The right-hand column (inventory), and the folders view if it's showing.
+  function renderFolders() {
+    renderEditBar();
+    renderTray();
+    if (desk.open && desk.mode === "list") renderFilms();
   }
 
   function openFolder(id) {
-    desk.folder = id || STOCKED;
-    desk.col = id || null;
+    desk.folder = id || null;
+    desk.q = "";
     desk.fq = "";
     desk.shown = 150;
     desk.selected.clear();
@@ -1138,7 +1114,7 @@
         if (level === "cat") { H.cats[hid] = { genre: parent, name }; if (parent === STOCKED) H.order = [...lib.genres.get(STOCKED).cats.filter((c) => !/\/rest$/.test(c)), hid, `${STOCKED}/rest`]; }
         else H.subs[hid] = { cat: parent, name };
       });
-      desk.col = hid;
+      desk.folder = hid;
       if (level === "cat") edit.sel = hid;
       return renderDesk();
     }
@@ -1147,7 +1123,7 @@
     saveMine();
     buildLibrary();
     desk.adding = null;
-    desk.col = id;
+    desk.folder = id;
     renderDesk();
     toast(`Made “${name}”. It's yours until a moderator approves it.`);
   }
@@ -2288,7 +2264,7 @@
     const b = $(".lbs-edit-toggle", root);
     if (b) { b.setAttribute("aria-pressed", on); b.textContent = on ? "Done editing" : "Edit store"; }
     refresh();
-    if (on) toast("Editing the house plan: what everyone sees. Zoom out to drag section pieces between shelves and the bucket.");
+    if (on) toast("Editing the house plan: what everyone sees. Zoom out to move sections between the shelves and your inventory.");
   }
 
   function renderEditBar() {
@@ -2306,28 +2282,49 @@
 
   /* The bucket: pieces that aren't on the wall. Drag them onto a shelf; drag
    * a piece off the wall (from afar, where pieces show as blocks) back here. */
+  // Inventory: films you're carrying between the wall and the folders (and,
+  // for a moderator, the sections still to place).
+  const heldList = () => (edit.on ? house().held : mine.held || []);
   function renderTray() {
     const tray = root && $(".lbs-tray", root);
     if (!tray) return;
-    const show = edit.on && wall.level === "wall" && desk.mode === "store" && wall.lay;
-    tray.hidden = !show;
-    if (!show) return;
-    const list = wall.lay.bucket, held = wall.lay.held || [];
+    const placing = edit.on && desk.mode === "store" && wall.level === "wall" && wall.lay;
+    const list = placing ? wall.lay.bucket : [], held = heldList();
     const spine = ([slug, name]) => {
       const c = colors[slug];
       return `<div class="lbs-dvd" data-slug="${esc(slug)}" data-name="${esc(name)}" style="--c:${c ? `#${c.slice(0, 6)}` : "#2c3440"}" title="${esc(name)}">${esc(titleOf(name))}</div>`;
     };
     tray.innerHTML =
-      `<div class="lbs-tray-top"><b>Workspace</b><span>${list.length ? `${list.length} section${list.length === 1 ? "" : "s"} still to place.` : "Everything is on the wall."} Drop a section on a shelf and it fills the free space there; the rest stays here for the next shelf.</span>` +
-      `<span class="lbs-grabtype">Grab <button type="button" data-act="grab" data-v="one" class="${edit.grab === "one" ? "-on" : ""}">Individual</button><button type="button" data-act="grab" data-v="group" class="${edit.grab === "group" ? "-on" : ""}">Group</button></span>` +
-      `<button type="button" data-act="w-auto">Auto-arrange</button><button type="button" data-act="w-clear">Everything down</button></div>` +
-      `<div class="lbs-tray-list">` +
-      held.map(spine).join("") +
-list.map((pc) => {
-        const n = pc.size / CAP;
-        return `<div class="lbs-piece -sec" data-cid="${esc(pc.sec)}" style="width:${Math.round(40 + Math.min(1, n) * 130)}px;height:${Math.round(26 + Math.min(5, Math.max(0, Math.ceil(n) - 1)) * 9)}px;--h:${secHue(pc.n)}" title="${esc(nameOf(pc.sec))}: ${pc.count} films still to place"><b>${esc(nameOf(pc.sec))}</b><span>${n < 0.95 ? `${Math.round(n * 100)}% shelf` : `${n.toFixed(1)} shelves`}</span></div>`;
-      }).join("") +
+      `<div class="lbs-tray-top"><b>Inventory</b>${held.length ? `<span>${fmt(held.length)} film${held.length === 1 ? "" : "s"}</span>` : ""}</div>` +
+      (placing
+        ? `<div class="lbs-tray-tools"><span class="lbs-grabtype">Grab <button type="button" data-act="grab" data-v="one" class="${edit.grab === "one" ? "-on" : ""}">Individual</button><button type="button" data-act="grab" data-v="group" class="${edit.grab === "group" ? "-on" : ""}">Group</button></span>` +
+          `<span><button type="button" data-act="w-auto">Auto-arrange</button><button type="button" data-act="w-clear">Everything down</button></span></div>` +
+          `<h4>Sections to place</h4>` +
+          `<div class="lbs-tray-list">` +
+          (list.length
+            ? list.map((pc) => {
+                const n = pc.size / CAP;
+                return `<div class="lbs-piece -sec" data-cid="${esc(pc.sec)}" style="width:${Math.round(40 + Math.min(1, n) * 200)}px;height:${Math.round(26 + Math.min(5, Math.max(0, Math.ceil(n) - 1)) * 9)}px;--h:${secHue(pc.n)}" title="${esc(nameOf(pc.sec))}: ${pc.count} films still to place"><b>${esc(nameOf(pc.sec))}</b><span>${n < 0.95 ? `${Math.round(n * 100)}% shelf` : `${n.toFixed(1)} shelves`}</span></div>`;
+              }).join("")
+            : `<p class="lbs-tray-empty">Everything is on the wall. Drop a section on a shelf and it fills the free space there; the rest waits here.</p>`) +
+          `</div><h4>Films</h4>`
+        : "") +
+      `<div class="lbs-tray-list -films">` +
+      (held.length ? held.map(spine).join("") : `<p class="lbs-tray-empty">Drag films here to carry them between the wall and your folders.</p>`) +
       `</div>`;
+  }
+  // Put films in the inventory.
+  function holdFilms(films) {
+    const add = (list) => { for (const [slug, name] of films) if (!list.some(([x]) => x === slug)) list.push([slug, name]); };
+    if (edit.on) return houseEdit(films.length === 1 ? `‘${titleOf(films[0][1])}’ is in your inventory.` : `${films.length} films in your inventory.`, (H) => add(H.held));
+    add(mine.held);
+    saveMine();
+    renderTray();
+  }
+  function releaseFilm(slug) {
+    if (edit.on) return; // house moves clear it themselves
+    mine.held = mine.held.filter(([x]) => x !== slug);
+    saveMine();
   }
 
   // A drag is either a section from the workspace (cid) or a piece on the wall (ref "bay:shelf/slot").
@@ -2362,7 +2359,7 @@ list.map((pc) => {
     }
     (sh[t.key] ||= []).splice(t.at, 0, { c: cid, u: Math.round(t.size) });
     const rest = had - t.size;
-    houseEdit(rest > 2 ? `${nameOf(cid)}: filled that space; the rest is in the workspace.` : `Placed ${nameOf(cid)}.`, (H) => { H.wall = { perRow: wall.plan.perRow, shelves: sh }; });
+    houseEdit(rest > 2 ? `${nameOf(cid)}: filled that space; the rest is in the inventory.` : `Placed ${nameOf(cid)}.`, (H) => { H.wall = { perRow: wall.plan.perRow, shelves: sh }; });
   }
   /* Group grab: every piece of the section moves together. Each keeps its
    * size and its position relative to the piece you picked up (in bays,
@@ -2426,7 +2423,7 @@ list.map((pc) => {
     const [k, slot] = g.ref.split("/");
     sh[k].splice(+slot, 1);
     if (!sh[k].length) delete sh[k];
-    houseEdit(`Took ${nameOf(grabCid(g))} down to the workspace.`, (H) => { H.wall = { perRow: wall.plan.perRow, shelves: sh }; });
+    houseEdit(`Took ${nameOf(grabCid(g))} down to the inventory.`, (H) => { H.wall = { perRow: wall.plan.perRow, shelves: sh }; });
   }
 
   // Where a DVD dropped at (sx, sy) on the canvas would go.
@@ -2458,9 +2455,6 @@ list.map((pc) => {
       if (!t.same) H.place[slug] = [t.sub || `${cid}/general`, name];
       if ((H.sort[cid] || "title") === "index") H.index[cid] = order;
     });
-  }
-  function holdDvd(slug, name) {
-    houseEdit(`‘${titleOf(name)}’ is in your workspace.`, (H) => { if (!H.held.some(([x]) => x === slug)) H.held.push([slug, name]); });
   }
 
   // One drag system for pieces and DVDs: canvas, workspace and folders.
@@ -2494,9 +2488,13 @@ list.map((pc) => {
     d.ghost.style.top = `${e.clientY + 8}px`;
     const c = wall.canvas, r = c.getBoundingClientRect();
     const over = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
-    wall.dropHint = over ? (d.kind === "piece" ? (d.group ? groupTarget(d, e.clientX - r.left, e.clientY - r.top) : dropTarget(d, e.clientX - r.left, e.clientY - r.top)) : dvdTarget(d.slug, e.clientX - r.left, e.clientY - r.top)) : null;
+    wall.dropHint = over ? (d.kind === "piece" ? (d.group ? groupTarget(d, e.clientX - r.left, e.clientY - r.top) : dropTarget(d, e.clientX - r.left, e.clientY - r.top)) : edit.on ? dvdTarget(d.slug, e.clientX - r.left, e.clientY - r.top) : null) : null;
     root.querySelectorAll(".lbs-folder.-over").forEach((el) => el.classList.remove("-over"));
     const folder = d.kind === "dvd" && document.elementFromPoint(e.clientX, e.clientY)?.closest?.(".lbs-folder[data-drop]");
+    // Hold a film over a folder to open it, as when dragging.
+    if (folder && folder.dataset.drop && (lib.genres.has(folder.dataset.drop) || lib.cats.has(folder.dataset.drop))) {
+      if (d.spring !== folder.dataset.drop) { d.spring = folder.dataset.drop; clearTimeout(d.springT); d.springT = setTimeout(() => { if (grab === d) openFolder(d.spring); }, 600); }
+    } else { d.spring = null; clearTimeout(d.springT); }
     if (folder) folder.classList.add("-over");
     drawSoon();
   });
@@ -2528,10 +2526,10 @@ list.map((pc) => {
       return drawSoon();
     }
     // A DVD
-    if (toTray) { if (d.from === "wall") holdDvd(d.slug, d.name); return drawSoon(); }
-    const folder = el && el.closest && el.closest(".lbs-folder[data-drop]");
-    if (folder) {
-      if (d.from === "tray") houseEdit("", (H) => { H.held = H.held.filter(([x]) => x !== d.slug); });
+    if (toTray) { if (d.from === "wall") holdFilms([[d.slug, d.name]]); return drawSoon(); }
+    const folder = el && el.closest && el.closest(".lbs-folder[data-drop], .lbs-crumb[data-drop]");
+    if (folder && folder.dataset.drop) {
+      if (d.from === "tray") releaseFilm(d.slug);
       return moveFilms([[d.slug, d.name]], folder.dataset.drop);
     }
     if (hint && hint.ok) return dropDvd(d.slug, d.name, hint);
@@ -2571,7 +2569,7 @@ list.map((pc) => {
 
   function selectSection(id) {
     edit.sel = id;
-    desk.col = id;
+    desk.folder = id;
     renderFolders();
     drawSoon();
   }
@@ -2593,8 +2591,7 @@ list.map((pc) => {
     const was = nameOf(id);
     edit.deleting = null;
     if (edit.sel === id) edit.sel = null;
-    if (desk.col === id || (p.cat === id && desk.col && desk.col.startsWith(id + "/"))) desk.col = p.sub ? p.cat : p.genre;
-    if (desk.folder === id) desk.folder = desk.col;
+    if (desk.folder === id || (p.cat === id && desk.folder && desk.folder.startsWith(id + "/"))) desk.folder = p.sub ? p.cat : p.genre;
     houseEdit(`Deleted “${was}”.`, (H) => {
       if (H.cats[id]) delete H.cats[id];
       else if (H.subs[id]) delete H.subs[id];
@@ -2807,9 +2804,9 @@ list.map((pc) => {
       springOn = t;
       clearTimeout(springTimer);
       const id = t.dataset.drop;
-      if (t.classList.contains("lbs-folder") && (lib.genres.has(id) || lib.cats.has(id)) && desk.col !== id) {
+      if (t.classList.contains("lbs-folder") && (lib.genres.has(id) || lib.cats.has(id)) && desk.folder !== id) {
         springTimer = setTimeout(() => {
-          desk.col = id;
+          desk.folder = id;
           desk.fq = "";
           renderFolders();
           springOn = null;
@@ -2827,6 +2824,8 @@ list.map((pc) => {
   }
 
   function onDrop(e) {
+    const inv = !dragFolder && dragging && e.target.closest && e.target.closest(".lbs-tray");
+    if (inv) { e.preventDefault(); const films = dragging; onDragEnd(); return holdFilms(films); }
     if (dragFolder) {
       const d = folderDrop(e), id = dragFolder;
       e.preventDefault();
@@ -2893,7 +2892,7 @@ list.map((pc) => {
     if (act === "edit") return toggleEdit(!edit.on);
     if (act === "sort") return setSort(id, btn.dataset.v);
     if (act === "grab") { edit.grab = btn.dataset.v; return renderTray(); }
-    if (act === "w-clear") return houseEdit("Everything is back in the workspace.", (H) => { H.wall = { perRow: wall.plan.perRow, shelves: {} }; });
+    if (act === "w-clear") return houseEdit("Everything is back in the inventory.", (H) => { H.wall = { perRow: wall.plan.perRow, shelves: {} }; });
     if (act === "w-auto") return houseEdit("Auto-arranged the wall.", (H) => { H.wall = autoArrange(sectionStock(), wall.plan.perRow); });
     if (act === "rename") { e.stopPropagation(); edit.renaming = id; edit.deleting = null; return renderFolders(); }
     if (act === "del") { e.stopPropagation(); edit.deleting = id; edit.renaming = null; return renderFolders(); }
@@ -2944,7 +2943,7 @@ list.map((pc) => {
     if (act === "open") {
       if (!desk.open) {
         desk.folder = id;
-        desk.col = id;
+        desk.folder = id;
         return setDesk(true);
       }
       if (desk.mode === "store" && partsOf(id).genre === STOCKED && wall.level === "aisles" && id !== STOCKED) wall.level = "wall";
@@ -2953,15 +2952,15 @@ list.map((pc) => {
       return;
     }
     if (act === "aisles") { wall.level = "aisles"; return showStage(); }
-    if (act === "enter") { wall.level = "wall"; desk.col = id; renderFolders(); return showStage(); }
+    if (act === "enter") { wall.level = "wall"; desk.folder = id; renderFolders(); return showStage(); }
     if (act === "fit") return fit();
     if (act === "zoom-in" || act === "zoom-out") {
       const c = wall.canvas;
       return c && zoomAt(act === "zoom-in" ? 1.6 : 1 / 1.6, c.clientWidth / 2, c.clientHeight / 2);
     }
-    if (act === "col") { desk.col = id || null; return renderFolders(); }
+    if (act === "col") { desk.folder = id || null; return renderFolders(); }
     if (act === "up") {
-      const p = partsOf(desk.col);
+      const p = partsOf(desk.folder);
       return openFolder(p.sub ? p.cat : p.cat ? p.genre : null);
     }
     if (act === "more") { desk.shown += 300; return renderFilms(); }
