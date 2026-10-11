@@ -1207,7 +1207,6 @@
   // its own now and then (at most once a week, never in the first few days);
   // the × stops that for good, but the tab always stays.
   const BAR_KEY = `${NS}:bar`;
-  const FEEDBACK_KEY = `${NS}:feedback-outbox`;
   const COFFEE_URL = "https://www.buymeacoffee.com/"; // TODO: real link
   const BAR_GRACE_MS = 3 * 864e5; // no pop-ups in the first 3 days
   const BAR_EVERY_MS = 7 * 864e5; // then at most once a week
@@ -1254,6 +1253,7 @@
       `<span class="${NS}-bar-spacer"></span>` +
       `<form class="${NS}-bar-form"><input class="${NS}-bar-input" type="text" maxlength="2000" autocomplete="off" ` +
       `placeholder="Feedback? Suggestions? Insults? Type here and hit enter!" aria-label="Send feedback about LetterBloxd"></form>` +
+      `<span class="${NS}-bar-info" tabindex="0" role="note" title="Sends your message, the extension version, your browser and OS, the kind of page you're on (never its address) and your LetterBloxd settings. No username, nothing else." aria-label="What gets sent">ⓘ</span>` +
       `<button type="button" class="${NS}-bar-dismiss" title="Hide, and don't pop open on its own again (the tab stays)" aria-label="Hide and don't pop open again">${svg("0 0 24 24", '<path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>')}</button>` +
       `</div>`;
 
@@ -1272,12 +1272,20 @@
       e.preventDefault();
       const text = input.value.trim();
       if (!text) return;
-      sendFeedback(text);
       input.value = "";
-      const was = input.placeholder;
-      input.placeholder = THANKS[Math.floor(Math.random() * THANKS.length)];
-      input.blur();
-      setTimeout(() => (input.placeholder = was), 4000);
+      input.disabled = true;
+      sendFeedback(text).then((r) => {
+        input.disabled = false;
+        if (!r.ok) {
+          input.value = text; // keep what they wrote
+          if (!r.declined) toast(r.reason || "Couldn't send your feedback.", true);
+          return;
+        }
+        const was = input.placeholder;
+        input.placeholder = THANKS[Math.floor(Math.random() * THANKS.length)];
+        input.blur();
+        setTimeout(() => (input.placeholder = was), 4000);
+      });
     });
     document.body.append(barEl);
     setBarOpen(barState.open);
@@ -1292,13 +1300,38 @@
     if (open && focus) barEl.querySelector(`.${NS}-bar-input`).focus();
   }
 
-  // TODO: send somewhere real. For now feedback is kept in this browser only
-  // (localStorage), so nothing leaves your computer.
+  // What kind of page this is, without the address (no usernames, no titles).
+  function pageType() {
+    const p = location.pathname;
+    if (p === "/") return "home";
+    if (/^\/film\/[^/]+\/?$/.test(p)) return "film page";
+    if (/^\/film\//.test(p)) return "film subpage";
+    if (/^\/films\//.test(p)) return "browse films";
+    if (/^\/[^/]+\/list\//.test(p)) return "list";
+    if (/^\/[^/]+\/watchlist\//.test(p)) return "watchlist";
+    if (/^\/[^/]+\/(films|diary|reviews|likes)\//.test(p)) return "profile: " + p.split("/")[2];
+    if (/^\/[^/]+\/?$/.test(p)) return "profile";
+    return "other";
+  }
+
+  // Sends feedback through the extension (bridge.js -> background.js), which
+  // adds the version and browser. Only the named settings below go along.
   function sendFeedback(text) {
-    const box = readJSON(FEEDBACK_KEY, []);
-    box.push({ at: new Date().toISOString(), page: location.pathname, text });
-    writeJSON(FEEDBACK_KEY, box.slice(-50));
-    console.info("[LetterBloxd] feedback (kept locally for now):", text);
+    const id = Math.random().toString(36).slice(2);
+    const settings = JSON.stringify({ mode: prefs.mode, badges: prefs.badgeStyle, filters: prefs.filters });
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => finish({ ok: false, reason: "No answer from the extension. Reload the page and try again." }), 60000);
+      function finish(result) {
+        clearTimeout(timer);
+        window.removeEventListener("message", onReply);
+        resolve(result);
+      }
+      function onReply(e) {
+        if (e.source === window && e.data && e.data.__lbni === "feedback-result" && e.data.id === id) finish(e.data);
+      }
+      window.addEventListener("message", onReply);
+      window.postMessage({ __lbni: "feedback", id, payload: { text, page: pageType(), settings } }, location.origin);
+    });
   }
 
   // ================================================================ "N hidden" note

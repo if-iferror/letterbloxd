@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Send feedback? · LetterBloxd</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; padding: 22px 24px; background: #14181c; color: #9ab; font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  h1 { margin: 0 0 8px; color: #fff; font-size: 17px; }
+  ul { margin: 8px 0 14px; padding-left: 18px; color: #cde; }
+  li { margin: 2px 0; }
+  p { margin: 0 0 10px; }
+  .row { display: flex; gap: 10px; justify-content: flex-end; margin-top: 16px; }
+  button { font: inherit; font-weight: 600; padding: 8px 16px; border-radius: 4px; border: 0; cursor: pointer; }
+  #allow { background: #00b020; color: #fff; }
+  #deny { background: #2c3440; color: #def; }
+  small { color: #678; }
+</style>
+</head>
+<body>
+  <h1>Send your feedback?</h1>
+  <p>LetterBloxd will send this to the developer:</p>
+  <ul>
+    <li>the message you typed</li>
+    <li>the extension version, your browser and operating system</li>
+    <li>the kind of page you were on (e.g. “film page”, never its address)</li>
+    <li>your LetterBloxd display settings</li>
+  </ul>
+  <small>Nothing else: no username, no viewing history. Firefox remembers your answer; change it any time in Add-ons.</small>
+  <div class="row"><button id="deny">Don't send</button><button id="allow">Allow and send</button></div>
+  <script src="consent.js"></script>
+</body>
+</html>
