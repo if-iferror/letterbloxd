@@ -1146,8 +1146,9 @@
   const DEPTH_X = 4, DEPTH_Y = 5; // the sliver of top and side we see
   // Case plastic, as seen on top: VHS clamshells (darkest), DVDs, Blu-rays.
   const caseTop = (y) => (y && y < 1990 ? "#141517" : y && y < 2008 ? "#25272b" : "#1d5aa6");
-  const BAND = 22; // colour band at the top of a spine; the year sits in it
-  const yearInk = (own) => (own && lum(rgbOf(own.slice(6))) > 0.55 ? "rgba(10,12,14,0.8)" : "rgba(255,255,255,0.85)");
+  const YEAR_ZONE = 22; // the year sits in this much of the top of a spine
+  // The year: white, unless the spine is too light for it.
+  const yearInk = (own) => (own && lum(rgbOf(own)) > 0.62 ? "rgba(10,12,14,0.85)" : "rgba(255,255,255,0.9)");
   const reduceMotion = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   const wall = { level: "aisles", lay: null, cam: { x: 0, y: 0, z: 0.05 }, hover: null, pin: null, lite: false, slow: 0, imgs: new Map(), logos: new Map(), frame: 0 };
@@ -1880,30 +1881,41 @@
               ctx.strokeStyle = "rgba(0,0,0,0.55)";
               ctx.lineWidth = Math.max(px, 0.6);
               ctx.beginPath();
-              ctx.moveTo(f.x + DEPTH_X * 0.55, top - DEPTH_Y * 0.55);
-              ctx.lineTo(f.x + f.w + DEPTH_X * 0.55, top - DEPTH_Y * 0.55);
+              ctx.moveTo(f.x + f.w * 0.5, top);
+              ctx.lineTo(f.x + f.w * 0.5 + DEPTH_X, top - DEPTH_Y);
               ctx.stroke();
             }
             ctx.fillStyle = body;
-            ctx.fillRect(f.x, top, f.w, f.h);
+            if (near && !wall.lite && ctx.roundRect) { ctx.beginPath(); ctx.roundRect(f.x, top, f.w, f.h, 1.6); ctx.fill(); }
+            else ctx.fillRect(f.x, top, f.w, f.h);
             if (!near || wall.lite) continue;
             const own = colors[f.slug];
-            // the poster's accent colour as a band across the top, with the year in it
-            if (own) { ctx.fillStyle = `#${own.slice(6)}`; ctx.fillRect(f.x, top, f.w, BAND); }
-            // a little plastic: a lit edge
+            // Light from the left: a soft highlight down the left edge (three
+            // stacked strips make a cheap gradient) and a thin shadow on the right.
+            const e = f.w * 0.05;
             ctx.fillStyle = "rgba(255,255,255,0.10)";
-            ctx.fillRect(f.x, top, Math.max(px, f.w * 0.18), f.h);
+            ctx.fillRect(f.x + 0.4, top + 1, e * 2.4, f.h - 2);
+            ctx.fillStyle = "rgba(255,255,255,0.10)";
+            ctx.fillRect(f.x + 0.4, top + 1, e * 1.4, f.h - 2);
+            ctx.fillStyle = "rgba(255,255,255,0.14)";
+            ctx.fillRect(f.x + 0.4, top + 1, e * 0.6, f.h - 2);
+            ctx.fillStyle = "rgba(0,0,0,0.16)";
+            ctx.fillRect(f.x + f.w - e * 1.6, top + 1, e * 1.6, f.h - 2);
+            ctx.fillStyle = "rgba(0,0,0,0.2)";
+            ctx.fillRect(f.x + f.w - e * 0.6, top + 1, e * 0.6, f.h - 2);
             // Title art from TMDB, turned on its side, when there is one.
             // Spine coordinates below run up from 8 units above the shelf; the
             // top of the case is at f.h - 8, the colour band just under it.
-            const yearAt = f.h - 8 - BAND / 2;
+            const yearAt = f.h - 8 - YEAR_ZONE / 2;
+            const mid = f.h / 2 - 8; // the middle of the case, in spine coordinates
+            const span = f.h - 2 * YEAR_ZONE - 6; // room for the title, clear of the year at both ends
             const lg = z >= LOGO_Z ? logoImg(f.slug, z >= 1.6 ? "w300" : "w185") || (z >= 1.6 ? logoImg(f.slug, "w185") : null) : null;
             if (lg) {
               const iw = lg.img.naturalWidth || 300, ih = lg.img.naturalHeight || 100;
               const a = iw / ih;
               // Along the spine (local x, from 8 units above the shelf upward):
               // the logo sits in [s0, s1], the year near the top as before.
-              const s0 = 4, s1 = f.h - 8 - BAND - 4, room = s1 - s0, thick = f.w - 3;
+              const room = span, thick = f.w - 3;
               let len = Math.min(room, thick * a), th = len / a;
               if (th > thick) { th = thick; len = th * a; }
               const bgL = own ? relLum(rgbOf(own)) : 0.03;
@@ -1911,7 +1923,7 @@
               ctx.save();
               ctx.translate(f.x + f.w / 2, f.y - 8);
               ctx.rotate(-Math.PI / 2);
-              ctx.drawImage(src, s0 + (room - len) / 2, -th / 2, len, th);
+              ctx.drawImage(src, mid - len / 2, -th / 2, len, th);
               if (text) {
                 ctx.font = `600 ${Math.min(f.w * 0.62, 10) * 0.8}px Arial, sans-serif`;
                 ctx.textBaseline = "middle";
@@ -1930,10 +1942,10 @@
               ctx.fillStyle = light ? "rgba(10,12,14,0.9)" : "rgba(255,255,255,0.92)";
               ctx.textBaseline = "middle";
               let t = titleOf(f.name).toUpperCase();
-              const start = 4;
-              const room = f.h - 8 - BAND - start - 4;
+              const room = span;
               if (ctx.measureText(t).width > room) { while (t.length > 3 && ctx.measureText(t + "…").width > room) t = t.slice(0, -1); t += "…"; }
-              ctx.fillText(t, start, 0);
+              ctx.textAlign = "center";
+              ctx.fillText(t, mid, 0);
               ctx.font = `600 ${fs * 0.8}px Arial, sans-serif`;
               ctx.textAlign = "center";
               ctx.fillStyle = yearInk(own);
