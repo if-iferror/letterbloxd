@@ -1207,7 +1207,7 @@
   // its own now and then (at most once a week, never in the first few days);
   // the × stops that for good, but the tab always stays.
   const BAR_KEY = `${NS}:bar`;
-  const COFFEE_URL = "https://www.buymeacoffee.com/"; // TODO: real link
+  const COFFEE_URL = "https://ko-fi.com/if_iferror";
   const BAR_GRACE_MS = 3 * 864e5; // no pop-ups in the first 3 days
   const BAR_EVERY_MS = 7 * 864e5; // then at most once a week
   const barState = { installedAt: 0, lastAuto: 0, noAuto: false, open: false, ...readJSON(BAR_KEY, {}) };

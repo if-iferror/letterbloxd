@@ -15,10 +15,11 @@
  */
 const api = globalThis.browser || globalThis.chrome;
 
-// The developer's Google Form. Leave `url` empty and nothing is ever sent.
+// The developer's Google Form ("LetterBloxd feedback", owned by if.iferror).
+// Two fields: the message, and one line of technical details.
 const FORM = {
-  url: "",
-  entries: { text: "", version: "", browser: "", page: "", settings: "" },
+  url: "https://docs.google.com/forms/d/e/1FAIpQLSdimOuu93oNmPj3PoPkcWgJNrHqhD9rTCV17-gz_ba05AgPrw/formResponse",
+  entries: { text: "entry.1491097896", details: "entry.1838492833" },
 };
 const DATA = ["personalCommunications", "technicalAndInteraction"];
 
@@ -65,10 +66,8 @@ async function send(payload) {
   const e = FORM.entries;
   const body = new URLSearchParams();
   body.set(e.text, String(payload.text || "").slice(0, 2000));
-  body.set(e.version, api.runtime.getManifest().version);
-  body.set(e.browser, browserName());
-  body.set(e.page, String(payload.page || "").slice(0, 40));
-  body.set(e.settings, String(payload.settings || "").slice(0, 500));
+  // e.g. "v1.3.0 · Firefox 131 · macOS · film page · {"mode":"hide",...}"
+  body.set(e.details, [`v${api.runtime.getManifest().version}`, browserName(), String(payload.page || "").slice(0, 40), String(payload.settings || "").slice(0, 500)].join(" · "));
   try {
     // Google Forms doesn't answer cross-site requests readably, so this is
     // fire-and-forget: a network error is the only failure we can see.
