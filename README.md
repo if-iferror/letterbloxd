@@ -8,7 +8,7 @@ Letterboxd can hide films you've watched or watchlisted, but there's no way to s
 
 ## What's new in 1.3.0
 
-- New name (formerly Letternoxd) and a new icon.
+- New name (formerly Letternoxd).
 - The film-page button is now **Block**.
 - Badges come in two styles: **Icons** or **Ratings**.
 - A feedback bar (the megaphone tab at the top right).
