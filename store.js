@@ -252,7 +252,7 @@
   // Your own moves and folders ("Mine"). Kept in this browser only.
   const MINE_KEY = `${NS}:store:mine:v1`;
   let mine = readJSON(MINE_KEY, null) || {};
-  mine = { place: {}, cats: {}, subs: {}, recent: [], view: "community", ...mine };
+  mine = { place: {}, cats: {}, subs: {}, recent: [], view: "community", sort: {}, ...mine };
   const saveMine = () => writeJSON(MINE_KEY, mine);
 
   let lib = null; // built from stock + mine; see buildLibrary()
@@ -265,7 +265,10 @@
    * A moderator's unpublished edits stay in this browser until downloaded. */
   const HOUSE_KEY = `${NS}:store:house:v1`;
   const HOUSE_FILE = "https://raw.githubusercontent.com/if-iferror/letterbloxd/dev/data/house-horror.json";
-  const blankHouse = () => ({ v: 1, names: {}, hidden: [], cats: {}, subs: {}, place: {}, order: [], subOrder: {}, shape: {} });
+  // index: a section's hand-made order (slugs); sort: each section's default
+  // order ("title" | "year" | "index"); held: films taken off the wall into
+  // the moderator's workspace.
+  const blankHouse = () => ({ v: 1, names: {}, hidden: [], cats: {}, subs: {}, place: {}, order: [], subOrder: {}, index: {}, sort: {}, held: [], wall: null });
   const fullHouse = (x) => ({ ...blankHouse(), ...(x || {}) });
   let houseShared = null;
   let houseLocal = readJSON(HOUSE_KEY, null);
@@ -561,8 +564,11 @@
       root.addEventListener("drop", onDrop);
       root.addEventListener("contextmenu", onContextMenu);
       root.addEventListener("mousedown", (e) => {
-        const pc = edit.on && e.button === 0 && e.target.closest(".lbs-tray .lbs-piece");
-        if (pc) { e.preventDefault(); pieceDown(pc.dataset.ref, "tray", e); }
+        if (!edit.on || e.button !== 0) return;
+        const pc = e.target.closest(".lbs-tray .lbs-piece");
+        if (pc) { e.preventDefault(); return grabDown({ kind: "piece", ref: pc.dataset.ref, from: "tray" }, e); }
+        const dv = e.target.closest(".lbs-tray .lbs-dvd");
+        if (dv) { e.preventDefault(); grabDown({ kind: "dvd", slug: dv.dataset.slug, name: dv.dataset.name, from: "tray" }, e); }
       });
       root.addEventListener("dblclick", (e) => {
         const row = edit.on && e.target.closest(".lbs-folder");
@@ -874,7 +880,8 @@
       `<div class="lbs-stage-top"><div class="lbs-stage-path"></div>` +
       `<div class="lbs-zoom"><button type="button" data-act="zoom-out" aria-label="Zoom out">−</button><button type="button" data-act="fit">Fit</button><button type="button" data-act="zoom-in" aria-label="Zoom in">+</button></div></div>` +
       `<div class="lbs-aisles"></div><canvas class="lbs-canvas" draggable="false" aria-label="Horror wall. Scroll to move, pinch or Ctrl-scroll to zoom, drag a spine to a folder."></canvas>` +
-      `<div class="lbs-tip" hidden></div><div class="lbs-tray" hidden></div>` +
+      `<div class="lbs-tray" hidden></div>` +
+      `<div class="lbs-tip" hidden></div><div class="lbs-sortpick" hidden></div>` +
       `<div class="lbs-logopick" hidden></div><div class="lbs-logobuild" hidden></div>` +
       `<p class="lbs-credit" hidden>Title logos from <a href="https://www.themoviedb.org/" target="_blank" rel="noopener">TMDB</a>. This product uses the TMDB API but is not endorsed or certified by TMDB.</p>` +
       `</div>` +
@@ -1187,16 +1194,41 @@
   const secHue = (i) => { const n = Math.max(1, lib.genres.get(STOCKED).cats.length), step = n % 5 ? 5 : 3; return (((i * step) % n) * 360) / n + 10; };
 
   // Every section's films (shelf order) and its pieces' lengths.
+  // How a section is ordered: your own choice, else the house's, else A-Z.
+  const sortOf = (cid) => (!edit.on && mine.sort[cid]) || house().sort[cid] || "title";
+  // A section's films in shelf order (held films left out).
+  function sectionOrder(cid) {
+    const H = house();
+    const held = new Set(H.held.map(([slug]) => slug));
+    const list = [];
+    for (const sid of lib.cats.get(cid).subs) for (const [slug, name] of lib.inSub.get(sid) || []) if (!held.has(slug)) list.push({ slug, name, sub: sid });
+    const az = (a, b) => byTitle([a.slug, a.name], [b.slug, b.name]);
+    const mode = sortOf(cid);
+    if (mode === "year") return list.sort((a, b) => (yearOf(a.name) || 9999) - (yearOf(b.name) || 9999) || az(a, b));
+    list.sort(az);
+    const index = mode === "index" && H.index[cid];
+    if (!index) return list;
+    // Hand order; films it doesn't know yet slot in where A-Z would put them.
+    const pos = new Map(index.map((slug, i) => [slug, i]));
+    const known = list.filter((f) => pos.has(f.slug)).sort((a, b) => pos.get(a.slug) - pos.get(b.slug));
+    const out = [];
+    let k = 0;
+    for (const f of list) {
+      if (pos.has(f.slug)) continue;
+      while (k < known.length && az(known[k], f) < 0) out.push(known[k++]);
+      out.push(f);
+    }
+    while (k < known.length) out.push(known[k++]);
+    return out;
+  }
+
   function cutPieces() {
     const out = new Map();
     lib.genres.get(STOCKED).cats.forEach((cid, n) => {
-      const items = [];
-      for (const sid of lib.cats.get(cid).subs) {
-        for (const [slug, name] of lib.inSub.get(sid) || []) {
-          const y = yearOf(name);
-          items.push({ slug, name, year: y, w: spineW(y), h: spineH(y), sub: sid, rank: lib.rank.get(slug) ?? 1e9 });
-        }
-      }
+      const items = sectionOrder(cid).map(({ slug, name, sub }) => {
+        const y = yearOf(name);
+        return { slug, name, year: y, w: spineW(y), h: spineH(y), sub, rank: lib.rank.get(slug) ?? 1e9 };
+      });
       const sizes = [];
       let acc = 0;
       for (const f of items) {
@@ -1242,7 +1274,9 @@
         if (d < best) { best = d; perRow = t; }
       }
     }
-    const plan = H.wall && H.wall.shelves ? H.wall : autoArrange(pieces, perRow);
+    // No plan yet: viewers get the automatic layout; a moderator starts with
+    // an empty wall and every piece in the bucket.
+    const plan = H.wall && H.wall.shelves ? H.wall : edit.on ? { perRow, shelves: {} } : autoArrange(pieces, perRow);
     wall.plan = { perRow, shelves: plan.shelves };
     const origin = (b) => ({ x: (b % perRow) * (WU.bayW + WU.gap), y: Math.floor(b / perRow) * ROW_H });
 
@@ -1260,6 +1294,24 @@
         keep.push(ref);
       }
       if (keep.length) shelfList.set(key, keep);
+    }
+    // Viewers: pieces nobody has placed yet carry on after the last used bay.
+    if (!edit.on) {
+      const rest = new Map([...pieces].map(([cid, P]) => [cid, { ...P, sizes: P.sizes.map((x, i) => (where.has(pieceRef(cid, i)) ? null : x)) }]));
+      const start = 1 + Math.max(-1, ...[...where.values()].map((w) => w.bay));
+      let b = start, sh = 0, used = 0;
+      for (const P of rest.values()) {
+        P.sizes.forEach((size, i) => {
+          if (size == null) return;
+          if (used && used + BOOKEND + size > CAP) { used = 0; if (++sh >= WU.shelves) { sh = 0; b++; } }
+          const key = `${b}:${sh}`;
+          const keep = shelfList.get(key) || [];
+          where.set(pieceRef(P.id, i), { bay: b, shelf: sh, slot: keep.length });
+          keep.push(pieceRef(P.id, i));
+          shelfList.set(key, keep);
+          used += (used ? BOOKEND : 0) + size;
+        });
+      }
     }
     // Reading order: bay row, bay, shelf (down first), then left to right.
     const readKey = (w) => [Math.floor(w.bay / perRow), w.bay % perRow, w.shelf, w.slot];
@@ -1350,7 +1402,7 @@
     const bays = maxBay + 1 + (edit.on ? 1 : 0);
     const width = Math.min(bays, perRow) * (WU.bayW + WU.gap);
     const height = Math.ceil(bays / perRow) * ROW_H;
-    wall.lay = { films, chunks, secs, runs, bookends, faces: [], idx, bucket, width, height, bays, k: perRow, origin };
+    wall.lay = { films, chunks, secs, runs, bookends, faces: [], idx, bucket, held: H.held, width, height, bays, k: perRow, origin };
     recolourSections();
     renderTray();
   }
@@ -1953,12 +2005,16 @@
       ctx.strokeStyle = d.ok ? "#40bcf4" : "#ff5a5a";
       ctx.lineWidth = 3 * px;
       const top = o.y + WU.sign + d.shelf * WU.shelfH + 6;
-      ctx.fillRect(d.x, top, d.w, WU.shelfH - WU.lip - 8);
-      ctx.strokeRect(d.x, top, d.w, WU.shelfH - WU.lip - 8);
+      if (d.dvd) { ctx.fillStyle = d.ok ? "#40bcf4" : "#ff5a5a"; ctx.fillRect(d.x, top, Math.max(d.w, 3 * px), WU.shelfH - WU.lip - 8); }
+      else {
+        ctx.fillRect(d.x, top, d.w, WU.shelfH - WU.lip - 8);
+        ctx.strokeRect(d.x, top, d.w, WU.shelfH - WU.lip - 8);
+      }
     }
 
     // Up close: laminated signs on the shelf edge. Each piece's sign slides
     // along with you so there's always one in view.
+    wall.signs = [];
     if (veil < 0.3) {
       const fsz = Math.max(10, Math.min(14, 10 + z * 4)) * px;
       ctx.font = `800 ${fsz}px Arial, sans-serif`;
@@ -1967,7 +2023,8 @@
       for (const r of L.runs) {
         if (!seen.has(r.bay) || r.x1 < x0 || r.x0 > x1) continue;
         const sec = L.secs[r.sec];
-        const label = sec.name.toUpperCase();
+        const mode = sortOf(sec.id);
+        const label = sec.name.toUpperCase() + (mode === "year" ? " · BY YEAR" : mode === "index" ? " · INDEX" : "") + " ▾";
         const tw = ctx.measureText(label).width + 14 * px;
         if (tw > r.x1 - r.x0 + 4) continue;
         const sx = Math.min(Math.max(r.x0 + 4, x0 + 12 * px), r.x1 - tw - 2);
@@ -1982,6 +2039,7 @@
         ctx.fillRect(sx, ty - th / 2, tw, th * 0.35);
         ctx.fillStyle = "#14181c";
         ctx.fillText(label, sx + 9 * px, ty + px);
+        wall.signs.push({ x: sx, y: ty - th / 2, w: tw, h: th, sec: r.sec });
       }
     }
 
@@ -2135,9 +2193,15 @@
         const p = toWall(e.offsetX, e.offsetY);
         const { b, s: sh } = bayAt(p);
         const run = wall.lay.runs.find((r) => r.bay === b && r.shelf === sh && p.x >= r.x0 - 4 && p.x <= r.x1 + 4);
-        if (run) { c.draggable = false; e.preventDefault(); return pieceDown(run.ref, "wall", e); }
+        if (run) { c.draggable = false; e.preventDefault(); return grabDown({ kind: "piece", ref: run.ref, from: "wall" }, e); }
       }
       const i = filmAt(e.offsetX, e.offsetY);
+      if (edit.on && e.button === 0 && i != null) {
+        const f = wall.lay.films[i];
+        c.draggable = false;
+        e.preventDefault();
+        return grabDown({ kind: "dvd", slug: f.slug, name: f.name, from: "wall" }, e);
+      }
       c.draggable = i != null; // on a spine: pick it up; elsewhere: pan
       if (i != null) return;
       pan = { x: e.clientX, y: e.clientY, moved: 0 };
@@ -2155,7 +2219,13 @@
       if (!pan) return;
       const clicked = pan.moved < 4 && e.target === c;
       pan = null;
-      // Edit mode: click a section (or its sign) to select it for shaping.
+      // A click on a shelf sign: choose how that section is sorted.
+      if (clicked) {
+        const p = toWall(e.offsetX, e.offsetY);
+        const sg = (wall.signs || []).find((q) => p.x >= q.x && p.x <= q.x + q.w && p.y >= q.y && p.y <= q.y + q.h);
+        if (sg) return openSortPick(wall.lay.secs[sg.sec], e.offsetX, e.offsetY);
+      }
+      // Edit mode: click a section to select it.
       if (clicked && edit.on) {
         const p = toWall(e.offsetX, e.offsetY);
         const { b, s: sh } = bayAt(p);
@@ -2236,12 +2306,17 @@
     const show = edit.on && wall.level === "wall" && desk.mode === "store" && wall.lay;
     tray.hidden = !show;
     if (!show) return;
-    const list = wall.lay.bucket;
+    const list = wall.lay.bucket, held = wall.lay.held || [];
+    const spine = ([slug, name]) => {
+      const c = colors[slug];
+      return `<div class="lbs-dvd" data-slug="${esc(slug)}" data-name="${esc(name)}" style="--c:${c ? `#${c.slice(0, 6)}` : "#2c3440"}" title="${esc(name)}">${esc(titleOf(name))}</div>`;
+    };
     tray.innerHTML =
-      `<div class="lbs-tray-top"><b>Bucket</b><span>${list.length ? `${list.length} piece${list.length === 1 ? "" : "s"} off the wall. Drag onto a shelf.` : "Every piece is on the wall. Drag a block here to take it down."}</span>` +
-      `<button type="button" data-act="w-auto">Auto-arrange</button><button type="button" data-act="w-clear">Empty the wall</button></div>` +
+      `<div class="lbs-tray-top"><b>Workspace</b><span>${list.length ? `${list.length} piece${list.length === 1 ? "" : "s"} waiting.` : "Every piece is on the wall."} Drag pieces up onto shelves; zoom out to move them, zoom in to pull DVDs down here.</span>` +
+      `<button type="button" data-act="w-auto">Auto-arrange</button><button type="button" data-act="w-clear">Everything down</button></div>` +
       `<div class="lbs-tray-list">` +
       list.map((pc) => `<div class="lbs-piece" data-ref="${esc(pc.ref)}" style="width:${Math.round(14 + (pc.size / CAP) * 150)}px;--h:${secHue(pc.n)}" title="${esc(nameOf(pc.sec))}: piece ${pc.i + 1} of ${pc.of}, ${pc.count} films"><b>${esc(nameOf(pc.sec))}</b><span>${pc.i + 1}/${pc.of}</span></div>`).join("") +
+      held.map(spine).join("") +
       `</div>`;
   }
 
@@ -2281,47 +2356,133 @@
     houseEdit(`Took ${nameOf(parseRef(ref)[0])} down to the bucket.`, (H) => { H.wall = { perRow: wall.plan.perRow, shelves: sh }; });
   }
 
-  let pieceDrag = null; // { ref, ghost, from: "wall" | "tray", x, y, live }
-  function pieceDown(ref, from, e) {
-    pieceDrag = { ref, from, x: e.clientX, y: e.clientY, live: false };
+  // Where a DVD dropped at (sx, sy) on the canvas would go.
+  function dvdTarget(slug, sx, sy) {
+    const L = wall.lay, p = toWall(sx, sy);
+    const { b, s: sh } = bayAt(p);
+    const run = L.runs.find((r) => r.bay === b && r.shelf === sh && p.x >= r.x0 - BOOKEND && p.x <= r.x1 + BOOKEND);
+    if (!run) return null;
+    const cid = L.secs[run.sec].id;
+    const here = (L.chunks.get(`${b}:${sh}`) || []).map((i) => L.films[i]).filter((f) => f.sec === run.sec && f.slug !== slug && f.x >= run.x0 - 1 && f.x <= run.x1 + 1);
+    let near = null, best = Infinity;
+    for (const f of here) { const d = Math.abs(f.x + f.w / 2 - p.x); if (d < best) { best = d; near = f; } }
+    const after = near ? p.x > near.x + near.w / 2 : true;
+    const same = filmSection(slug) === cid;
+    const ok = !same || sortOf(cid) === "index";
+    const lineX = near ? (after ? near.x + near.w + 1 : near.x - 1) : run.x0;
+    return { dvd: true, cid, target: near && near.slug, sub: near && near.sub, after, ok, same, bay: b, shelf: sh, x: lineX - 2, w: 4 };
   }
+  const filmSection = (slug) => { const sub = lib.place.get(slug); return sub && lib.subs.has(sub) ? lib.subs.get(sub).cat : null; };
+
+  function dropDvd(slug, name, t) {
+    const cid = t.cid;
+    const order = sectionOrder(cid).map((f) => f.slug).filter((x) => x !== slug);
+    let at = t.target ? order.indexOf(t.target) + (t.after ? 1 : 0) : order.length;
+    if (at < 0) at = order.length;
+    order.splice(at, 0, slug);
+    houseEdit(t.same ? `Moved ‘${titleOf(name)}’.` : `‘${titleOf(name)}’ → ${nameOf(cid)}`, (H) => {
+      H.held = H.held.filter(([x]) => x !== slug);
+      if (!t.same) H.place[slug] = [t.sub || `${cid}/general`, name];
+      if ((H.sort[cid] || "title") === "index") H.index[cid] = order;
+    });
+  }
+  function holdDvd(slug, name) {
+    houseEdit(`‘${titleOf(name)}’ is in your workspace.`, (H) => { if (!H.held.some(([x]) => x === slug)) H.held.push([slug, name]); });
+  }
+
+  // One drag system for pieces and DVDs: canvas, workspace and folders.
+  let grab = null; // { kind: "piece"|"dvd", ref | slug+name, from: "wall"|"tray", x, y, live, ghost }
+  function grabDown(g, e) { grab = { ...g, x: e.clientX, y: e.clientY, live: false }; }
   window.addEventListener("mousemove", (e) => {
-    const d = pieceDrag;
+    const d = grab;
     if (!d) return;
     if (!d.live) {
       if (Math.abs(e.clientX - d.x) + Math.abs(e.clientY - d.y) < 5) return;
       d.live = true;
-      const run = wall.lay.runs.find((x) => x.ref === d.ref);
-      const sec = lib.cats.get(parseRef(d.ref)[0]);
-      d.ghost = h("div", "lbs-piece lbs-piece-ghost", `<b>${esc(sec ? sec.name : "")}</b>`);
-      d.ghost.style.setProperty("--h", run ? wall.lay.secs[run.sec].hue : secHue(lib.genres.get(STOCKED).cats.indexOf(parseRef(d.ref)[0])));
-      d.ghost.style.width = `${Math.max(30, pieceSize(d.ref) * wall.cam.z)}px`;
+      if (d.kind === "piece") {
+        const [cid] = parseRef(d.ref);
+        d.ghost = h("div", "lbs-piece lbs-piece-ghost", `<b>${esc(nameOf(cid))}</b>`);
+        d.ghost.style.setProperty("--h", secHue(lib.genres.get(STOCKED).cats.indexOf(cid)));
+        d.ghost.style.width = `${Math.max(30, pieceSize(d.ref) * wall.cam.z)}px`;
+      } else {
+        d.ghost = h("div", "lbs-dvd lbs-piece-ghost", esc(titleOf(d.name)));
+        const c = colors[d.slug];
+        d.ghost.style.setProperty("--c", c ? `#${c.slice(0, 6)}` : "#2c3440");
+      }
       document.body.append(d.ghost);
+      showTip(null);
     }
-    d.ghost.style.left = `${e.clientX + 6}px`;
-    d.ghost.style.top = `${e.clientY + 6}px`;
+    d.ghost.style.left = `${e.clientX + 8}px`;
+    d.ghost.style.top = `${e.clientY + 8}px`;
     const c = wall.canvas, r = c.getBoundingClientRect();
-    const over = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom && !e.target.closest?.(".lbs-tray");
-    wall.dropHint = over ? dropTarget(d.ref, e.clientX - r.left, e.clientY - r.top) : null;
+    const over = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+    wall.dropHint = over ? (d.kind === "piece" ? dropTarget(d.ref, e.clientX - r.left, e.clientY - r.top) : dvdTarget(d.slug, e.clientX - r.left, e.clientY - r.top)) : null;
+    root.querySelectorAll(".lbs-folder.-over").forEach((el) => el.classList.remove("-over"));
+    const folder = d.kind === "dvd" && document.elementFromPoint(e.clientX, e.clientY)?.closest?.(".lbs-folder[data-drop]");
+    if (folder) folder.classList.add("-over");
     drawSoon();
   });
   window.addEventListener("mouseup", (e) => {
-    const d = pieceDrag;
+    const d = grab;
     if (!d) return;
-    pieceDrag = null;
+    grab = null;
     if (d.ghost) d.ghost.remove();
     const hint = wall.dropHint;
     wall.dropHint = null;
+    root.querySelectorAll(".lbs-folder.-over").forEach((el) => el.classList.remove("-over"));
     if (!d.live) {
-      // A click on a block selects its section.
-      if (d.from === "wall") selectSection(parseRef(d.ref)[0]);
+      if (d.kind === "piece" && d.from === "wall") selectSection(parseRef(d.ref)[0]);
       return drawSoon();
     }
-    if (e.target.closest && e.target.closest(".lbs-tray")) { if (d.from === "wall") unplacePiece(d.ref); return drawSoon(); }
-    if (hint && hint.ok) return placePiece(d.ref, hint);
-    if (hint) toast("That piece doesn't fit on that shelf.");
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    const toTray = el && el.closest && el.closest(".lbs-tray");
+    if (d.kind === "piece") {
+      if (toTray) { if (d.from === "wall") unplacePiece(d.ref); return drawSoon(); }
+      if (hint && hint.ok) return placePiece(d.ref, hint);
+      if (hint) toast("That piece doesn't fit on that shelf.");
+      return drawSoon();
+    }
+    // A DVD
+    if (toTray) { if (d.from === "wall") holdDvd(d.slug, d.name); return drawSoon(); }
+    const folder = el && el.closest && el.closest(".lbs-folder[data-drop]");
+    if (folder) {
+      if (d.from === "tray") houseEdit("", (H) => { H.held = H.held.filter(([x]) => x !== d.slug); });
+      return moveFilms([[d.slug, d.name]], folder.dataset.drop);
+    }
+    if (hint && hint.ok) return dropDvd(d.slug, d.name, hint);
+    if (hint && !hint.ok) toast(`To arrange ${nameOf(hint.cid)} by hand, click its sign and choose “Index”.`);
     drawSoon();
   });
+
+  // Click a shelf sign: how this section is ordered.
+  function openSortPick(sec, sx, sy) {
+    const box = $(".lbs-sortpick", root);
+    if (!box) return;
+    const cur = sortOf(sec.id);
+    const opt = (v, label) => `<button type="button" data-act="sort" data-id="${esc(sec.id)}" data-v="${v}" class="${cur === v ? "-on" : ""}">${label}</button>`;
+    box.innerHTML =
+      `<b>Sort ${esc(sec.name)}</b><div class="lbs-sortpick-row">${opt("title", "Title")}${opt("year", "Year")}${opt("index", "Index")}</div>` +
+      `<small>${edit.on ? "Sets the default for everyone. In Index, drag DVDs along the shelf to arrange them." : "Just for you. Index is the store's own hand-made order."}</small>`;
+    box.hidden = false;
+    const st = $(".lbs-stage", root).getBoundingClientRect();
+    box.style.left = `${Math.max(8, Math.min(sx, st.width - box.offsetWidth - 8))}px`;
+    box.style.top = `${Math.max(8, Math.min(sy + 40, st.height - box.offsetHeight - 8))}px`;
+  }
+  function setSort(cid, v) {
+    $(".lbs-sortpick", root).hidden = true;
+    const label = { title: "by title", year: "by year", index: "by index" }[v];
+    if (edit.on) {
+      const seed = sectionOrder(cid).map((f) => f.slug);
+      return houseEdit(`${nameOf(cid)}: sorted ${label}.`, (H) => {
+        H.sort[cid] = v;
+        if (v === "index" && !H.index[cid]) H.index[cid] = seed;
+      });
+    }
+    mine.sort[cid] = v;
+    saveMine();
+    refresh();
+    toast(`${nameOf(cid)}: sorted ${label} (just for you).`);
+  }
 
   function selectSection(id) {
     edit.sel = id;
@@ -2418,7 +2579,11 @@
     if (!sub || !films.length) return;
     if (edit.on) {
       const label = films.length === 1 ? `‘${titleOf(films[0][1])}’` : `${films.length} films`;
-      return houseEdit(`${label} → ${pathOf(sub).join(" › ")}`, (H) => { for (const [slug, name] of films) H.place[slug] = [sub, name]; });
+      return houseEdit(`${label} → ${pathOf(sub).join(" › ")}`, (H) => {
+        const moving = new Set(films.map(([slug]) => slug));
+        H.held = H.held.filter(([x]) => !moving.has(x));
+        for (const [slug, name] of films) H.place[slug] = [sub, name];
+      });
     }
     const before = films.map(([slug]) => [slug, mine.place[slug]]);
     const prevView = mine.view;
@@ -2610,6 +2775,8 @@
   function onClick(e) {
     const pick = $(".lbs-logopick", root);
     if (pick && !pick.hidden && !e.target.closest(".lbs-logopick")) pick.hidden = true;
+    const sp = $(".lbs-sortpick", root);
+    if (sp && !sp.hidden && !e.target.closest(".lbs-sortpick") && e.target !== wall.canvas) sp.hidden = true;
     const row = e.target.closest(".lbs-row");
     if (row && !e.target.closest("a, button")) return selectRow(row, e);
     const btn = e.target.closest("[data-act], [data-coll], [data-scope], [data-view]");
@@ -2639,6 +2806,7 @@
     const id = btn.dataset.id;
     if (act === "logo-pick") return pickLogo(btn.dataset.slug, +btn.dataset.n);
     if (act === "edit") return toggleEdit(!edit.on);
+    if (act === "sort") return setSort(id, btn.dataset.v);
     if (act === "w-auto") return houseEdit("Auto-arranged the wall.", (H) => { H.wall = null; });
     if (act === "w-clear") return houseEdit("Emptied the wall into the bucket.", (H) => { H.wall = { perRow: wall.plan.perRow, shelves: {} }; });
     if (act === "rename") { e.stopPropagation(); edit.renaming = id; edit.deleting = null; return renderFolders(); }
