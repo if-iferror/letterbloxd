@@ -2566,3 +2566,7 @@ html.lbs-open {
   background: #40bcf4;
   color: #0b1014;
 }
+.lbs-browsing .lbs-stage-top {
+  min-height: 38px;
+  padding-right: min(460px, 62%);
+}
