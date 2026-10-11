@@ -752,7 +752,8 @@ li.lbni-tinted.lbni-pinned:not(:has(:focus-visible)) > .lbni-ind {
   height: 16px;
 }
 .lbni-bar-collapse,
-.lbni-bar-dismiss {
+.lbni-bar-dismiss,
+.lbni-bar-close {
   display: flex;
   flex: none;
   width: 26px;
@@ -766,10 +767,7 @@ li.lbni-tinted.lbni-pinned:not(:has(:focus-visible)) > .lbni-ind {
   position: relative;
   align-items: center;
   justify-content: center;
-  padding: 0;
-  font-size: 17px;
-  font-weight: 600;
-  line-height: 1;
+  padding: 4px;
 }
 .lbni-bar-dismiss::after {
   content: attr(data-tip);
@@ -796,7 +794,8 @@ li.lbni-tinted.lbni-pinned:not(:has(:focus-visible)) > .lbni-ind {
   transform: rotate(-90deg);
 }
 .lbni-bar-collapse:hover,
-.lbni-bar-dismiss:hover {
+.lbni-bar-dismiss:hover,
+.lbni-bar-close:hover {
   background: #456;
   color: #fff;
 }
