@@ -566,7 +566,7 @@
       root.addEventListener("mousedown", (e) => {
         if (!edit.on || e.button !== 0) return;
         const pc = e.target.closest(".lbs-tray .lbs-piece");
-        if (pc) { e.preventDefault(); return grabDown({ kind: "piece", ref: pc.dataset.ref, from: "tray" }, e); }
+        if (pc) { e.preventDefault(); return grabDown({ kind: "piece", cid: pc.dataset.cid, from: "tray" }, e); }
         const dv = e.target.closest(".lbs-tray .lbs-dvd");
         if (dv) { e.preventDefault(); grabDown({ kind: "dvd", slug: dv.dataset.slug, name: dv.dataset.name, from: "tray" }, e); }
       });
@@ -1222,50 +1222,48 @@
     return out;
   }
 
-  function cutPieces() {
+  // Every stocked section: its films in shelf order and how much shelf they need.
+  function sectionStock() {
     const out = new Map();
     lib.genres.get(STOCKED).cats.forEach((cid, n) => {
       const items = sectionOrder(cid).map(({ slug, name, sub }) => {
         const y = yearOf(name);
         return { slug, name, year: y, w: spineW(y), h: spineH(y), sub, rank: lib.rank.get(slug) ?? 1e9 };
       });
-      const sizes = [];
-      let acc = 0;
-      for (const f of items) {
-        if (acc + f.w + 1 > CAP) { sizes.push(acc); acc = 0; }
-        acc += f.w + 1;
-      }
-      if (acc) sizes.push(acc);
-      out.set(cid, { id: cid, n, items, sizes });
+      out.set(cid, { id: cid, n, items, total: footprint(items) });
     });
     return out;
   }
-  const pieceRef = (cid, i) => `${cid}#${i}`;
-  const parseRef = (ref) => { const k = ref.lastIndexOf("#"); return [ref.slice(0, k), +ref.slice(k + 1)]; };
+  const MIN_PIECE = 30; // the smallest space worth putting a section into
 
-  // The default arrangement: pieces in wall order, down each bay then across;
-  // a piece goes on the current shelf if it fits, otherwise the next.
-  function autoArrange(pieces, perRow) {
+  // The default arrangement: sections one after another, each starting
+  // right where the last one ended, down each bay and then across.
+  function autoArrange(stock_, perRow) {
     const shelves = {};
     let b = 0, s = 0, used = 0;
-    for (const P of pieces.values()) {
-      P.sizes.forEach((size, i) => {
-        if (used && used + BOOKEND + size > CAP) { used = 0; if (++s >= WU.shelves) { s = 0; b++; } }
-        (shelves[`${b}:${s}`] ||= []).push(pieceRef(P.id, i));
-        used += (used ? BOOKEND : 0) + size;
-      });
+    const next = () => { used = 0; if (++s >= WU.shelves) { s = 0; b++; } };
+    for (const P of stock_.values()) {
+      let k = 0;
+      while (k < P.items.length) {
+        let free = CAP - used - (used ? BOOKEND : 0);
+        if (free < Math.max(MIN_PIECE, P.items[k].w + 1)) { next(); free = CAP; }
+        let u = 0;
+        while (k < P.items.length && u + P.items[k].w + 1 <= free) u += P.items[k++].w + 1;
+        (shelves[`${b}:${s}`] ||= []).push({ c: P.id, u });
+        used += (used ? BOOKEND : 0) + u;
+      }
     }
     return { perRow, shelves };
   }
 
   function buildLayout() {
-    const pieces = cutPieces();
+    const sections = sectionStock();
     const H = house();
     // Bays per row (fixed once a plan exists, so the wall doesn't reflow while you edit).
     let perRow = H.wall && H.wall.perRow;
+    const totalShelves = Math.ceil([...sections.values()].reduce((n, P) => n + P.total, 0) / (CAP * 0.92));
     if (!perRow) {
-      const total = [...pieces.values()].reduce((n, P) => n + P.sizes.length, 0);
-      const bays = Math.max(1, Math.ceil(total / WU.shelves));
+      const bays = Math.max(1, Math.ceil(totalShelves / WU.shelves));
       const c = wall.canvas;
       const aspect = c && c.clientHeight ? c.clientWidth / c.clientHeight : 1.4;
       let best = Infinity;
@@ -1275,74 +1273,81 @@
       }
     }
     // No plan yet: viewers get the automatic layout; a moderator starts with
-    // an empty wall and every piece in the bucket.
-    const plan = H.wall && H.wall.shelves ? H.wall : edit.on ? { perRow, shelves: {} } : autoArrange(pieces, perRow);
+    // an empty wall and every section in the workspace.
+    const valid = (x) => x && typeof x === "object" && sections.has(x.c) && x.u > 0;
+    const saved = H.wall && H.wall.shelves && Object.values(H.wall.shelves).flat().every(valid) ? H.wall : null;
+    const plan = saved || (edit.on ? { perRow, shelves: {} } : autoArrange(sections, perRow));
     wall.plan = { perRow, shelves: plan.shelves };
     const origin = (b) => ({ x: (b % perRow) * (WU.bayW + WU.gap), y: Math.floor(b / perRow) * ROW_H });
 
-    // Where each piece sits; anything unknown or duplicated is dropped.
-    const where = new Map(); // ref -> { bay, shelf, slot }
-    const shelfList = new Map();
-    for (const [key, refs] of Object.entries(plan.shelves || {})) {
+    // Each placed piece: a section and an amount of shelf. ref = "bay:shelf/slot".
+    const where = new Map(), refCid = new Map(), refU = new Map(), shelfList = new Map();
+    for (const [key, list] of Object.entries(plan.shelves || {})) {
       const [bay, shelf] = key.split(":").map(Number);
       const keep = [];
-      for (const ref of refs) {
-        const [cid, i] = parseRef(ref);
-        const P = pieces.get(cid);
-        if (!P || i >= P.sizes.length || where.has(ref)) continue;
+      list.forEach((pc) => {
+        if (!valid(pc)) return;
+        const ref = `${key}/${keep.length}`;
         where.set(ref, { bay, shelf, slot: keep.length });
+        refCid.set(ref, pc.c);
+        refU.set(ref, pc.u);
         keep.push(ref);
-      }
+      });
       if (keep.length) shelfList.set(key, keep);
-    }
-    // Viewers: pieces nobody has placed yet carry on after the last used bay.
-    if (!edit.on) {
-      const rest = new Map([...pieces].map(([cid, P]) => [cid, { ...P, sizes: P.sizes.map((x, i) => (where.has(pieceRef(cid, i)) ? null : x)) }]));
-      const start = 1 + Math.max(-1, ...[...where.values()].map((w) => w.bay));
-      let b = start, sh = 0, used = 0;
-      for (const P of rest.values()) {
-        P.sizes.forEach((size, i) => {
-          if (size == null) return;
-          if (used && used + BOOKEND + size > CAP) { used = 0; if (++sh >= WU.shelves) { sh = 0; b++; } }
-          const key = `${b}:${sh}`;
-          const keep = shelfList.get(key) || [];
-          where.set(pieceRef(P.id, i), { bay: b, shelf: sh, slot: keep.length });
-          keep.push(pieceRef(P.id, i));
-          shelfList.set(key, keep);
-          used += (used ? BOOKEND : 0) + size;
-        });
-      }
     }
     // Reading order: bay row, bay, shelf (down first), then left to right.
     const readKey = (w) => [Math.floor(w.bay / perRow), w.bay % perRow, w.shelf, w.slot];
     const cmp = (a, b) => { const x = readKey(a), y = readKey(b); for (let i = 0; i < 4; i++) if (x[i] !== y[i]) return x[i] - y[i]; return 0; };
 
-    // Pour each section's films through its pieces: placed ones in reading
-    // order, then the ones still in the bucket.
-    const content = new Map(); // ref -> [items]
-    const bucket = [];
-    for (const P of pieces.values()) {
-      const refs = P.sizes.map((_, i) => pieceRef(P.id, i));
-      const placed = refs.filter((r) => where.has(r)).sort((a, b) => cmp(where.get(a), where.get(b)));
-      const order = [...placed, ...refs.filter((r) => !where.has(r))];
+    // Pour each section's films through its pieces in reading order. What
+    // doesn't fit stays in the workspace (viewers: it carries on after the
+    // last bay used).
+    const content = new Map();
+    const leftovers = new Map();
+    for (const P of sections.values()) {
+      const refs = [...refCid].filter(([, c]) => c === P.id).map(([r]) => r).sort((a, b) => cmp(where.get(a), where.get(b)));
       let k = 0;
-      order.forEach((ref, oi) => {
-        const size = P.sizes[parseRef(ref)[1]];
-        const list = [];
+      for (const ref of refs) {
+        const u = refU.get(ref), list = [];
         let acc = 0;
-        while (k < P.items.length && (oi === order.length - 1 || !list.length || acc + P.items[k].w + 1 <= size)) {
-          acc += P.items[k].w + 1;
-          list.push(P.items[k++]);
-        }
+        while (k < P.items.length && (!list.length || acc + P.items[k].w + 1 <= u)) { acc += P.items[k].w + 1; list.push(P.items[k++]); }
         content.set(ref, list);
-        if (!where.has(ref)) bucket.push({ ref, sec: P.id, n: P.n, size: footprint(list), count: list.length, of: P.sizes.length, i: oi });
-      });
+      }
+      if (k < P.items.length) leftovers.set(P.id, P.items.slice(k));
     }
+    const bucket = [];
+    if (edit.on) {
+      for (const [cid, list] of leftovers) bucket.push({ sec: cid, n: sections.get(cid).n, size: footprint(list), count: list.length, whole: list.length === sections.get(cid).items.length });
+    } else if (leftovers.size) {
+      const rest = autoArrange(new Map([...leftovers].map(([cid, items]) => [cid, { id: cid, items }])), perRow).shelves;
+      const start = 1 + Math.max(-1, ...[...where.values()].map((w) => w.bay));
+      const fed = new Map([...leftovers].map(([cid]) => [cid, 0]));
+      for (const [key, list] of Object.entries(rest)) {
+        const [b0, sh] = key.split(":").map(Number);
+        const nk = `${b0 + start}:${sh}`;
+        const keep = [];
+        for (const pc of list) {
+          const ref = `${nk}/${keep.length}`;
+          where.set(ref, { bay: b0 + start, shelf: sh, slot: keep.length });
+          refCid.set(ref, pc.c);
+          const items = leftovers.get(pc.c);
+          let k = fed.get(pc.c), acc = 0;
+          const out = [];
+          while (k < items.length && (!out.length || acc + items[k].w + 1 <= pc.u)) { acc += items[k].w + 1; out.push(items[k++]); }
+          fed.set(pc.c, k);
+          content.set(ref, out);
+          keep.push(ref);
+        }
+        shelfList.set(nk, keep);
+      }
+    }
+    const parseRef = (ref) => [refCid.get(ref)];
+    wall.refs = { refCid, refU };
 
     const films = [], chunks = new Map(), secs = [], secIndex = new Map(), runs = [], bookends = [], idx = new Map();
-    for (const P of pieces.values()) {
+    for (const P of sections.values()) {
       secIndex.set(P.id, secs.length);
-      secs.push({ id: P.id, name: lib.cats.get(P.id).name, hue: secHue(P.n), films: [], subs: [], pieces: P.sizes.length });
+      secs.push({ id: P.id, name: lib.cats.get(P.id).name, hue: secHue(P.n), films: [], subs: [] });
     }
     let maxBay = 0;
     for (const [key, refs] of shelfList) {
@@ -1399,8 +1404,7 @@
     }
     for (const sec of secs) sec.highlights = [...sec.films].sort((a, b) => films[a].rank - films[b].rank).slice(0, 3);
     // Edit mode keeps an empty bay at the end to drop pieces into.
-    const allPieces = [...pieces.values()].reduce((n, P) => n + P.sizes.length, 0);
-    const bays = edit.on ? Math.max(maxBay + 2, Math.ceil(allPieces / WU.shelves) + 1) : maxBay + 1;
+    const bays = edit.on ? Math.max(maxBay + 2, Math.ceil(totalShelves / WU.shelves) + 1) : maxBay + 1;
     const width = Math.min(bays, perRow) * (WU.bayW + WU.gap);
     const height = Math.ceil(bays / perRow) * ROW_H;
     wall.lay = { films, chunks, secs, runs, bookends, faces: [], idx, bucket, held: H.held, width, height, bays, k: perRow, origin };
@@ -2313,48 +2317,57 @@
       return `<div class="lbs-dvd" data-slug="${esc(slug)}" data-name="${esc(name)}" style="--c:${c ? `#${c.slice(0, 6)}` : "#2c3440"}" title="${esc(name)}">${esc(titleOf(name))}</div>`;
     };
     tray.innerHTML =
-      `<div class="lbs-tray-top"><b>Workspace</b><span>${list.length ? `${list.length} piece${list.length === 1 ? "" : "s"} waiting.` : "Every piece is on the wall."} Drag pieces up onto shelves; zoom out to move them, zoom in to pull DVDs down here.</span>` +
+      `<div class="lbs-tray-top"><b>Workspace</b><span>${list.length ? `${list.length} section${list.length === 1 ? "" : "s"} still to place.` : "Everything is on the wall."} Drop a section on a shelf and it fills the free space there; the rest stays here for the next shelf.</span>` +
       `<button type="button" data-act="w-auto">Auto-arrange</button><button type="button" data-act="w-clear">Everything down</button></div>` +
       `<div class="lbs-tray-list">` +
       held.map(spine).join("") +
-      list.map((pc) => `<div class="lbs-piece" data-ref="${esc(pc.ref)}" style="width:${Math.round(14 + (pc.size / CAP) * 150)}px;--h:${secHue(pc.n)}" title="${esc(nameOf(pc.sec))}: piece ${pc.i + 1} of ${pc.of}, ${pc.count} films"><b>${esc(nameOf(pc.sec))}</b><span>${pc.i + 1}/${pc.of}</span></div>`).join("") +
+list.map((pc) => {
+        const n = pc.size / CAP;
+        return `<div class="lbs-piece -sec" data-cid="${esc(pc.sec)}" style="width:${Math.round(40 + Math.min(1, n) * 130)}px;height:${Math.round(26 + Math.min(5, Math.max(0, Math.ceil(n) - 1)) * 9)}px;--h:${secHue(pc.n)}" title="${esc(nameOf(pc.sec))}: ${pc.count} films still to place"><b>${esc(nameOf(pc.sec))}</b><span>${n < 0.95 ? `${Math.round(n * 100)}% shelf` : `${n.toFixed(1)} shelves`}</span></div>`;
+      }).join("") +
       `</div>`;
   }
 
-  const pieceSize = (ref) => {
-    const r = wall.lay.runs.find((x) => x.ref === ref);
-    if (r) return r.x1 - r.x0;
-    const b = wall.lay.bucket.find((x) => x.ref === ref);
-    return b ? b.size : CAP;
-  };
-  const shelvesNow = () => JSON.parse(JSON.stringify((house().wall && house().wall.shelves) || wall.plan.shelves));
+  // A drag is either a section from the workspace (cid) or a piece on the wall (ref "bay:shelf/slot").
+  const grabSize = (g) => (g.ref ? wall.refs.refU.get(g.ref) : (wall.lay.bucket.find((x) => x.sec === g.cid) || {}).size || CAP);
+  const grabCid = (g) => (g.ref ? wall.refs.refCid.get(g.ref) : g.cid);
+  const shelvesNow = () => JSON.parse(JSON.stringify(wall.plan.shelves || {}));
 
-  // Where a piece dropped at screen point (sx, sy) on the canvas would go.
-  function dropTarget(ref, sx, sy) {
+  // Where a dragged section or piece would land: it fills the free space on
+  // that shelf, up to what it has.
+  function dropTarget(g, sx, sy) {
     const L = wall.lay, p = toWall(sx, sy);
     const { b, s } = bayAt(p);
     if (b < 0 || b >= L.bays || s < 0 || s >= WU.shelves) return null;
     const key = `${b}:${s}`;
-    const refs = (wall.plan.shelves[key] || []).filter((r) => r !== ref);
-    const runs = refs.map((r) => L.runs.find((x) => x.ref === r)).filter(Boolean);
-    let at = runs.filter((r) => (r.x0 + r.x1) / 2 < p.x).length;
-    const size = pieceSize(ref);
-    const used = runs.reduce((n, r) => n + (r.x1 - r.x0), 0) + BOOKEND * runs.length;
+    const list = (wall.plan.shelves[key] || []).map((pc, i) => ({ ...pc, ref: `${key}/${i}` })).filter((pc) => pc.ref !== g.ref);
+    const runs = list.map((pc) => L.runs.find((r) => r.ref === pc.ref)).filter(Boolean);
+    const at = runs.filter((r) => (r.x0 + r.x1) / 2 < p.x).length;
+    const free = CAP - list.reduce((n, pc) => n + pc.u, 0) - BOOKEND * list.length;
+    const size = Math.min(grabSize(g), free);
     const x = at === 0 ? L.origin(b).x + WU.pad : runs[at - 1].x1 + BOOKEND;
-    return { key, at, bay: b, shelf: s, x, w: Math.min(size, CAP), ok: used + size <= CAP * 1.01 };
+    return { key, at, size, bay: b, shelf: s, x, w: Math.max(size, 8), ok: size >= MIN_PIECE };
   }
 
-  function placePiece(ref, t) {
+  function placeGrab(g, t) {
     const sh = shelvesNow();
-    for (const k of Object.keys(sh)) sh[k] = sh[k].filter((r) => r !== ref);
-    (sh[t.key] ||= []).splice(t.at, 0, ref);
-    const [cid] = parseRef(ref);
-    houseEdit(`Placed ${nameOf(cid)}.`, (H) => { H.wall = { perRow: wall.plan.perRow, shelves: sh }; });
+    const cid = grabCid(g);
+    let had = grabSize(g);
+    if (g.ref) {
+      const [k, slot] = g.ref.split("/");
+      sh[k].splice(+slot, 1);
+      if (!sh[k].length) delete sh[k];
+    }
+    (sh[t.key] ||= []).splice(t.at, 0, { c: cid, u: Math.round(t.size) });
+    const rest = had - t.size;
+    houseEdit(rest > 2 ? `${nameOf(cid)}: filled that space; the rest is in the workspace.` : `Placed ${nameOf(cid)}.`, (H) => { H.wall = { perRow: wall.plan.perRow, shelves: sh }; });
   }
-  function unplacePiece(ref) {
+  function unplaceGrab(g) {
     const sh = shelvesNow();
-    for (const k of Object.keys(sh)) sh[k] = sh[k].filter((r) => r !== ref);
-    houseEdit(`Took ${nameOf(parseRef(ref)[0])} down to the bucket.`, (H) => { H.wall = { perRow: wall.plan.perRow, shelves: sh }; });
+    const [k, slot] = g.ref.split("/");
+    sh[k].splice(+slot, 1);
+    if (!sh[k].length) delete sh[k];
+    houseEdit(`Took ${nameOf(grabCid(g))} down to the workspace.`, (H) => { H.wall = { perRow: wall.plan.perRow, shelves: sh }; });
   }
 
   // Where a DVD dropped at (sx, sy) on the canvas would go.
@@ -2401,10 +2414,10 @@
       if (Math.abs(e.clientX - d.x) + Math.abs(e.clientY - d.y) < 5) return;
       d.live = true;
       if (d.kind === "piece") {
-        const [cid] = parseRef(d.ref);
+        const cid = grabCid(d);
         d.ghost = h("div", "lbs-piece lbs-piece-ghost", `<b>${esc(nameOf(cid))}</b>`);
         d.ghost.style.setProperty("--h", secHue(lib.genres.get(STOCKED).cats.indexOf(cid)));
-        d.ghost.style.width = `${Math.max(30, pieceSize(d.ref) * wall.cam.z)}px`;
+        d.ghost.style.width = `${Math.max(30, Math.min(CAP, grabSize(d)) * wall.cam.z)}px`;
       } else {
         d.ghost = h("div", "lbs-dvd lbs-piece-ghost", esc(titleOf(d.name)));
         const c = colors[d.slug];
@@ -2417,7 +2430,7 @@
     d.ghost.style.top = `${e.clientY + 8}px`;
     const c = wall.canvas, r = c.getBoundingClientRect();
     const over = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
-    wall.dropHint = over ? (d.kind === "piece" ? dropTarget(d.ref, e.clientX - r.left, e.clientY - r.top) : dvdTarget(d.slug, e.clientX - r.left, e.clientY - r.top)) : null;
+    wall.dropHint = over ? (d.kind === "piece" ? dropTarget(d, e.clientX - r.left, e.clientY - r.top) : dvdTarget(d.slug, e.clientX - r.left, e.clientY - r.top)) : null;
     root.querySelectorAll(".lbs-folder.-over").forEach((el) => el.classList.remove("-over"));
     const folder = d.kind === "dvd" && document.elementFromPoint(e.clientX, e.clientY)?.closest?.(".lbs-folder[data-drop]");
     if (folder) folder.classList.add("-over");
@@ -2432,15 +2445,15 @@
     wall.dropHint = null;
     root.querySelectorAll(".lbs-folder.-over").forEach((el) => el.classList.remove("-over"));
     if (!d.live) {
-      if (d.kind === "piece" && d.from === "wall") selectSection(parseRef(d.ref)[0]);
+      if (d.kind === "piece" && d.from === "wall") selectSection(grabCid(d));
       return drawSoon();
     }
     const el = document.elementFromPoint(e.clientX, e.clientY);
     const toTray = el && el.closest && el.closest(".lbs-tray");
     if (d.kind === "piece") {
-      if (toTray) { if (d.from === "wall") unplacePiece(d.ref); return drawSoon(); }
-      if (hint && hint.ok) return placePiece(d.ref, hint);
-      if (hint) toast("That piece doesn't fit on that shelf.");
+      if (toTray) { if (d.from === "wall") unplaceGrab(d); return drawSoon(); }
+      if (hint && hint.ok) return placeGrab(d, hint);
+      if (hint) toast("No room on that shelf.");
       return drawSoon();
     }
     // A DVD
@@ -2808,8 +2821,8 @@
     if (act === "logo-pick") return pickLogo(btn.dataset.slug, +btn.dataset.n);
     if (act === "edit") return toggleEdit(!edit.on);
     if (act === "sort") return setSort(id, btn.dataset.v);
-    if (act === "w-auto") return houseEdit("Auto-arranged the wall.", (H) => { H.wall = null; });
-    if (act === "w-clear") return houseEdit("Emptied the wall into the bucket.", (H) => { H.wall = { perRow: wall.plan.perRow, shelves: {} }; });
+    if (act === "w-clear") return houseEdit("Everything is back in the workspace.", (H) => { H.wall = { perRow: wall.plan.perRow, shelves: {} }; });
+    if (act === "w-auto") return houseEdit("Auto-arranged the wall.", (H) => { H.wall = autoArrange(sectionStock(), wall.plan.perRow); });
     if (act === "rename") { e.stopPropagation(); edit.renaming = id; edit.deleting = null; return renderFolders(); }
     if (act === "del") { e.stopPropagation(); edit.deleting = id; edit.renaming = null; return renderFolders(); }
     if (act === "del-yes") return deleteFolder(id);

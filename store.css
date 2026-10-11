@@ -1609,7 +1609,7 @@ html.lbs-open {
   flex: none;
   display: flex;
   flex-direction: column;
-  max-height: 150px;
+  height: 230px;
   margin-top: 8px;
   padding: 8px 10px;
   border-radius: 4px;
@@ -1693,7 +1693,15 @@ html.lbs-open {
   user-select: none;
 }
 .lbs-tray-list {
-  align-items: center;
+  align-items: flex-start;
+  flex: 1;
+}
+.lbs-piece.-sec {
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 1px;
+  background: repeating-linear-gradient(to bottom, hsl(var(--h) 55% 38%) 0 7px, hsl(var(--h) 55% 32%) 7px 9px);
 }
 /* Sort picker on a shelf sign */
 .lbs-sortpick {
