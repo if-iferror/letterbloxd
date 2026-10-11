@@ -1869,7 +1869,7 @@ html.lbs-open {
 }
 .lbs-browsing .lbs-inv,
 .lbs-browsing .lbs-films-top,
-.lbs-browsing .lbs-where,
+.lbs-browsing .lbs-films > .lbs-where,
 .lbs-browsing .lbs-rows,
 .lbs-browsing .lbs-desk-toggle {
   display: none !important;
@@ -2330,7 +2330,10 @@ html.lbs-open {
 }
 .lbs-browsing .lbs-pocket-tab {
   all: unset;
-  margin: 0 auto;
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
   display: inline-flex;
   align-items: center;
   gap: 6px;
