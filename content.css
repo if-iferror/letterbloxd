@@ -829,3 +829,16 @@ li.lbni-tinted.lbni-pinned:not(:has(:focus-visible)) > .lbni-ind {
 .lbni-large.lbni-host:is(:hover, :has(:focus-visible)) > .lbni-rate {
   top: 8px;
 }
+
+.lbni-bar-info {
+  flex: none;
+  margin-left: 6px;
+  color: #678;
+  font-size: 14px;
+  cursor: help;
+  outline: none;
+}
+.lbni-bar-info:hover,
+.lbni-bar-info:focus {
+  color: #def;
+}

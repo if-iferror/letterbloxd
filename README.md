@@ -14,6 +14,7 @@ Letterboxd lets you hide films you've watched or watchlisted, but there's no way
 - Hover buttons on large posters (film pages, reviews, diary) are sized to match the poster.
 - The watchlist button sits in Letterboxd's own hover bar and reacts like Watch and Like.
 - Works in Firefox too.
+- A feedback bar (the megaphone tab at the top right) and a Buy Me a Coffee link.
 
 ## What it does
 
@@ -31,7 +32,7 @@ Letterboxd lets you hide films you've watched or watchlisted, but there's no way
 
 Films you mark are saved to a **private list called "Not Interested"** on your own Letterboxd account (the extension creates it the first time you click ⃠). Nothing is lost if you reinstall or switch computers, and you can edit the list on Letterboxd like any other.
 
-LetterBloxd collects nothing. It only talks to letterboxd.com, as you, and keeps its settings in your browser.
+LetterBloxd only talks to letterboxd.com, as you, and keeps its settings in your browser. The one exception is feedback: if you type into the feedback bar and press Enter, your message goes to the developer along with the extension version, your browser and OS, the kind of page you were on (never its address) and your LetterBloxd settings. No username, nothing else. Firefox asks before the first send. Details in [PRIVACY.md](PRIVACY.md).
 
 ## Install
 
