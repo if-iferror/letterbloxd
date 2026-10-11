@@ -1208,8 +1208,12 @@
   // the × stops that for good, but the tab always stays.
   const BAR_KEY = `${NS}:bar`;
   const COFFEE_URL = "https://ko-fi.com/if_iferror";
-  const BAR_GRACE_MS = 3 * 864e5; // no pop-ups in the first 3 days
+  // When the bar drops down on its own (it never does after "Dismiss
+  // permanently"; the megaphone tab always opens it):
+  const BAR_GRACE_MS = 3 * 864e5; // not in the first 3 days after install
+  const BAR_MIN_VISITS = 15; // and not before 15 Letterboxd page loads
   const BAR_EVERY_MS = 7 * 864e5; // then at most once a week
+  const BAR_QUIET_AFTER_SEND_MS = 30 * 864e5; // and not for 30 days after you send feedback
   const barState = { installedAt: 0, lastAuto: 0, noAuto: false, open: false, ...readJSON(BAR_KEY, {}) };
   if (!barState.installedAt) barState.installedAt = Date.now();
   const saveBar = () => writeJSON(BAR_KEY, barState);
@@ -1222,12 +1226,6 @@
     '<path d="M3.5 10.2v3.6a1 1 0 0 0 1 1h2.1l1.3 4.3a1 1 0 0 0 1 .7h1.2a.8.8 0 0 0 .8-1l-1.1-4h.6l7.1 3.6V5.6L9.4 9.2H4.5a1 1 0 0 0-1 1z" fill="currentColor"/>' +
       '<path d="M20.2 9.6v4.8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>'
   );
-  const THANKS = [
-    "Got it. Thank you!",
-    "Received. Pinned to the fridge.",
-    "Noted. Insults are filed under “motivation”.",
-    "Thanks! A real human will read this.",
-  ];
   let barEl = null;
 
   // Off in releases until feedback is sent somewhere and the coffee link is real.
@@ -1235,9 +1233,18 @@
   function injectBar() {
     if (!FEEDBACK_BAR || barEl || !document.body) return;
     const now = Date.now();
-    if (!barState.noAuto && now - barState.installedAt > BAR_GRACE_MS && now - (barState.lastAuto || 0) > BAR_EVERY_MS) {
+    barState.visits = (barState.visits || 0) + 1;
+    // A pop-up lasts for this page only: if you ignore it, it's gone next page.
+    let popNow = false;
+    if (
+      !barState.noAuto &&
+      now - barState.installedAt > BAR_GRACE_MS &&
+      barState.visits >= BAR_MIN_VISITS &&
+      now - (barState.lastAuto || 0) > BAR_EVERY_MS &&
+      now - (barState.lastSent || 0) > BAR_QUIET_AFTER_SEND_MS
+    ) {
       barState.lastAuto = now;
-      barState.open = true;
+      popNow = true;
     }
     saveBar();
 
@@ -1252,9 +1259,9 @@
       `<a class="${NS}-bar-coffee" href="${COFFEE_URL}" target="_blank" rel="noopener noreferrer">${ICON_CUP}<span>Buy me a coffee</span></a>` +
       `<span class="${NS}-bar-spacer"></span>` +
       `<form class="${NS}-bar-form"><input class="${NS}-bar-input" type="text" maxlength="2000" autocomplete="off" ` +
-      `placeholder="Feedback? Suggestions? Insults? Type here and hit enter!" aria-label="Send feedback about LetterBloxd"></form>` +
-      `<span class="${NS}-bar-info" tabindex="0" role="note" title="Sends your message, the extension version, your browser and OS, the kind of page you're on (never its address) and your LetterBloxd settings. No username, nothing else." aria-label="What gets sent">ⓘ</span>` +
-      `<button type="button" class="${NS}-bar-dismiss" title="Hide, and don't pop open on its own again (the tab stays)" aria-label="Hide and don't pop open again">${svg("0 0 24 24", '<path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>')}</button>` +
+      `placeholder="Feedback? Suggestions? Insults? Type here and hit enter!" aria-label="Send feedback about LetterBloxd" ` +
+      `title="Sends your message, the extension version, your browser and OS, the kind of page you're on (never its address) and your LetterBloxd settings. Nothing else."></form>` +
+      `<button type="button" class="${NS}-bar-dismiss" data-tip="Dismiss permanently" aria-label="Dismiss permanently">ø</button>` +
       `</div>`;
 
     const input = barEl.querySelector(`.${NS}-bar-input`);
@@ -1281,19 +1288,23 @@
           if (!r.declined) toast(r.reason || "Couldn't send your feedback.", true);
           return;
         }
-        const was = input.placeholder;
-        input.placeholder = THANKS[Math.floor(Math.random() * THANKS.length)];
+        barState.lastSent = Date.now();
+        saveBar();
         input.blur();
-        setTimeout(() => (input.placeholder = was), 4000);
+        toast("Submitted!");
       });
     });
     document.body.append(barEl);
-    setBarOpen(barState.open);
+    if (popNow) setBarOpen(true, false, false);
+    else setBarOpen(barState.open);
   }
 
-  function setBarOpen(open, focus = false) {
-    barState.open = open;
-    saveBar();
+  // `remember`: keep it open across pages (you opened it yourself).
+  function setBarOpen(open, focus = false, remember = true) {
+    if (remember) {
+      barState.open = open;
+      saveBar();
+    }
     if (!barEl) return;
     barEl.dataset.open = String(open);
     barEl.querySelector(`.${NS}-bar-tab`).setAttribute("aria-expanded", String(open));
