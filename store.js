@@ -1183,7 +1183,8 @@
     for (let i = 0; i < 24; i++) { const mid = (lo + hi) / 2; if (leanReach(group, mid) < gap) lo = mid; else hi = mid; }
     return lo;
   }
-  const secHue = (i) => (i * 137.508 + 8) % 360; // well-spread, one per section
+  // One colour per section, spread round the wheel so neighbours never match.
+  const secHue = (i) => { const n = Math.max(1, lib.genres.get(STOCKED).cats.length), step = n % 5 ? 5 : 3; return (((i * step) % n) * 360) / n + 10; };
 
   // Every section's films (shelf order) and its pieces' lengths.
   function cutPieces() {
@@ -1926,7 +1927,7 @@
         ctx.font = `800 100px Arial, sans-serif`;
         const tw = ctx.measureText(label).width;
         const size = Math.min(h * 0.42, ((r.x1 - r.x0) * 0.86 * 100) / tw);
-        if (size * z >= 7) {
+        if (size * z >= 5) {
           ctx.font = `800 ${size}px Arial, sans-serif`;
           ctx.fillStyle = "#fff";
           ctx.fillText(label, (r.x0 + r.x1) / 2, top + h / 2);
