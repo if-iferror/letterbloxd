@@ -1266,6 +1266,7 @@
       const sec = { id: p.id, name: lib.cats.get(p.id).name, hue: p.hue, films: [], subs: p.subs.map((x) => ({ ...x, first: films.length + x.first })), shelves: out[pi].length };
       const byRank = [...p.items].sort((a, b) => a.rank - b.rank);
       if (out[pi].length > p.bins.length) p.bins = spread(p.items, out[pi].length, inner);
+      const faced = new Set(); // one face-out per film per section
       out[pi].forEach((sg, i) => {
         const o = origin(sg.bay);
         const x0 = o.x + WU.pad, y = o.y + WU.sign + (sg.shelf + 1) * WU.shelfH - WU.lip;
@@ -1279,10 +1280,11 @@
         const reach = leanReach(group, MAX_LEAN);
         // Big gaps: face-out boxes at the right end (this shelf's best first).
         const here = new Set(list.map((f) => f.slug));
-        const cands = [...list].sort((a, b) => a.rank - b.rank).concat(byRank.filter((f) => !here.has(f.slug)));
+        const cands = [...list].sort((a, b) => a.rank - b.rank).concat(byRank.filter((f) => !here.has(f.slug))).filter((f) => !faced.has(f.slug));
         let xr = x0 + inner, ci = 0;
         while (gap - reach > 4 && gap >= FACE_W + 6 && ci < cands.length) {
           const f = cands[ci++];
+          faced.add(f.slug);
           xr -= FACE_W + 4;
           gap -= FACE_W + 4;
           faces.push({ slug: f.slug, name: f.name, year: f.year, sec: si, bay: sg.bay, shelf: sg.shelf, x: xr + 2, y, w: FACE_W, h: FACE_H });
