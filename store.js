@@ -1171,7 +1171,8 @@
    *   width  bays side by side; each shelf row runs across all of them
    *   spare  extra shelves to grow into */
   const FACE_W = 112, FACE_H = 168, MAX_LEAN = 0.36; // about 20°
-  const shapeOf = (cid) => ({ start: "shelf", width: 1, spare: 0, ...(house().shape[cid] || {}) });
+  // width 0 = same as the section before (sections follow on in its run)
+  const shapeOf = (cid) => ({ start: "shelf", width: 0, spare: 0, ...(house().shape[cid] || {}) });
   const footprint = (list) => list.reduce((n, f) => n + f.w + 1, 0);
   // Extra room a leaning group takes compared with standing up.
   const leanReach = (group, a) => (group.length ? group[0].h * Math.sin(a) + group.reduce((n, f) => n + f.w * (1 / Math.cos(a) - 1), 0) : 0);
@@ -1216,39 +1217,35 @@
     }
 
     // Lay the shelves out: which bay and shelf each of a section's shelves is.
+    // Shelves flow through a "run" of bays: across all of the run's bays, row
+    // by row, then on to the next run. A section with a different width, or
+    // one set to start a new bay, starts a new run; the section before it then
+    // spreads out over whatever is left of its run, so no shelf is left bare.
     function pour(rowLen) {
-      let bay = 0, shelf = 0;
       const out = [];
       const nextRow = (b, k) => (rowLen !== Infinity && (b % rowLen) + k > rowLen ? Math.ceil(b / rowLen) * rowLen : b);
-      let last = null; // the previous section, if it ended part-way down a bay
+      let b0 = 0, k = 1, r = 0, j = 0, last = null, started = false;
+      const take = () => {
+        const sg = { bay: b0 + j, shelf: r };
+        if (++j >= k) { j = 0; if (++r >= WU.shelves) { r = 0; b0 = nextRow(b0 + k, k); } }
+        return sg;
+      };
       for (const p of plan) {
-        const k = Math.max(1, Math.min(p.shape.width | 0 || 1, rowLen));
-        if ((p.shape.start === "bay" || k > 1) && shelf > 0) {
-          // Don't leave bare shelves: the section before spreads out to fill its bay.
-          if (last) while (shelf < WU.shelves) last.push({ bay, shelf: shelf++ });
-          bay++;
-          shelf = 0;
-        }
-        const segs = [];
-        if (k === 1) {
-          for (let i = 0; i < p.bins.length; i++) { segs.push({ bay, shelf }); if (++shelf >= WU.shelves) { shelf = 0; bay++; } }
-          last = segs;
-        } else {
-          last = null;
-          let b0 = nextRow(bay, k), r = 0, j = 0;
-          for (let i = 0; i < p.bins.length; i++) {
-            segs.push({ bay: b0 + j, shelf: r });
-            if (++j >= k) { j = 0; if (++r >= WU.shelves) { r = 0; b0 = nextRow(b0 + k, k); } }
+        const want = p.shape.width ? Math.max(1, Math.min(p.shape.width | 0, rowLen)) : k;
+        if (started && (p.shape.start === "bay" || want !== k)) {
+          if (r || j) {
+            while (r || j) (last || []).push(take());
           }
-          // Fill out the block's last rows rather than leave them bare.
-          if (r || j) { while (r < WU.shelves) { segs.push({ bay: b0 + j, shelf: r }); if (++j >= k) { j = 0; r++; } } b0 += k; }
-          bay = b0;
-          shelf = 0;
         }
+        if (!started || p.shape.start === "bay" || want !== k) { k = want; b0 = nextRow(b0, k); started = true; }
+        const segs = [];
+        for (let i = 0; i < p.bins.length; i++) segs.push(take());
         out.push(segs);
+        last = segs;
       }
-      if (last && shelf > 0) while (shelf < WU.shelves) last.push({ bay, shelf: shelf++ });
-      return { out, bays: Math.max(1, bay + (shelf > 0 ? 1 : 0)) };
+      // The last section fills out its run.
+      if (last) while (r || j) last.push(take());
+      return { out, bays: 1 + Math.max(0, ...out.flat().map((sg) => sg.bay)) };
     }
     // Bays per row: whatever makes the wall about the pane's shape.
     const dry = pour(Infinity);
@@ -2162,7 +2159,7 @@
       `<div class="lbs-shape-head"><b>Section shape: ${esc(nameOf(id))}</b><span>${fmt(lib.count.get(id) || 0)} films · ${sec ? sec.shelves : 0} shelves · ${at + 1} of ${list.length} on the wall</span></div>` +
       `<div class="lbs-shape-row">` +
       `<div><label>Starts</label><div class="lbs-seg">${opt("start", "shelf", "Next shelf")}${opt("start", "bay", "New bay")}</div></div>` +
-      `<div><label>Width (bays)</label><div class="lbs-seg">${opt("width", 1, "1")}${opt("width", 2, "2")}${opt("width", 3, "3")}${opt("width", 4, "4")}</div></div>` +
+      `<div><label>Width (bays)</label><div class="lbs-seg">${opt("width", 0, "Same")}${opt("width", 1, "1")}${opt("width", 2, "2")}${opt("width", 3, "3")}${opt("width", 4, "4")}</div></div>` +
       `<div><label>Room to grow</label><div class="lbs-seg"><button type="button" data-act="spare" data-v="-1"${sh.spare > 0 ? "" : " disabled"}>−</button><em>${sh.spare | 0} shel${(sh.spare | 0) === 1 ? "f" : "ves"}</em><button type="button" data-act="spare" data-v="1">+</button></div></div>` +
       `<div><label>Order</label><div class="lbs-seg"><button type="button" data-act="nudge" data-v="-1"${at > 0 ? "" : " disabled"}>← Earlier</button><button type="button" data-act="nudge" data-v="1"${at < list.length - 1 ? "" : " disabled"}>Later →</button></div></div>` +
       `</div>`;
@@ -2504,7 +2501,7 @@
     }
     if (act === "shape") {
       const k = btn.dataset.k, v = k === "width" ? +btn.dataset.v : btn.dataset.v;
-      return setShape(edit.sel, { [k]: v }, `${nameOf(edit.sel)}: ${k === "width" ? `${v} bay${v === 1 ? "" : "s"} wide` : v === "bay" ? "starts a new bay" : "follows on"}.`);
+      return setShape(edit.sel, { [k]: v }, `${nameOf(edit.sel)}: ${k === "width" ? (v ? `${v} bay${v === 1 ? "" : "s"} wide` : "same width as the section before") : v === "bay" ? "starts a new bay" : "follows on"}.`);
     }
     if (act === "spare") {
       const n = Math.max(0, (shapeOf(edit.sel).spare | 0) + +btn.dataset.v);
