@@ -46,6 +46,6 @@ If what the extension does with data ever changes, this page will be updated bef
 
 ## Contact
 
-Questions about privacy: email if.iferror@gmail.com or open an issue at https://github.com/if-iferror/letternoxd/issues.
+Questions about privacy: email if.iferror@gmail.com or open an issue at https://github.com/if-iferror/letterbloxd/issues.
 
 LetterBloxd is an unofficial, fan-made extension and is not affiliated with or endorsed by Letterboxd.
