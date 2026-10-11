@@ -2063,14 +2063,24 @@
               // back face to the front, so every corner stays rounded.
               const r = Math.min(CORNER, f.w / 2);
               const plastic = caseTop(f.year);
+              // (back face, the flat faces between the corners, and each
+              // rounded corner swept as a capsule: one smooth solid)
+              const X0 = f.x, X1 = f.x + f.w, Y0 = top, Y1 = f.y, dx = DEPTH_X, dy = DEPTH_Y;
               ctx.fillStyle = plastic;
-              for (let k = 3; k >= 1; k--) {
-                const t = k / 3;
-                ctx.beginPath();
-                if (ctx.roundRect) ctx.roundRect(f.x + DEPTH_X * t, top - DEPTH_Y * t, f.w, f.h, r);
-                else ctx.rect(f.x + DEPTH_X * t, top - DEPTH_Y * t, f.w, f.h);
-                ctx.fill();
-              }
+              ctx.beginPath();
+              if (ctx.roundRect) ctx.roundRect(X0 + dx, Y0 - dy, f.w, f.h, r); else ctx.rect(X0 + dx, Y0 - dy, f.w, f.h);
+              ctx.fill();
+              ctx.beginPath();
+              ctx.moveTo(X0 + r, Y0); ctx.lineTo(X1 - r, Y0); ctx.lineTo(X1 - r + dx, Y0 - dy); ctx.lineTo(X0 + r + dx, Y0 - dy); ctx.closePath();
+              ctx.moveTo(X1, Y0 + r); ctx.lineTo(X1, Y1 - r); ctx.lineTo(X1 + dx, Y1 - r - dy); ctx.lineTo(X1 + dx, Y0 + r - dy); ctx.closePath();
+              ctx.fill();
+              ctx.strokeStyle = plastic;
+              ctx.lineWidth = 2 * r;
+              ctx.lineCap = "round";
+              ctx.beginPath();
+              for (const [cx, cy] of [[X0 + r, Y0 + r], [X1 - r, Y0 + r], [X1 - r, Y1 - r]]) { ctx.moveTo(cx, cy); ctx.lineTo(cx + dx, cy - dy); }
+              ctx.stroke();
+              ctx.lineCap = "butt";
               // The right-hand face is the edge of the front cover: the same
               // plastic, laminate and paper bands as the spine, in shadow.
               const side = (ya, yb, color) => {
