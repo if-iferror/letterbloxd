@@ -273,7 +273,8 @@
   let houseShared = null;
   let houseLocal = readJSON(HOUSE_KEY, null);
   const house = () => fullHouse(houseLocal || houseShared);
-  const edit = { on: false, sel: null, renaming: null, deleting: null, undo: [] };
+  // grab: "one" moves a single piece; "group" moves every piece of that section, keeping its shape.
+  const edit = { on: false, sel: null, renaming: null, deleting: null, undo: [], grab: "one" };
   const isFixed = (id) => !id || lib.genres.has(id) || /\/(rest|general)$/.test(id);
   const slugify = (name) => name.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "folder";
   function freshId(base) {
@@ -2004,8 +2005,8 @@
       ctx.setLineDash([]);
     }
     // Where a dragged piece would land.
-    if (wall.dropHint) {
-      const d = wall.dropHint, o = L.origin(d.bay);
+    for (const d of wall.dropHint ? (wall.dropHint.group ? wall.dropHint.items.map((it) => ({ ...it, ok: wall.dropHint.ok })) : [wall.dropHint]) : []) {
+      const o = L.origin(d.bay);
       ctx.fillStyle = d.ok ? "rgba(64,188,244,0.25)" : "rgba(255,90,90,0.25)";
       ctx.strokeStyle = d.ok ? "#40bcf4" : "#ff5a5a";
       ctx.lineWidth = 3 * px;
@@ -2198,7 +2199,7 @@
         const p = toWall(e.offsetX, e.offsetY);
         const { b, s: sh } = bayAt(p);
         const run = wall.lay.runs.find((r) => r.bay === b && r.shelf === sh && p.x >= r.x0 - 4 && p.x <= r.x1 + 4);
-        if (run) { c.draggable = false; e.preventDefault(); return grabDown({ kind: "piece", ref: run.ref, from: "wall" }, e); }
+        if (run) { c.draggable = false; e.preventDefault(); wall.grabAt = p.x - run.x0; return grabDown({ kind: "piece", ref: run.ref, from: "wall" }, e); }
       }
       const i = filmAt(e.offsetX, e.offsetY);
       if (edit.on && e.button === 0 && i != null) {
@@ -2318,6 +2319,7 @@
     };
     tray.innerHTML =
       `<div class="lbs-tray-top"><b>Workspace</b><span>${list.length ? `${list.length} section${list.length === 1 ? "" : "s"} still to place.` : "Everything is on the wall."} Drop a section on a shelf and it fills the free space there; the rest stays here for the next shelf.</span>` +
+      `<span class="lbs-grabtype">Grab <button type="button" data-act="grab" data-v="one" class="${edit.grab === "one" ? "-on" : ""}">Individual</button><button type="button" data-act="grab" data-v="group" class="${edit.grab === "group" ? "-on" : ""}">Group</button></span>` +
       `<button type="button" data-act="w-auto">Auto-arrange</button><button type="button" data-act="w-clear">Everything down</button></div>` +
       `<div class="lbs-tray-list">` +
       held.map(spine).join("") +
@@ -2362,6 +2364,63 @@ list.map((pc) => {
     const rest = had - t.size;
     houseEdit(rest > 2 ? `${nameOf(cid)}: filled that space; the rest is in the workspace.` : `Placed ${nameOf(cid)}.`, (H) => { H.wall = { perRow: wall.plan.perRow, shelves: sh }; });
   }
+  /* Group grab: every piece of the section moves together. Each keeps its
+   * size and its position relative to the piece you picked up (in bays,
+   * shelves and inches along the shelf). It only lands if every piece fits. */
+  const groupRefs = (cid) => wall.lay.runs.filter((r) => wall.refs.refCid.get(r.ref) === cid && wall.plan.shelves[`${r.bay}:${r.shelf}`]);
+  function groupTarget(g, sx, sy) {
+    const L = wall.lay, p = toWall(sx, sy);
+    const { b, s } = bayAt(p);
+    if (b < 0 || s < 0 || s >= WU.shelves) return null;
+    const cid = grabCid(g), perRow = L.k;
+    const members = groupRefs(cid);
+    const anchor = members.find((r) => r.ref === g.ref);
+    if (!anchor) return null;
+    const mine = new Set(members.map((r) => r.ref));
+    const grid = (bay, shelf) => [bay % perRow, Math.floor(bay / perRow) * WU.shelves + shelf];
+    const [ac, ar] = grid(anchor.bay, anchor.shelf), [tc, tr] = grid(b, s);
+    // Shift along the shelf: where the picked-up piece's left edge would now sit.
+    const shiftX = p.x - L.origin(b).x - (wall.grabAt || 0) - (anchor.x0 - L.origin(anchor.bay).x);
+    const load = new Map(); // key -> units already taken (others + group pieces landing there)
+    const items = [];
+    let ok = true;
+    for (const r of members) {
+      const [c, row] = grid(r.bay, r.shelf);
+      const col = c - ac + tc, rr = row - ar + tr;
+      const bay = Math.floor(rr / WU.shelves) * perRow + col, shelf = rr % WU.shelves;
+      const u = wall.refs.refU.get(r.ref);
+      if (col < 0 || col >= perRow || rr < 0 || bay >= L.bays) { ok = false; continue; }
+      const key = `${bay}:${shelf}`;
+      if (!load.has(key)) {
+        const others = (wall.plan.shelves[key] || []).map((pc, i) => ({ ...pc, ref: `${key}/${i}` })).filter((pc) => !mine.has(pc.ref));
+        load.set(key, { used: others.reduce((n, pc) => n + pc.u, 0), n: others.length });
+      }
+      const ld = load.get(key);
+      ld.used += u; ld.n++;
+      if (ld.used + BOOKEND * (ld.n - 1) > CAP * 1.01) ok = false;
+      const x = L.origin(bay).x + Math.max(WU.pad, Math.min(WU.pad + CAP - u, r.x0 - L.origin(r.bay).x + shiftX));
+      items.push({ ref: r.ref, c: cid, u, key, bay, shelf, x, w: u });
+    }
+    return { group: true, cid, items, ok: ok && items.length === members.length };
+  }
+  function placeGroup(t) {
+    const L = wall.lay;
+    const sh = shelvesNow();
+    const mine = new Set(t.items.map((it) => it.ref));
+    // Take the group off, remembering where everything else sits.
+    const rest = {};
+    for (const [key, list] of Object.entries(sh)) {
+      rest[key] = list.map((pc, i) => ({ pc, ref: `${key}/${i}` })).filter((e) => !mine.has(e.ref)).map((e) => {
+        const r = L.runs.find((x) => x.ref === e.ref);
+        return { pc: e.pc, x: r ? (r.x0 + r.x1) / 2 : 0 };
+      });
+    }
+    for (const it of t.items) (rest[it.key] ||= []).push({ pc: { c: it.c, u: it.u }, x: it.x + it.u / 2 });
+    const out = {};
+    for (const [key, list] of Object.entries(rest)) if (list.length) out[key] = list.sort((a, b) => a.x - b.x).map((e) => e.pc);
+    houseEdit(`Moved all of ${nameOf(t.cid)}.`, (H) => { H.wall = { perRow: wall.plan.perRow, shelves: out }; });
+  }
+
   function unplaceGrab(g) {
     const sh = shelvesNow();
     const [k, slot] = g.ref.split("/");
@@ -2413,7 +2472,12 @@ list.map((pc) => {
     if (!d.live) {
       if (Math.abs(e.clientX - d.x) + Math.abs(e.clientY - d.y) < 5) return;
       d.live = true;
-      if (d.kind === "piece") {
+      if (d.kind === "piece" && d.ref && edit.grab === "group") {
+        const cid = grabCid(d), n = groupRefs(cid).length;
+        d.group = true;
+        d.ghost = h("div", "lbs-piece lbs-piece-ghost", `<b>${esc(nameOf(cid))}</b><span>all ${n}</span>`);
+        d.ghost.style.setProperty("--h", secHue(lib.genres.get(STOCKED).cats.indexOf(cid)));
+      } else if (d.kind === "piece") {
         const cid = grabCid(d);
         d.ghost = h("div", "lbs-piece lbs-piece-ghost", `<b>${esc(nameOf(cid))}</b>`);
         d.ghost.style.setProperty("--h", secHue(lib.genres.get(STOCKED).cats.indexOf(cid)));
@@ -2430,7 +2494,7 @@ list.map((pc) => {
     d.ghost.style.top = `${e.clientY + 8}px`;
     const c = wall.canvas, r = c.getBoundingClientRect();
     const over = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
-    wall.dropHint = over ? (d.kind === "piece" ? dropTarget(d, e.clientX - r.left, e.clientY - r.top) : dvdTarget(d.slug, e.clientX - r.left, e.clientY - r.top)) : null;
+    wall.dropHint = over ? (d.kind === "piece" ? (d.group ? groupTarget(d, e.clientX - r.left, e.clientY - r.top) : dropTarget(d, e.clientX - r.left, e.clientY - r.top)) : dvdTarget(d.slug, e.clientX - r.left, e.clientY - r.top)) : null;
     root.querySelectorAll(".lbs-folder.-over").forEach((el) => el.classList.remove("-over"));
     const folder = d.kind === "dvd" && document.elementFromPoint(e.clientX, e.clientY)?.closest?.(".lbs-folder[data-drop]");
     if (folder) folder.classList.add("-over");
@@ -2451,7 +2515,14 @@ list.map((pc) => {
     const el = document.elementFromPoint(e.clientX, e.clientY);
     const toTray = el && el.closest && el.closest(".lbs-tray");
     if (d.kind === "piece") {
+      if (toTray && d.group) {
+        const keep = new Set(groupRefs(grabCid(d)).map((r) => r.ref));
+        const sh = shelvesNow();
+        for (const k of Object.keys(sh)) { sh[k] = sh[k].filter((_, i) => !keep.has(`${k}/${i}`)); if (!sh[k].length) delete sh[k]; }
+        return houseEdit(`Took all of ${nameOf(grabCid(d))} down.`, (H) => { H.wall = { perRow: wall.plan.perRow, shelves: sh }; });
+      }
       if (toTray) { if (d.from === "wall") unplaceGrab(d); return drawSoon(); }
+      if (hint && hint.group) { if (hint.ok) return placeGroup(hint); toast("The whole section doesn't fit there."); return drawSoon(); }
       if (hint && hint.ok) return placeGrab(d, hint);
       if (hint) toast("No room on that shelf.");
       return drawSoon();
@@ -2821,6 +2892,7 @@ list.map((pc) => {
     if (act === "logo-pick") return pickLogo(btn.dataset.slug, +btn.dataset.n);
     if (act === "edit") return toggleEdit(!edit.on);
     if (act === "sort") return setSort(id, btn.dataset.v);
+    if (act === "grab") { edit.grab = btn.dataset.v; return renderTray(); }
     if (act === "w-clear") return houseEdit("Everything is back in the workspace.", (H) => { H.wall = { perRow: wall.plan.perRow, shelves: {} }; });
     if (act === "w-auto") return houseEdit("Auto-arranged the wall.", (H) => { H.wall = autoArrange(sectionStock(), wall.plan.perRow); });
     if (act === "rename") { e.stopPropagation(); edit.renaming = id; edit.deleting = null; return renderFolders(); }
