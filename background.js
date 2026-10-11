@@ -95,9 +95,9 @@ async function storeLogos({ id }) {
 // The store's shared-edits backend (see tools/store-backend.gs). Until it's
 // set up, edits go to the feedback form, marked [store].
 const STORE = {
-  form: "", // .../formResponse of "LetterBloxd store edits"
-  entries: { kind: "", target: "", value: "", meta: "" },
-  state: "", // the web app URL (doGet)
+  form: "https://docs.google.com/forms/d/e/1FAIpQLScJhV2pJR0ormeIczfXES-kkUWjOABHpWlXZ2aLvQgEHeBBcw/formResponse",
+  entries: { kind: "entry.514253111", target: "entry.1244489204", value: "entry.1007145499", meta: "entry.112719795" },
+  state: "https://script.google.com/macros/s/AKfycbz8vnW4lQOT0Bt9CUggz6DcbdS7ELlj2lD1-FRbSrk15v9czgiEf71zOAMP4NYSufg/exec",
 };
 async function storeEdit({ kind, target, value }) {
   if (!(await haveConsent())) return { ok: false, reason: "not allowed" };
