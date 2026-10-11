@@ -2994,3 +2994,27 @@ html.lbs-open {
   margin: 0;
   color: #678;
 }
+
+/* A box being carried */
+.lbs-box-ghost {
+  position: fixed;
+  z-index: 2147483647;
+  pointer-events: none;
+  filter: drop-shadow(0 18px 24px rgba(0, 0, 0, 0.55));
+  transform: rotate(-4deg);
+}
+.lbs-box-ghost .lbs-box3d {
+  transform: rotateY(16deg) rotateX(-4deg);
+}
+
+.lbs-fr-sticker {
+  margin-top: 16px;
+  padding: 12px;
+  border-radius: 6px;
+  background: #14181c;
+}
+.lbs-fr-sticker > b {
+  display: block;
+  margin-bottom: 8px;
+  color: #fff;
+}

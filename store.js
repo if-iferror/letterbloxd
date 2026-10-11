@@ -1433,6 +1433,7 @@
     for (const sec of secs) sec.highlights = [...sec.films].sort((a, b) => films[a].rank - films[b].rank).slice(0, 3);
     // Franchise stickers: one per unbroken run of a franchise on a shelf.
     const frList = Object.values(mine.franchises || {});
+    const frIds = Object.keys(mine.franchises || {});
     const stickers = [];
     for (const list of chunks.values()) {
       let run = null;
@@ -1440,7 +1441,8 @@
         const f = films[i];
         if (f.fr != null && run && run.fr === f.fr) { run.x1 = f.x + f.w; run.h = Math.max(run.h, f.h); continue; }
         if (run) stickers.push(run);
-        run = f.fr != null ? { fr: f.fr, x0: f.x, x1: f.x + f.w, y: f.y, h: f.h, bay: f.bay, lead: frList[f.fr] && frList[f.fr].films[0][0], name: frList[f.fr] && frList[f.fr].name } : null;
+        const fo = frList[f.fr];
+        run = f.fr != null && fo ? { fr: f.fr, id: frIds[f.fr], x0: f.x, x1: f.x + f.w, y: f.y, h: f.h, bay: f.bay, shelf: f.shelf, lead: fo.films[0][0], name: fo.name, color: fo.color, logo: fo.logo } : null;
       }
       if (run) stickers.push(run);
     }
@@ -1666,6 +1668,9 @@
   function logoImg(slug, size) {
     const path = logoPath(slug);
     if (!path) return null;
+    return logoImgPath(path, size);
+  }
+  function logoImgPath(path, size) {
     const key = `${size}/${path}`;
     let L = wall.logos.get(key);
     if (L) return L.ok ? L : null;
@@ -1966,7 +1971,7 @@
     if (z >= FAR && L.stickers) {
       for (const st of L.stickers) {
         if (!seen.has(st.bay) || st.x1 < x0 || st.x0 > x1) continue;
-        const own = colorOf(st.lead);
+        const own = st.color || colorOf(st.lead);
         const top = st.y - (WU.shelfH - WU.lip) + 5;
         ctx.fillStyle = own ? `#${own.slice(0, 6)}` : "#5a4a7a";
         if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(st.x0 - 2, top, st.x1 - st.x0 + 4, st.y - top - 2, 3); ctx.fill(); }
@@ -1975,13 +1980,12 @@
         ctx.fillRect(st.x0 - 2, top, st.x1 - st.x0 + 4, 3);
         const band = st.y - st.h - 3 - (top + 2);
         if (band < 6) continue;
-        const lg = z >= LOGO_Z ? logoImg(st.lead, "w300") : null;
+        const lg = z >= LOGO_Z ? (st.logo ? logoImgPath(st.logo, "w300") : logoImg(st.lead, "w300")) : null;
         const bw = st.x1 - st.x0 - 8;
         if (lg) {
           const a = (lg.img.naturalWidth || 300) / (lg.img.naturalHeight || 100);
           let w = Math.min(bw, band * a), hh = w / a;
-          const src = contrast(lg.lum, own ? relLum(rgbOf(own)) : 0.03) >= 2 ? lg.img : logoInk(lg, own && relLum(rgbOf(own)) > 0.35 ? "#15181b" : "#f4f1ea");
-          ctx.drawImage(src, (st.x0 + st.x1) / 2 - w / 2, top + 2 + (band - hh) / 2, w, hh);
+          ctx.drawImage(lg.img, (st.x0 + st.x1) / 2 - w / 2, top + 2 + (band - hh) / 2, w, hh);
         } else if (z >= NEAR) {
           ctx.font = `800 ${Math.min(band * 0.8, 16)}px Arial, sans-serif`;
           ctx.textAlign = "center";
@@ -2002,7 +2006,7 @@
           if (!list) continue;
           for (const i of list) {
             const f = L.films[i];
-            if (f.x + f.w < x0 || f.x - f.h > x1) continue;
+            if (f.x + f.w < x0 || f.x - f.h > x1 || f.slug === wall.lifted) continue;
             if (f.lean) { ctx.save(); ctx.translate(f.x, f.y); ctx.rotate(-f.lean); ctx.translate(-f.x, -f.y); }
             try {
             const top = f.y - f.h;
@@ -2505,7 +2509,11 @@
       if (wall.dragged) { wall.dragged = false; return; }
       if (edit.on) return;
       const i = filmAt(e.offsetX, e.offsetY);
-      if (i != null) { showTip(null); openFilm(wall.lay.films[i].slug, wall.lay.films[i].name); }
+      if (i != null) { showTip(null); openFilm(wall.lay.films[i].slug, wall.lay.films[i].name); return; }
+      // A franchise sticker on the back wall: edit its colour and title art.
+      const p = toWall(e.offsetX, e.offsetY);
+      const st = (wall.lay.stickers || []).find((q) => p.x >= q.x0 - 2 && p.x <= q.x1 + 2 && p.y <= q.y && p.y >= q.y - (WU.shelfH - WU.lip));
+      if (st && st.id) { const fr = mine.franchises[st.id]; if (fr) { openFranchise(fr.films[0][0], fr.films[0][1]); ui.fr.sticker = true; renderFranchise(); } }
     });
     c.tabIndex = 0;
     c.addEventListener("keydown", (e) => {
@@ -2723,7 +2731,7 @@
       `<div class="lbs-sp-col"><h5>${ui.sortCat ? esc(nameOf(ui.sortCat)) : "Subsections"}</h5><ul>${ui.sortCat ? lib.cats.get(ui.sortCat).subs.map(subRow).join("") + adding("sub") : '<li class="lbs-sp-hint">Pick a section</li>'}</ul></div>` +
       `</div>` +
       `<div class="lbs-sp-foot">` +
-      `<button type="button" class="lbs-sp-move" data-act="sp-move"${target ? "" : " disabled"}>${target ? `Move to ${esc(nameOf(target))}` : "Pick a subsection"}</button>` +
+      `<button type="button" class="lbs-sp-move" data-act="sp-move"${target ? "" : " disabled"}>Move</button>` +
       `<button type="button" class="lbs-sp-ghost" data-act="fr-open">${fr ? `Franchise: ${esc(fr.name)}` : "Add to franchise"}</button>` +
       `<button type="button" class="lbs-sp-link" data-act="req-remove-film">Request removal</button>` +
       `</div>`;
@@ -2740,7 +2748,7 @@
   const franchiseOf = (slug) => { for (const [id, f] of Object.entries(franchises())) if (f.films.some(([s]) => s === slug)) return { id, ...f }; return null; };
   function openFranchise(slug, name) {
     const fr = franchiseOf(slug);
-    ui.fr = fr ? { id: fr.id, name: fr.name, films: fr.films.slice() } : { id: null, name: `${titleOf(name)} series`, films: [[slug, name]] };
+    ui.fr = fr ? { id: fr.id, name: fr.name, films: fr.films.slice(), color: fr.color, logo: fr.logo } : { id: null, name: `${titleOf(name)} series`, films: [[slug, name]] };
     renderFranchise();
   }
   function renderFranchise() {
@@ -2755,10 +2763,27 @@
       fr.films.map(([s, n], i) => `<li draggable="true" data-i="${i}"><img data-poster="${esc(s)}" alt="" draggable="false"><b>${i + 1}</b><span>${esc(titleOf(n))}</span><button type="button" data-act="fr-drop" data-i="${i}" aria-label="Remove">${ICON_CLOSE}</button></li>`).join("") +
       `</ol>` +
       `<label class="lbs-fr-find">${ICON_SEARCH}<input type="search" class="lbs-fr-q" placeholder="Add another film…" autocomplete="off"></label><ul class="lbs-fr-results" hidden></ul>` +
+      stickerHTML(fr) +
       `<div class="lbs-fr-foot">${fr.id ? '<button type="button" class="lbs-sp-link" data-act="fr-delete">Undo franchise</button>' : "<span></span>"}<button type="button" class="lbs-sp-move" data-act="fr-save"${fr.films.length > 1 ? "" : " disabled"}>Save franchise</button></div>` +
       `</div>`;
     box.hidden = false;
     fillPosters(box, false);
+  }
+  // The sticker on the back wall: its colour, and any of #1's logos.
+  function stickerHTML(fr) {
+    const lead = fr.films[0];
+    if (!lead) return "";
+    const own = fr.color || (colorOf(lead[0]) ? colorOf(lead[0]).slice(0, 6) : "5a4a7a");
+    const list = ui.frLogos && ui.frLogos.slug === lead[0] ? ui.frLogos.list : null;
+    if (!list) allLogos(lead[0]).then((l) => { ui.frLogos = { slug: lead[0], list: l }; if (ui.fr) renderFranchise(); });
+    const cur = fr.logo || logoPath(lead[0]);
+    return (
+      `<div class="lbs-fr-sticker"><b>Sticker</b>` +
+      `<label class="lbs-fcolor">Colour <input type="color" class="lbs-fr-color" value="#${esc(own.replace("#", ""))}"></label>` +
+      `<div class="lbs-flogos">` +
+      (list ? list.map((pth) => `<button type="button" data-act="fr-logo" data-path="${esc(pth)}" class="${cur === pth ? "-on" : ""}"><img src="${TMDB_IMG}w185/${esc(pth)}" alt="" loading="lazy"></button>`).join("") : `<p class="lbs-fwait">Fetching ${esc(titleOf(lead[1]))}'s logos…</p>`) +
+      `</div></div>`
+    );
   }
   function franchiseSearch(q) {
     const list = $(".lbs-fr-results", root);
@@ -2780,10 +2805,10 @@
     const id = fr.id || `fr-${slugify(fr.name)}-${Date.now().toString(36)}`;
     // A film can only be in one franchise.
     for (const [oid, o] of Object.entries(franchises())) if (oid !== id) o.films = o.films.filter(([s]) => !fr.films.some(([x]) => x === s));
-    franchises()[id] = { name: fr.name, films: fr.films };
+    franchises()[id] = { name: fr.name, films: fr.films, ...(fr.color ? { color: fr.color } : {}), ...(fr.logo ? { logo: fr.logo } : {}) };
     for (const [oid, o] of Object.entries(franchises())) if (o.films.length < 2) delete franchises()[oid];
     saveMine();
-    shareEdit("franchise", id, { name: fr.name, films: fr.films.map(([s]) => s) });
+    shareEdit("franchise", id, { name: fr.name, films: fr.films.map(([s]) => s), color: fr.color || null, logo: fr.logo || null });
     ui.fr = null;
     renderFranchise();
     refresh();
@@ -2967,6 +2992,7 @@
     add(mine.held);
     saveMine();
     renderTray();
+    renderPocket();
   }
   function releaseFilm(slug) {
     if (edit.on) return; // house moves clear it themselves
@@ -3166,15 +3192,16 @@
         d.ghost.style.setProperty("--h", secHue(lib.genres.get(STOCKED).cats.indexOf(cid)));
         d.ghost.style.width = `${Math.max(30, Math.min(CAP, grabSize(d)) * wall.cam.z)}px`;
       } else {
-        d.ghost = h("div", "lbs-dvd lbs-piece-ghost", esc(titleOf(d.name)));
-        const c = colors[d.slug];
-        d.ghost.style.setProperty("--c", c ? `#${c.slice(0, 6)}` : "#2c3440");
+        // The box itself, cover facing you, follows the pointer.
+        d.ghost = h("div", "lbs-box-ghost", boxHTML(d.slug, d.name, false));
+        fillPosters(d.ghost, false);
+        if (d.from === "wall") { wall.lifted = d.slug; drawSoon(); }
       }
       document.body.append(d.ghost);
       showTip(null);
     }
-    d.ghost.style.left = `${e.clientX + 8}px`;
-    d.ghost.style.top = `${e.clientY + 8}px`;
+    d.ghost.style.left = `${e.clientX + (d.kind === "dvd" ? -40 : 8)}px`;
+    d.ghost.style.top = `${e.clientY + (d.kind === "dvd" ? -60 : 8)}px`;
     const c = wall.canvas, r = c.getBoundingClientRect();
     const over = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
     wall.dropHint = over ? (d.kind === "piece" ? (d.pour ? pourTarget(d, e.clientX - r.left, e.clientY - r.top) : d.group ? groupTarget(d, e.clientX - r.left, e.clientY - r.top) : dropTarget(d, e.clientX - r.left, e.clientY - r.top)) : dvdTarget(d.slug, e.clientX - r.left, e.clientY - r.top)) : null;
@@ -3202,6 +3229,7 @@
     const d = grab;
     if (!d) return;
     grab = null;
+    if (wall.lifted) { wall.lifted = null; drawSoon(); }
     if (d.live) { wall.dragged = true; setTimeout(() => (wall.dragged = false), 0); }
     if (d.ghost) d.ghost.remove();
     const hint = wall.dropHint;
@@ -3645,6 +3673,7 @@
       if (act === "fr-drop") { ui.fr.films.splice(+btn.dataset.i, 1); return renderFranchise(); }
       if (act === "fr-add") { ui.fr.films.push([fs, fn]); ui.fr.name = $(".lbs-fr-name", root)?.value || ui.fr.name; renderFranchise(); return $(".lbs-fr-q", root)?.focus(); }
       if (act === "fr-save") return saveFranchise();
+      if (act === "fr-logo") { ui.fr.logo = btn.dataset.path; return renderFranchise(); }
       if (act === "fr-delete") { delete franchises()[ui.fr.id]; saveMine(); shareEdit("franchise", ui.fr.id, null); ui.fr = null; renderFranchise(); refresh(); return toast("Franchise undone."); }
       if (act === "req-remove-film") return requestRemoval("film", ui.sortFilm[0], titleOf(ui.sortFilm[1]));
       if (act === "req-remove") { $(".lbs-sortpick", root).hidden = true; return requestRemoval("section", id, nameOf(id)); }
@@ -3768,6 +3797,7 @@
     }
     if (e.target.classList.contains("lbs-fr-q")) return franchiseSearch(e.target.value);
     if (e.target.classList.contains("lbs-fr-name")) { if (ui.fr) ui.fr.name = e.target.value; return; }
+    if (e.target.classList.contains("lbs-fr-color")) { if (ui.fr) ui.fr.color = e.target.value.slice(1); return; }
     if (e.target.classList.contains("lbs-sp-genre-pick")) { ui.sortGenre = e.target.value; ui.sortCat = null; ui.sortSub = null; return renderSortPanel(); }
     if (e.target.classList.contains("lbs-find-q")) return runFind(e.target.value);
     if (e.target.classList.contains("lbs-f-color")) {
