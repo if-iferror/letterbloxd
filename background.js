@@ -78,7 +78,37 @@ async function send(payload) {
   }
 }
 
+/* The video store (dev builds only).
+ * store:logos  every logo TMDB lists for a film (read from TMDB's public
+ *              logo page; no API key needed, nothing stored)
+ * store:edit   a shared edit (a move, a new section, a logo or colour pick,
+ *              a franchise, a request) added to the store's log */
+async function storeLogos({ id }) {
+  if (!/^\d+$/.test(String(id))) return { ok: false, reason: "bad id" };
+  const r = await fetch(`https://www.themoviedb.org/movie/${id}/images/logos`, { credentials: "omit" });
+  if (!r.ok) return { ok: false, reason: `TMDB ${r.status}` };
+  const html = await r.text();
+  const seen = new Set();
+  for (const m of html.matchAll(/\/t\/p\/w500\/([A-Za-z0-9]+\.(?:png|svg))/g)) seen.add(m[1]);
+  return { ok: true, data: [...seen] };
+}
+async function storeEdit({ kind, target, value }) {
+  if (!(await haveConsent())) return { ok: false, reason: "not allowed" };
+  const e = FORM.entries;
+  const body = new URLSearchParams();
+  body.set(e.text, `[store] ${String(kind).slice(0, 40)} ${String(target).slice(0, 200)}`);
+  body.set(e.details, JSON.stringify({ v: api.runtime.getManifest().version, kind, target, value, at: new Date().toISOString() }).slice(0, 4000));
+  try {
+    await fetch(FORM.url, { method: "POST", mode: "no-cors", body });
+    return { ok: true };
+  } catch {
+    return { ok: false, reason: "offline" };
+  }
+}
+
 api.runtime.onMessage.addListener((msg, _sender, reply) => {
+  if (msg && msg.type === "store:logos") { storeLogos(msg.payload || {}).then(reply, () => reply({ ok: false })); return true; }
+  if (msg && msg.type === "store:edit") { storeEdit(msg.payload || {}).then(reply, () => reply({ ok: false })); return true; }
   if (!msg || msg.type !== "feedback") return;
   send(msg.payload || {}).then(reply);
   return true; // reply later

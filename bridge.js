@@ -8,6 +8,16 @@
   window.addEventListener("message", (e) => {
     if (e.source !== window || e.origin !== location.origin) return;
     const d = e.data;
+    if (d && d.__lbni === "ext" && typeof d.id === "string" && typeof d.type === "string") {
+      // The video store: fetch logos, send shared edits.
+      const back = (result) => window.postMessage({ __lbni: "ext-result", id: d.id, ...(result || { ok: false }) }, location.origin);
+      try {
+        api.runtime.sendMessage({ type: `store:${d.type}`, payload: d.payload }, back);
+      } catch {
+        back({ ok: false, reason: "The extension was updated. Reload the page." });
+      }
+      return;
+    }
     if (!d || d.__lbni !== "feedback" || typeof d.id !== "string") return;
     const answer = (result) => window.postMessage({ __lbni: "feedback-result", id: d.id, ...result }, location.origin);
     try {

@@ -1140,6 +1140,7 @@
     if (level === "cat") mine.cats[id] = { genre: parent, name };
     else mine.subs[id] = { cat: parent, name };
     saveMine();
+    shareEdit(level === "cat" ? "add-section" : "add-subsection", id, { name, parent });
     buildLibrary();
     desk.adding = null;
     desk.folder = id;
@@ -1621,12 +1622,24 @@
   const logoJob = { running: false, done: 0, total: 0, found: 0, error: "" };
 
   const logoEntry = (slug) => logoIndex.films[slug] || (logoShared && logoShared[slug]) || null;
+  // The logo on a film's spine: your pick (a TMDB path), "plain" (-1), or the index's first.
   function logoPath(slug) {
-    const e = logoEntry(slug);
-    if (!e || e.length < 2) return null;
     const pick = logoPicks[slug];
     if (pick === -1) return null;
+    if (typeof pick === "string" && pick) return pick;
+    const e = logoEntry(slug);
+    if (!e || e.length < 2) return null;
     return e[1 + (pick > 0 && pick < e.length - 1 ? pick : 0)];
+  }
+  // Every logo TMDB has for a film, fetched when you open Edit (not stored).
+  const logoLists = new Map();
+  function allLogos(slug) {
+    const e = logoEntry(slug);
+    if (!e || !e[0]) return Promise.resolve(e && e[1] ? [e[1]] : []);
+    if (!logoLists.has(slug)) {
+      logoLists.set(slug, ext("logos", { id: e[0] }).then((list) => (list && list.length ? list : e.slice(1))).catch(() => e.slice(1)));
+    }
+    return logoLists.get(slug);
   }
 
   function loadSharedLogos() {
@@ -1831,9 +1844,10 @@
   }
 
   function pickLogo(slug, n) {
-    if (n === 0) delete logoPicks[slug];
+    if (n === 0 || n === "") delete logoPicks[slug];
     else logoPicks[slug] = n;
     writeJSON(LOGO_PICK_KEY, logoPicks);
+    shareEdit("logo", slug, n === -1 ? "plain" : typeof n === "string" ? n : null);
     const e = logoEntry(slug);
     const list = readJSON(SUGGEST_KEY, []).filter((s) => !(s.type === "logo" && s.slug === slug));
     list.push({ type: "logo", slug, tmdb: e && e[0], path: n === -1 ? null : e && e[1 + n], at: Date.now() });
@@ -2437,7 +2451,13 @@
     c.addEventListener("mouseleave", () => { wall.hover = null; showTip(null); drawSoon(); });
     c.addEventListener("contextmenu", (e) => {
       const i = filmAt(e.offsetX, e.offsetY);
-      if (i != null && openLogoPicker(i, e.offsetX, e.offsetY)) { e.preventDefault(); showTip(null); }
+      if (i == null) return;
+      e.preventDefault();
+      showTip(null);
+      const f = wall.lay.films[i];
+      openFilm(f.slug, f.name);
+      ui.pane = "edit";
+      renderFilm();
     });
     c.addEventListener("click", (e) => {
       if (wall.dragged) { wall.dragged = false; return; }
@@ -2541,14 +2561,16 @@
     let pane = "";
     if (ui.pane === "edit") {
       const own = colorOf(slug);
-      const cur = logoPicks[slug] ?? 0;
+      const cur = logoPath(slug);
+      const list = ui.logos && ui.logos.slug === slug ? ui.logos.list : null;
+      if (!list) allLogos(slug).then((l) => { ui.logos = { slug, list: l }; if (ui.film && ui.film.slug === slug && ui.pane === "edit") renderFilm(); });
       pane =
         `<div class="lbs-fpane"><b>Edit this box</b>` +
         `<label class="lbs-fcolor">Case colour <input type="color" class="lbs-f-color" value="#${own ? own.slice(0, 6) : "2c3440"}" data-slug="${esc(slug)}">` +
         (mine.colors[slug] ? `<button type="button" data-act="f-color-reset" data-slug="${esc(slug)}">Use the poster's colour</button>` : "") + `</label>` +
         `<div class="lbs-flogos">` +
-        (e && e.length > 1 ? e.slice(1).map((pth, n) => `<button type="button" data-act="logo-pick" data-slug="${esc(slug)}" data-n="${n}" class="${cur === n ? "-on" : ""}"><img src="${TMDB_IMG}w185/${esc(pth)}" alt="Logo ${n + 1}"></button>`).join("") : "") +
-        `<button type="button" data-act="logo-pick" data-slug="${esc(slug)}" data-n="-1" class="-plain${cur === -1 ? " -on" : ""}">Plain title</button>` +
+        (list ? list.map((pth, n) => `<button type="button" data-act="logo-pick" data-slug="${esc(slug)}" data-path="${esc(pth)}" class="${cur === pth ? "-on" : ""}"><img src="${TMDB_IMG}w185/${esc(pth)}" alt="Logo ${n + 1}" loading="lazy"></button>`).join("") : `<p class="lbs-fwait">Fetching every logo from TMDB…</p>`) +
+        `<button type="button" data-act="logo-pick" data-slug="${esc(slug)}" data-path="-1" class="-plain${cur === null ? " -on" : ""}">Plain title</button>` +
         `</div>` +
         (e && e[0] ? `<a class="lbs-fmore" href="https://www.themoviedb.org/movie/${e[0]}/images/logos" target="_blank" rel="noopener">Upload more on TMDB ↗</a>` : "") +
         `</div>`;
@@ -3307,6 +3329,7 @@
       });
     }
     const before = films.map(([slug]) => [slug, mine.place[slug]]);
+    for (const [slug] of films) shareEdit("place", slug, sub);
     const prevView = mine.view;
     for (const [slug, name] of films) mine.place[slug] = [sub, name];
     mine.recent = [sub, ...(mine.recent || []).filter((x) => x !== sub)].slice(0, 6);
@@ -3548,7 +3571,12 @@
     }
     const act = btn.dataset.act;
     const id = btn.dataset.id;
-    if (act === "logo-pick") { pickLogo(btn.dataset.slug, +btn.dataset.n); if (ui.film) renderFilm(); return; }
+    if (act === "logo-pick") {
+      const v = btn.dataset.path != null ? (btn.dataset.path === "-1" ? -1 : btn.dataset.path) : +btn.dataset.n;
+      pickLogo(btn.dataset.slug, v);
+      if (ui.film) renderFilm();
+      return;
+    }
     if (act === "edit") return toggleEdit(!edit.on);
     {
       const fs = btn.dataset.slug, fn = btn.dataset.name || (ui.film && ui.film.name) || fs;
@@ -3688,8 +3716,11 @@
     if (e.target.classList.contains("lbs-sp-genre-pick")) { ui.sortGenre = e.target.value; ui.sortCat = null; ui.sortSub = null; return renderSortPanel(); }
     if (e.target.classList.contains("lbs-find-q")) return runFind(e.target.value);
     if (e.target.classList.contains("lbs-f-color")) {
-      mine.colors[e.target.dataset.slug] = e.target.value.slice(1);
+      const cs = e.target.dataset.slug;
+      mine.colors[cs] = e.target.value.slice(1);
       saveMine();
+      clearTimeout(ui.colorT);
+      ui.colorT = setTimeout(() => shareEdit("color", cs, mine.colors[cs]), 1200);
       if (wall.lay) recolourSections();
       drawSoon();
       const box = $(".lbs-filmview .lbs-box", root);
