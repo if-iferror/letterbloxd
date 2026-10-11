@@ -1,4 +1,4 @@
-/* Letternoxd */
+/* LetterBloxd */
 
 /* Tuning knobs for the fades (set live in the demo). */
 :root {
@@ -84,25 +84,49 @@
 .lbni-swap .overlay-actions .menu-link {
   visibility: hidden;
 }
-.lbni-host.lbni-swap > .lbni-btn-wl {
-  z-index: 25;
+/* The watchlist button lives INSIDE the hover bar (a third icon beside the
+   eye and heart), so it shows and hides with the bar and hovering it keeps
+   the bar open. Positioned over the hidden "…" by script. */
+.overlay-actions > .lbni-btn-wl {
+  position: absolute;
+  z-index: 1;
   padding: 0;
   border-radius: 0;
   background: none;
   box-shadow: none;
-  color: #fff; /* as white as Letterboxd's eye and heart */
+  opacity: 1;
+  pointer-events: auto;
+  color: #eef3f8; /* Letterboxd's resting icon colour (eye, heart, "…") */
+  transition: none;
 }
-/* clock circle 14px, about the height of Letterboxd's heart */
-.lbni-host.lbni-swap > .lbni-btn-wl svg {
+/* Clock sized to match Letterboxd's eye and heart, which are drawn larger in
+   its standard bar than in the small (-w70) one. */
+.overlay-actions > .lbni-btn-wl svg {
   flex: none;
+  width: 19.5px;
+  height: 19.5px;
+}
+.overlay-actions.-w70 > .lbni-btn-wl svg {
   width: 17.3px;
   height: 17.3px;
 }
-.lbni-host.lbni-swap > .lbni-btn-wl:hover {
+/* Same feedback as Letterboxd's eye and heart: light blue-grey on hover and
+   while pressed when off; unchanged when on (like a watched eye or a liked
+   heart). No extra "saving" fade after a click, which they don't have. */
+.overlay-actions > .lbni-btn-wl:hover,
+.overlay-actions > .lbni-btn-wl:active {
   background: none;
-  color: #fff;
+  color: #c9d8e8;
 }
-
+.overlay-actions > .lbni-btn-wl.lbni-on,
+.overlay-actions > .lbni-btn-wl.lbni-on:hover,
+.overlay-actions > .lbni-btn-wl.lbni-on:active {
+  color: #40bcf4;
+}
+.overlay-actions > .lbni-btn-wl.lbni-busy {
+  opacity: 1 !important;
+  cursor: pointer;
+}
 /* Small posters (~70px wide). */
 .lbni-small > .lbni-corner,
 .lbni-small > .lbni-badges > .lbni-badge {
@@ -139,12 +163,6 @@
 .lbni-large > .lbni-btn-wl {
   left: 8px;
 }
-/* No Letterboxd hover bar there, so its watchlist button stays top-left and
-   is always shown when the film is on your watchlist. */
-.lbni-large > .lbni-btn-wl.lbni-on {
-  opacity: 1;
-  pointer-events: auto;
-}
 
 /* States */
 /* Not interested: when marked, the ⃠ stays in the top-right corner (white);
@@ -157,8 +175,7 @@
 .lbni-btn-ni:not(.lbni-on) {
   color: #fff;
 }
-.lbni-btn-wl.lbni-on,
-.lbni-swap > .lbni-btn-wl.lbni-on {
+.lbni-btn-wl.lbni-on {
   color: #40bcf4;
 }
 .lbni-btn-wl .lbni-minus,
@@ -552,4 +569,263 @@ li.lbni-tinted.lbni-pinned:not(:has(:focus-visible)) > .lbni-ind {
 }
 .lbni-toast-out {
   opacity: 0;
+}
+
+/* ---- "Ratings" badge style: the rating itself, or an outlined star ---- */
+.lbni-badge-num {
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: auto;
+  min-width: 28px;
+  padding: 0 8px 0 6px;
+  border-radius: 999px;
+  font: 700 12px/1 -apple-system, BlinkMacSystemFont, Graphik, sans-serif;
+  letter-spacing: -0.04em;
+  font-variant-numeric: tabular-nums;
+}
+/* Rating badges are white (outlined star + number). The seen-but-unrated
+   star badge is coloured: green = seen, orange = liked. */
+.lbni-badge-num.lbni-badge-seen,
+.lbni-badge-star.lbni-badge-seen {
+  color: #00e054;
+}
+.lbni-badge-num.lbni-badge-loved,
+.lbni-badge-star.lbni-badge-loved {
+  color: #ff8000;
+}
+.lbni-badges > .lbni-badge-num svg {
+  flex: none;
+  width: 0.9em;
+  height: 0.9em;
+  color: #fff;
+}
+.lbni-badge-num > .lbni-num {
+  color: #fff;
+}
+.lbni-badge-star {
+  padding: 6px;
+}
+.lbni-small > .lbni-badges > .lbni-badge-num {
+  width: auto;
+  min-width: 22px;
+  gap: 1px;
+  padding: 0 6px 0 4px;
+  font-size: 10px;
+}
+/* Badges stack in a column; keep pills left-aligned, not stretched. */
+.lbni-badges {
+  align-items: flex-start;
+}
+.lbni-small > .lbni-badges > .lbni-badge-star {
+  padding: 5px;
+}
+
+/* ---- Feedback & coffee bar: drops down from the top of the window ---- */
+.lbni-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100000;
+  height: 0;
+  font: 13px/1.3 -apple-system, BlinkMacSystemFont, Graphik, sans-serif;
+}
+.lbni-bar svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+:where(.lbni-bar) button {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+}
+.lbni-bar :focus-visible {
+  outline: 2px solid #40bcf4;
+  outline-offset: 1px;
+}
+/* The tab: hangs from the top edge, top right, while the bar is closed. */
+.lbni-bar-tab {
+  position: absolute;
+  top: 0;
+  right: 24px;
+  display: flex;
+  width: 40px;
+  height: 24px;
+  padding: 4px 11px 5px;
+  border-radius: 0 0 7px 7px;
+  background: #2c3440;
+  color: #def;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+  opacity: 0.8;
+  transition: height 0.15s ease, opacity 0.15s ease;
+}
+.lbni-bar-tab:hover {
+  height: 30px;
+  padding-top: 8px;
+  opacity: 1;
+}
+.lbni-bar[data-open="true"] .lbni-bar-tab {
+  display: none;
+}
+/* The bar: full width, slides down. */
+.lbni-bar-body {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 4px;
+  background: #2c3440;
+  border-bottom: 1px solid #456;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  transform: translateY(-110%);
+  visibility: hidden;
+  transition: transform 0.2s ease, visibility 0s linear 0.2s;
+}
+.lbni-bar[data-open="true"] .lbni-bar-body {
+  transform: none;
+  visibility: visible;
+  transition: transform 0.2s ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .lbni-bar-body,
+  .lbni-bar[data-open="true"] .lbni-bar-body {
+    transition: none;
+  }
+}
+.lbni-bar-spacer {
+  flex: 1 1 0;
+}
+.lbni-bar-enjoy {
+  flex: none;
+  color: #9ab;
+  white-space: nowrap;
+}
+.lbni-bar-form {
+  flex: 0 1 520px;
+  min-width: 0;
+  margin: 0;
+}
+.lbni-bar-input {
+  box-sizing: border-box;
+  width: 100%;
+  height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 4px;
+  background: #456;
+  color: #fff;
+  font: inherit;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+.lbni-bar-input::placeholder {
+  color: #abc;
+}
+.lbni-bar-input:focus {
+  outline: none;
+  background: #567;
+}
+.lbni-bar-coffee {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 10px 0 8px;
+  border-radius: 4px;
+  background: #ffdd00;
+  color: #14181c;
+  font-weight: 600;
+  white-space: nowrap;
+  text-decoration: none;
+}
+.lbni-bar-coffee:hover {
+  background: #ffe633;
+  color: #14181c;
+}
+.lbni-bar-coffee svg {
+  width: 16px;
+  height: 16px;
+}
+.lbni-bar-collapse,
+.lbni-bar-dismiss {
+  display: flex;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  padding: 6px;
+  border-radius: 50%;
+  color: #9ab;
+}
+/* Collapse arrow points up: the bar goes back up. */
+.lbni-bar-collapse svg {
+  transform: rotate(-90deg);
+}
+.lbni-bar-collapse:hover,
+.lbni-bar-dismiss:hover {
+  background: #456;
+  color: #fff;
+}
+@media (max-width: 760px) {
+  .lbni-bar-enjoy {
+    display: none;
+  }
+}
+@media (max-width: 640px) {
+  .lbni-bar-coffee span {
+    display: none;
+  }
+}
+
+/* ---- Large posters (film page): everything scales with the 40px corners ---- */
+/* Letterboxd's hover bar stays 28px tall at every poster size; grow it (and
+   the icons inside, including our clock) to match the corner buttons. */
+.lbni-large .overlay-actions {
+  transform: scale(1.4286); /* 40px / 28px */
+  transform-origin: 50% 100%;
+}
+.lbni-large > .lbni-badges {
+  top: 8px;
+  left: 8px;
+  gap: 6px;
+}
+.lbni-large > .lbni-badges > .lbni-badge {
+  width: 40px;
+  height: 40px;
+  padding: 8px;
+}
+.lbni-large > .lbni-badges > .lbni-badge-watchlist {
+  width: 36px;
+  height: 36px;
+  padding: 6px;
+  margin: 2px;
+}
+.lbni-large > .lbni-badges > .lbni-badge-num {
+  width: auto;
+  min-width: 40px;
+  gap: 3px;
+  padding: 0 12px 0 9px;
+  font-size: 17px;
+}
+.lbni-large > .lbni-badges > .lbni-badge-star {
+  padding: 9px;
+}
+.lbni-large > .lbni-rate {
+  left: 8px;
+  top: calc(8px + var(--lbni-rate-slot, 0) * 46px);
+  gap: 3px;
+  height: 40px;
+  padding: 0 12px 0 9px;
+  font-size: 17px;
+}
+.lbni-large > .lbni-rate svg {
+  width: 17px;
+  height: 17px;
+}
+.lbni-large.lbni-host:is(:hover, :has(:focus-visible)) > .lbni-rate {
+  top: 8px;
 }

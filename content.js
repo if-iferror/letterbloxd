@@ -58,6 +58,19 @@
   delete prefs.fadeLiked;
   delete prefs.fadeWatchlist;
   if (!MODES.includes(prefs.mode)) prefs.mode = "hide";
+  // Badges: "current" = icons (eye / heart, watchlist clock, rating pill),
+  // "ratings" = your rating number (green = seen, orange = liked), "none" = off.
+  const BADGE_STYLES = ["current", "ratings", "none"];
+  if (!BADGE_STYLES.includes(prefs.badgeStyle)) prefs.badgeStyle = prefs.indicators === false ? "none" : "current";
+  const setBadgeStyle = (style) => {
+    prefs.badgeStyle = style;
+    prefs.indicators = style !== "none";
+    savePrefs();
+  };
+  // Options that were only for trying looks out.
+  delete prefs.ratingLook;
+  delete prefs.ratingRing;
+  delete prefs.lastBadgeStyle;
   const savePrefs = () => writeJSON(PREFS_KEY, prefs);
 
   let USER = null; // set once the page is ready
@@ -214,7 +227,7 @@
         published: false,
         sharePolicy: "You",
         ranked: false,
-        description: "Films I'm not interested in. Managed by the Letternoxd extension.",
+        description: "Films I'm not interested in. Managed by the LetterBloxd extension.",
         entries: [{ film: film.lid }],
       });
       if (created.ok) {
@@ -368,15 +381,23 @@
 
   const POSTER_SELECTOR = "[data-component-class='LazyPoster'], .film-poster[data-film-slug]";
   const GRID_ITEM_SELECTOR = "li.posteritem, li.griditem, li.poster-container, li.film-detail, li.listitem";
+  // Other snug wrappers around a single poster: review tiles, reviews lists,
+  // the poster on a review page, the previous / next film links.
+  const LOOSE_HOST_SELECTOR =
+    "div.viewing-poster-container, article.viewing-poster-container, section.viewing-poster-container, div.film-prevnext";
 
-  // Grid cells only; overlapping poster stacks (list previews) are left alone.
+  // Grid cells (and similar); overlapping poster stacks (list previews), the
+  // poster pop-up and tiny thumbnails (the diary's 35px ones) are left alone.
   const gridItemOf = (poster) => {
-    const item = poster.closest(GRID_ITEM_SELECTOR);
+    if (poster.closest(".modal")) return null;
+    const w = Number(poster.getAttribute("data-image-width"));
+    if (w && w < 60) return null;
+    const item = poster.closest(GRID_ITEM_SELECTOR) || poster.closest(LOOSE_HOST_SELECTOR);
     return item && !item.closest(".-overlapped, .poster-list-overlapped, .poster-list-link") ? item : null;
   };
-  // Corner buttons also go on the big poster at the top of a film page.
-  const buttonHostOf = (poster) =>
-    gridItemOf(poster) || (!poster.closest(".modal") && poster.closest("section.poster-list.-single")) || null;
+  // The big poster at the top of a film page.
+  const singleHostOf = (poster) => (!poster.closest(".modal") && poster.closest("section.poster-list.-single")) || null;
+  const buttonHostOf = (poster) => gridItemOf(poster) || singleHostOf(poster);
 
   // Per-pass page facts (computed once per update instead of once per poster).
   const page = { filterMenu: false, ourList: false, watchedFade: false };
@@ -527,20 +548,31 @@
     '<path d="M12 3.2l2.6 5.6 6.1.7-4.5 4.2 1.2 6.1L12 16.8l-5.4 3 1.2-6.1-4.5-4.2 6.1-.7z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>'
   );
   const BADGE_ICON = { loved: ICON_HEART, seen: ICON_EYE, watchlist: ICON_CLOCK, "watchlist-faded": ICON_CLOCK };
+  // A rating as badge text: 4 or 3.5.
+  const ratingLabel = (rating) => (rating > 0 ? String(rating % 1 ? rating.toFixed(1) : rating) : "");
+  // One badge's markup. "num-seen" / "num-loved" show the rating number;
+  // "star-seen" / "star-loved" an outlined star; the rest an icon.
+  const badgeHTML = (rating) => (k) => {
+    const [type, tone] = k.split("-");
+    // A small white outlined star, then the rating in white.
+    if (type === "num")
+      return `<span class="${NS}-badge ${NS}-badge-num ${NS}-badge-${tone}">${ICON_STAR}<span class="${NS}-num">${ratingLabel(rating)}</span></span>`;
+    if (type === "star") return `<span class="${NS}-badge ${NS}-badge-star ${NS}-badge-${tone}">${ICON_STAR}</span>`;
+    return `<span class="${NS}-badge ${NS}-badge-${k}">${BADGE_ICON[k]}</span>`;
+  };
 
   // ================================================================ applying state to a poster
   function applyTo(poster) {
-    const item = gridItemOf(poster);
+    const grid = gridItemOf(poster);
+    const item = grid || singleHostOf(poster);
     const film = filmIdentity(poster);
-    if (!item) {
-      // Big film-page poster: just keep its ⃠ in step.
-      return;
-    }
+    if (!item) return;
     const st = statusOf(poster, film);
     if (noteBlock(film.lid, st) && isNotInterested(film)) autoUndo(film);
 
     const marked = isNotInterested(film);
-    const filtering = page.filterMenu && !page.ourList;
+    // The big film-page poster gets badges and buttons but is never filtered.
+    const filtering = !!grid && page.filterMenu && !page.ourList;
     const active = marked && filtering; // a not-interested film being filtered
     const F = prefs.filters;
     const byStatus = (mode, has) => (mode === "hide" && has) || (mode === "only" && !has);
@@ -555,7 +587,8 @@
     // Fade = exactly Letterboxd's "Fade watched films": 20% until hovered.
     item.classList.toggle(`${NS}-faded`, active && prefs.mode === "fade");
 
-    const on = prefs.indicators;
+    const style = prefs.badgeStyle;
+    const on = style !== "none";
     const niShown = active && (prefs.mode === "fade" || prefs.mode === "show");
 
     // Coloured fades (one layer, straight toward a dark tint): watched → green,
@@ -585,14 +618,21 @@
       ind.dataset.strength = kind === "ni" && prefs.mode === "fade" ? "strong" : "soft";
     } else ind?.remove();
 
-    // Badges, top-left: heart / eye, then the watchlist clock.
+    // Badges, top-left.
+    //   current: heart (liked) or eye (seen), then the watchlist clock.
+    //   ratings: your rating number, or an outlined star if seen but unrated,
+    //            orange if liked, green if seen; then the watchlist clock.
     const wlFaded = tint === "watchlist";
     const badges = [];
+    const seen = st.watched || st.liked || st.rating > 0;
     if (!active && on) {
-      if (st.liked) badges.push("loved");
+      if (style === "ratings") {
+        if (seen) badges.push(st.rating > 0 ? `num-${st.liked ? "loved" : "seen"}` : `star-${st.liked ? "loved" : "seen"}`);
+      } else if (st.liked) badges.push("loved");
       else if (st.watched) badges.push("seen");
       if (st.inWatchlist) badges.push(wlFaded ? "watchlist-faded" : "watchlist");
     }
+    const ratingText = st.rating > 0 ? String(st.rating % 1 ? st.rating.toFixed(1) : st.rating) : "";
     let wrap = item.querySelector(`:scope > .${NS}-badges`);
     if (badges.length) {
       if (!wrap) {
@@ -601,10 +641,10 @@
         wrap.setAttribute("aria-hidden", "true");
         item.append(wrap);
       }
-      const key = badges.join(",");
+      const key = badges.join(",") + "|" + ratingText;
       if (wrap.dataset.key !== key) {
         wrap.dataset.key = key;
-        wrap.innerHTML = badges.map((k) => `<span class="${NS}-badge ${NS}-badge-${k}">${BADGE_ICON[k]}</span>`).join("");
+        wrap.innerHTML = badges.map(badgeHTML(st.rating)).join("");
       }
     } else wrap?.remove();
 
@@ -621,8 +661,10 @@
     // Rating pill. It replaces the "…" button (both open the same menu, which
     // is where you rate): "☆ 3.5" if rated, "☆ Rate" if seen but unrated, the
     // plain "…" otherwise. A rating also sits under the badges when not hovered.
-    const rateText = st.rating > 0 ? String(st.rating % 1 ? st.rating.toFixed(1) : st.rating) : st.watched ? "Rate" : "";
-    const showRating = !active && !!rateText;
+    // (Not in the "ratings" style: the badge already shows the rating, and on
+    // hover the corner is just the "…".)
+    const rateText = ratingText || (st.watched ? "Rate" : "");
+    const showRating = !active && !!rateText && style === "current";
     let rate = item.querySelector(`:scope > .${NS}-rate`);
     if (showRating) {
       if (!rate) {
@@ -638,7 +680,7 @@
         rate.setAttribute("aria-label", rate.title);
       }
       rate.classList.toggle(`${NS}-rate-empty`, !(st.rating > 0));
-      rate.classList.toggle(`${NS}-rate-resting`, on && st.rating > 0);
+      rate.classList.remove(`${NS}-rate-resting`); // only shown on hover, in place of the "…"
       rate.style.setProperty("--lbni-rate-slot", String(badges.length));
     } else rate?.remove();
     item.classList.toggle(`${NS}-has-rate`, showRating);
@@ -648,7 +690,7 @@
     // Keep this poster's buttons in step.
     const ni = item.querySelector(`:scope > .${NS}-btn-ni`);
     if (ni) setNiButton(ni, marked);
-    const wl = item.querySelector(`:scope > .${NS}-btn-wl`);
+    const wl = wlButtonOf(item);
     if (wl) setWlButton(wl, st.inWatchlist);
   }
 
@@ -660,7 +702,7 @@
     });
     decoratePanel();
     updatePanelStatus();
-    // Buttons outside grid cells (film-page poster, "Nah").
+    // Buttons outside grid cells (film-page poster, "Block").
     document.querySelectorAll(`section.poster-list.-single > .${NS}-btn-ni, .${NS}-panel-ni`).forEach((b) => {
       setNiButton(b, isNotInterested(filmFromEl(b)));
     });
@@ -704,7 +746,7 @@
     if (b.classList.contains(`${NS}-panel-ni`)) {
       // Beside Watch / Like / Watchlist it's one short word so it never wraps.
       b.querySelector(`.${NS}-panel-label`).textContent = b.classList.contains(`${NS}-inrow`)
-        ? "Nah"
+        ? "Block"
         : on
         ? "Not interested ✓"
         : "Not interested";
@@ -745,8 +787,10 @@
     if (width && width < 100) item.classList.add(`${NS}-small`);
     if (width >= 200) item.classList.add(`${NS}-large`);
     item.append(wl, ni);
+    item._lbniWl = wl; // it may move into Letterboxd's hover bar (see swapIntoBar)
 
-    if (gridItemOf(poster)) {
+    {
+      // "…": shown on hover once Letterboxd's hover bar is there (see swapIntoBar).
       const more = document.createElement("button");
       more.type = "button";
       more.className = `${NS}-corner ${NS}-btn-more`;
@@ -765,19 +809,25 @@
     }
   }
 
-  // Put the watchlist button exactly where Letterboxd's "…" sits in its hover
-  // bar (that "…" is hidden; ours in the top-left opens it).
+  // The watchlist button, wherever it currently is (in the item, or inside
+  // Letterboxd's hover bar).
+  const wlButtonOf = (item) => item._lbniWl || item.querySelector(`.${NS}-btn-wl`);
+
+  // Put the watchlist button INSIDE Letterboxd's hover bar, exactly where its
+  // "…" sits (that "…" is hidden; ours in the top-left opens it). Being part
+  // of the bar means hovering it keeps the bar open, just like the eye and
+  // heart: Letterboxd hides the bar as soon as the pointer leaves the poster.
   function swapIntoBar(item) {
-    const link = item.querySelector(".overlay-actions .menu-link");
-    const wl = item.querySelector(`:scope > .${NS}-btn-wl`);
+    const bar = item.querySelector(".overlay-actions");
+    const link = bar?.querySelector(".menu-link");
+    const wl = wlButtonOf(item);
     if (!link || !wl) return false;
-    const lr = link.getBoundingClientRect();
-    if (!lr.width || !lr.height) return false;
-    const ir = item.getBoundingClientRect();
-    wl.style.left = `${lr.left - ir.left}px`;
-    wl.style.top = `${lr.top - ir.top}px`;
-    wl.style.width = `${lr.width}px`;
-    wl.style.height = `${lr.height}px`;
+    if (wl.parentElement !== bar) bar.append(wl); // also re-adds it if Letterboxd redrew the bar
+    if (!link.offsetWidth || !link.offsetHeight) return false; // bar still hidden; try again shortly
+    wl.style.left = `${link.offsetLeft}px`;
+    wl.style.top = `${link.offsetTop}px`;
+    wl.style.width = `${link.offsetWidth}px`;
+    wl.style.height = `${link.offsetHeight}px`;
     item.classList.add(`${NS}-swap`);
     return true;
   }
@@ -791,7 +841,7 @@
   }
 
   // ================================================================ film page sidebar
-  // "Nah" beside Watch / Like / Watchlist (that row becomes four columns).
+  // "Block" beside Watch / Like / Watchlist (that row becomes four columns).
   function decoratePanel() {
     const panel = document.querySelector("#userpanel ul.js-actions-panel");
     if (!panel || panel.querySelector(`.${NS}-panel-row`)) return;
@@ -878,7 +928,7 @@
     watchlistState.set(lid, state);
     document.querySelectorAll(`.${NS}-btn-wl[data-lid='${CSS.escape(lid)}']`).forEach((b) => {
       setWlButton(b, state);
-      b.parentElement?.querySelector("[data-in-watchlist]")?.setAttribute("data-in-watchlist", String(state));
+      (b.closest(GRID_ITEM_SELECTOR) || b.parentElement)?.querySelector("[data-in-watchlist]")?.setAttribute("data-in-watchlist", String(state));
     });
   }
 
@@ -997,7 +1047,7 @@
     if (input && window.jQuery && input.checked !== on) window.jQuery(input).prop("checked", on).trigger("change");
   }
 
-  const LABELS = { show: "Show", fade: "Fade", hide: "Hide", only: "Only", on: "On", off: "Off" };
+  const LABELS = { show: "Show", fade: "Fade", hide: "Hide", only: "Only", on: "On", off: "Off", current: "Icons", ratings: "Ratings", none: "Off" };
 
   // Each row: which choices it offers, how to read its state, how to set it.
   function nativeRow(label, cat, { fade } = {}) {
@@ -1045,13 +1095,10 @@
   function buildRows() {
     const account = [
       {
-        label: "Status badges",
-        options: ["on", "off"],
-        get: () => (prefs.indicators ? "on" : "off"),
-        set: (v) => {
-          prefs.indicators = v === "on";
-          savePrefs();
-        },
+        label: "Badges",
+        options: ["current", "ratings", "none"],
+        get: () => prefs.badgeStyle,
+        set: (v) => setBadgeStyle(v),
       },
       "divider",
       localRow("Watched", "watched", "watched"),
@@ -1140,7 +1187,7 @@
     } catch (err) {
       menu.querySelectorAll(`.${NS}-row`).forEach((r) => r.remove());
       menu.classList.remove(`${NS}-compact`);
-      console.warn("[Letternoxd] couldn't build the compact filter menu", err);
+      console.warn("[LetterBloxd] couldn't build the compact filter menu", err);
     }
     renderMenu();
   }
@@ -1152,6 +1199,106 @@
         b.setAttribute("aria-checked", String(b.dataset.value === value));
       });
     });
+  }
+
+  // ================================================================ feedback & coffee bar
+  // A small tab hanging from the top of the window (top right). It drops down
+  // a full-width bar with a feedback box and a "Buy me a coffee" link. It pops open on
+  // its own now and then (at most once a week, never in the first few days);
+  // the × stops that for good, but the tab always stays.
+  const BAR_KEY = `${NS}:bar`;
+  const FEEDBACK_KEY = `${NS}:feedback-outbox`;
+  const COFFEE_URL = "https://www.buymeacoffee.com/"; // TODO: real link
+  const BAR_GRACE_MS = 3 * 864e5; // no pop-ups in the first 3 days
+  const BAR_EVERY_MS = 7 * 864e5; // then at most once a week
+  const barState = { installedAt: 0, lastAuto: 0, noAuto: false, open: false, ...readJSON(BAR_KEY, {}) };
+  if (!barState.installedAt) barState.installedAt = Date.now();
+  const saveBar = () => writeJSON(BAR_KEY, barState);
+  const ICON_CUP = svg(
+    "0 0 24 24",
+    '<path d="M4 9h12v5.5A4.5 4.5 0 0 1 11.5 19h-3A4.5 4.5 0 0 1 4 14.5z" fill="currentColor"/><path d="M16 10.5h1.6a2.4 2.4 0 0 1 0 4.8H16" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8 3.5c-.7.9-.7 1.8 0 2.7M11.5 3.5c-.7.9-.7 1.8 0 2.7" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>'
+  );
+  const ICON_MEGAPHONE = svg(
+    "0 0 24 24",
+    '<path d="M3.5 10.2v3.6a1 1 0 0 0 1 1h2.1l1.3 4.3a1 1 0 0 0 1 .7h1.2a.8.8 0 0 0 .8-1l-1.1-4h.6l7.1 3.6V5.6L9.4 9.2H4.5a1 1 0 0 0-1 1z" fill="currentColor"/>' +
+      '<path d="M20.2 9.6v4.8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>'
+  );
+  const THANKS = [
+    "Got it. Thank you!",
+    "Received. Pinned to the fridge.",
+    "Noted. Insults are filed under “motivation”.",
+    "Thanks! A real human will read this.",
+  ];
+  let barEl = null;
+
+  // Off in releases until feedback is sent somewhere and the coffee link is real.
+  const FEEDBACK_BAR = false;
+  function injectBar() {
+    if (!FEEDBACK_BAR || barEl || !document.body) return;
+    const now = Date.now();
+    if (!barState.noAuto && now - barState.installedAt > BAR_GRACE_MS && now - (barState.lastAuto || 0) > BAR_EVERY_MS) {
+      barState.lastAuto = now;
+      barState.open = true;
+    }
+    saveBar();
+
+    barEl = document.createElement("aside");
+    barEl.className = `${NS}-bar`;
+    barEl.setAttribute("aria-label", "LetterBloxd feedback");
+    barEl.innerHTML =
+      `<button type="button" class="${NS}-bar-tab" aria-expanded="false" title="Feedback &amp; coffee">${ICON_MEGAPHONE}</button>` +
+      `<div class="${NS}-bar-body">` +
+      `<button type="button" class="${NS}-bar-collapse" title="Hide" aria-label="Hide">${svg("0 0 24 24", '<path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>')}</button>` +
+      `<span class="${NS}-bar-enjoy">Enjoying LetterBloxd?</span>` +
+      `<a class="${NS}-bar-coffee" href="${COFFEE_URL}" target="_blank" rel="noopener noreferrer">${ICON_CUP}<span>Buy me a coffee</span></a>` +
+      `<span class="${NS}-bar-spacer"></span>` +
+      `<form class="${NS}-bar-form"><input class="${NS}-bar-input" type="text" maxlength="2000" autocomplete="off" ` +
+      `placeholder="Feedback? Suggestions? Insults? Type here and hit enter!" aria-label="Send feedback about LetterBloxd"></form>` +
+      `<button type="button" class="${NS}-bar-dismiss" title="Hide, and don't pop open on its own again (the tab stays)" aria-label="Hide and don't pop open again">${svg("0 0 24 24", '<path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>')}</button>` +
+      `</div>`;
+
+    const input = barEl.querySelector(`.${NS}-bar-input`);
+    barEl.querySelector(`.${NS}-bar-tab`).addEventListener("click", () => setBarOpen(true, true));
+    barEl.querySelector(`.${NS}-bar-collapse`).addEventListener("click", () => setBarOpen(false));
+    barEl.querySelector(`.${NS}-bar-dismiss`).addEventListener("click", () => {
+      barState.noAuto = true;
+      setBarOpen(false);
+    });
+    // Keep Letterboxd's keyboard shortcuts out of the text box.
+    input.addEventListener("keydown", (e) => e.stopPropagation());
+    input.addEventListener("keyup", (e) => e.stopPropagation());
+    input.addEventListener("keypress", (e) => e.stopPropagation());
+    barEl.querySelector(`.${NS}-bar-form`).addEventListener("submit", (e) => {
+      e.preventDefault();
+      const text = input.value.trim();
+      if (!text) return;
+      sendFeedback(text);
+      input.value = "";
+      const was = input.placeholder;
+      input.placeholder = THANKS[Math.floor(Math.random() * THANKS.length)];
+      input.blur();
+      setTimeout(() => (input.placeholder = was), 4000);
+    });
+    document.body.append(barEl);
+    setBarOpen(barState.open);
+  }
+
+  function setBarOpen(open, focus = false) {
+    barState.open = open;
+    saveBar();
+    if (!barEl) return;
+    barEl.dataset.open = String(open);
+    barEl.querySelector(`.${NS}-bar-tab`).setAttribute("aria-expanded", String(open));
+    if (open && focus) barEl.querySelector(`.${NS}-bar-input`).focus();
+  }
+
+  // TODO: send somewhere real. For now feedback is kept in this browser only
+  // (localStorage), so nothing leaves your computer.
+  function sendFeedback(text) {
+    const box = readJSON(FEEDBACK_KEY, []);
+    box.push({ at: new Date().toISOString(), page: location.pathname, text });
+    writeJSON(FEEDBACK_KEY, box.slice(-50));
+    console.info("[LetterBloxd] feedback (kept locally for now):", text);
   }
 
   // ================================================================ "N hidden" note
@@ -1208,7 +1355,7 @@
       }
     });
   }
-  const OWN = `.${NS}-ind, .${NS}-ring, .${NS}-corner, .${NS}-badges, .${NS}-rate, .${NS}-panel-ni, .${NS}-note`;
+  const OWN = `.${NS}-ind, .${NS}-ring, .${NS}-corner, .${NS}-badges, .${NS}-rate, .${NS}-panel-ni, .${NS}-note, .${NS}-bar`;
 
   const observer = new MutationObserver((mutations) => {
     for (const m of mutations) {
@@ -1316,6 +1463,7 @@
     // Our Watched row replaces Letterboxd's "Fade watched films" switch.
     if (watchedFadeOn()) setWatchedFade(false);
     injectMenu();
+    injectBar();
     applyAll();
     observer.observe(document.body, {
       childList: true,
