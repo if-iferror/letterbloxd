@@ -2863,7 +2863,7 @@
     if (sp && !sp.hidden && !e.target.closest(".lbs-sortpick") && e.target !== wall.canvas) sp.hidden = true;
     const row = e.target.closest(".lbs-row");
     if (row && !e.target.closest("a, button")) return selectRow(row, e);
-    const btn = e.target.closest("[data-act], [data-coll], [data-scope], [data-view]");
+    const btn = e.target.closest("[data-act], [data-coll], [data-scope], [data-view], [data-mode]");
     if (!btn || !root.contains(btn)) return;
     if (btn.dataset.coll) {
       if (btn.getAttribute("aria-disabled") === "true") return;
@@ -2879,7 +2879,7 @@
     }
     if (btn.dataset.mode) {
       desk.mode = btn.dataset.mode;
-      return renderFilms();
+      return renderDesk();
     }
     if (btn.dataset.view) {
       mine.view = btn.dataset.view;
