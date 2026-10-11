@@ -227,7 +227,7 @@
         published: false,
         sharePolicy: "You",
         ranked: false,
-        description: "Films I'm not interested in. Managed by the Letternoxd extension.",
+        description: "Films I'm not interested in. Managed by the LetterBloxd extension.",
         entries: [{ film: film.lid }],
       });
       if (created.ok) {
@@ -702,7 +702,7 @@
     });
     decoratePanel();
     updatePanelStatus();
-    // Buttons outside grid cells (film-page poster, "Nah").
+    // Buttons outside grid cells (film-page poster, "Block").
     document.querySelectorAll(`section.poster-list.-single > .${NS}-btn-ni, .${NS}-panel-ni`).forEach((b) => {
       setNiButton(b, isNotInterested(filmFromEl(b)));
     });
@@ -746,7 +746,7 @@
     if (b.classList.contains(`${NS}-panel-ni`)) {
       // Beside Watch / Like / Watchlist it's one short word so it never wraps.
       b.querySelector(`.${NS}-panel-label`).textContent = b.classList.contains(`${NS}-inrow`)
-        ? "Nah"
+        ? "Block"
         : on
         ? "Not interested ✓"
         : "Not interested";
@@ -841,7 +841,7 @@
   }
 
   // ================================================================ film page sidebar
-  // "Nah" beside Watch / Like / Watchlist (that row becomes four columns).
+  // "Block" beside Watch / Like / Watchlist (that row becomes four columns).
   function decoratePanel() {
     const panel = document.querySelector("#userpanel ul.js-actions-panel");
     if (!panel || panel.querySelector(`.${NS}-panel-row`)) return;
@@ -1187,7 +1187,7 @@
     } catch (err) {
       menu.querySelectorAll(`.${NS}-row`).forEach((r) => r.remove());
       menu.classList.remove(`${NS}-compact`);
-      console.warn("[Letternoxd] couldn't build the compact filter menu", err);
+      console.warn("[LetterBloxd] couldn't build the compact filter menu", err);
     }
     renderMenu();
   }
@@ -1231,8 +1231,10 @@
   ];
   let barEl = null;
 
+  // Off in releases until feedback is sent somewhere and the coffee link is real.
+  const FEEDBACK_BAR = true; // dev: on (release builds set this false)
   function injectBar() {
-    if (barEl || !document.body) return;
+    if (!FEEDBACK_BAR || barEl || !document.body) return;
     const now = Date.now();
     if (!barState.noAuto && now - barState.installedAt > BAR_GRACE_MS && now - (barState.lastAuto || 0) > BAR_EVERY_MS) {
       barState.lastAuto = now;
@@ -1242,16 +1244,16 @@
 
     barEl = document.createElement("aside");
     barEl.className = `${NS}-bar`;
-    barEl.setAttribute("aria-label", "Letternoxd feedback");
+    barEl.setAttribute("aria-label", "LetterBloxd feedback");
     barEl.innerHTML =
       `<button type="button" class="${NS}-bar-tab" aria-expanded="false" title="Feedback &amp; coffee">${ICON_MEGAPHONE}</button>` +
       `<div class="${NS}-bar-body">` +
       `<button type="button" class="${NS}-bar-collapse" title="Hide" aria-label="Hide">${svg("0 0 24 24", '<path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>')}</button>` +
-      `<span class="${NS}-bar-enjoy">Enjoying letternøxd?</span>` +
+      `<span class="${NS}-bar-enjoy">Enjoying LetterBloxd?</span>` +
       `<a class="${NS}-bar-coffee" href="${COFFEE_URL}" target="_blank" rel="noopener noreferrer">${ICON_CUP}<span>Buy me a coffee</span></a>` +
       `<span class="${NS}-bar-spacer"></span>` +
       `<form class="${NS}-bar-form"><input class="${NS}-bar-input" type="text" maxlength="2000" autocomplete="off" ` +
-      `placeholder="Feedback? Suggestions? Insults? Type here and hit enter!" aria-label="Send feedback about Letternoxd"></form>` +
+      `placeholder="Feedback? Suggestions? Insults? Type here and hit enter!" aria-label="Send feedback about LetterBloxd"></form>` +
       `<button type="button" class="${NS}-bar-dismiss" title="Hide, and don't pop open on its own again (the tab stays)" aria-label="Hide and don't pop open again">${svg("0 0 24 24", '<path d="M6 6l12 12M18 6L6 18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>')}</button>` +
       `</div>`;
 
@@ -1296,7 +1298,7 @@
     const box = readJSON(FEEDBACK_KEY, []);
     box.push({ at: new Date().toISOString(), page: location.pathname, text });
     writeJSON(FEEDBACK_KEY, box.slice(-50));
-    console.info("[Letternoxd] feedback (kept locally for now):", text);
+    console.info("[LetterBloxd] feedback (kept locally for now):", text);
   }
 
   // ================================================================ "N hidden" note

@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
-  "name": "Letternoxd — Not Interested for Letterboxd",
-  "short_name": "Letternoxd",
-  "version": "1.2.1",
-  "description": "Unofficial. Adds a Not interested filter, status badges and a one-click watchlist button to Letterboxd.",
+  "name": "LetterBloxd — Block films on Letterboxd",
+  "short_name": "LetterBloxd",
+  "version": "1.3.0",
+  "description": "Unofficial. Block films you'll never watch, see status badges and add to your watchlist in one click on Letterboxd.",
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
@@ -26,7 +26,7 @@
   ],
   "browser_specific_settings": {
     "gecko": {
-      "id": "letternoxd@if-iferror",
+      "id": "letterbloxd@if-iferror",
       "strict_min_version": "128.0",
       "data_collection_permissions": {
         "required": [
