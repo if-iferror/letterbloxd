@@ -2190,6 +2190,7 @@ html.lbs-open {
   gap: 6px;
 }
 .lbs-flogos button {
+  background: repeating-conic-gradient(#4a535d 0 25%, #3b434c 0 50%) 0 0 / 14px 14px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2329,6 +2330,7 @@ html.lbs-open {
 }
 .lbs-browsing .lbs-pocket-tab {
   all: unset;
+  margin: 0 auto;
   display: inline-flex;
   align-items: center;
   gap: 6px;

@@ -2406,7 +2406,8 @@
     if (!v || !ui.film) return;
     const { slug, name } = ui.film;
     const y = yearOf(name), path = whereIs(slug);
-    det = det || {};
+    if (det) ui.film.det = det;
+    det = ui.film.det || {};
     const e = logoEntry(slug);
     let pane = "";
     if (ui.pane === "edit") {
@@ -2417,7 +2418,7 @@
         `<label class="lbs-fcolor">Case colour <input type="color" class="lbs-f-color" value="#${own ? own.slice(0, 6) : "2c3440"}" data-slug="${esc(slug)}">` +
         (mine.colors[slug] ? `<button type="button" data-act="f-color-reset" data-slug="${esc(slug)}">Use the poster's colour</button>` : "") + `</label>` +
         `<div class="lbs-flogos">` +
-        (e && e.length > 1 ? e.slice(1).map((pth, n) => `<button type="button" data-act="logo-pick" data-slug="${esc(slug)}" data-n="${n}" class="${cur === n ? "-on" : ""}" style="background:#${own ? own.slice(0, 6) : "2c3440"}"><img src="${TMDB_IMG}w185/${esc(pth)}" alt="Logo ${n + 1}"></button>`).join("") : "") +
+        (e && e.length > 1 ? e.slice(1).map((pth, n) => `<button type="button" data-act="logo-pick" data-slug="${esc(slug)}" data-n="${n}" class="${cur === n ? "-on" : ""}"><img src="${TMDB_IMG}w185/${esc(pth)}" alt="Logo ${n + 1}"></button>`).join("") : "") +
         `<button type="button" data-act="logo-pick" data-slug="${esc(slug)}" data-n="-1" class="-plain${cur === -1 ? " -on" : ""}">Plain title</button>` +
         `</div>` +
         (e && e[0] ? `<a class="lbs-fmore" href="https://www.themoviedb.org/movie/${e[0]}/images/logos" target="_blank" rel="noopener">Upload more on TMDB ↗</a>` : "") +
@@ -2431,7 +2432,7 @@
       `<h2>${esc(titleOf(name))} <span>${y || ""}</span></h2>` +
       `<p class="lbs-fmeta">${[det.director && `Directed by <b>${esc(det.director)}</b>`, det.runtime && `${det.runtime} min`, det.rating && `★ ${esc(det.rating)}`, caseName(y)].filter(Boolean).join(" · ")}</p>` +
       (det.tagline ? `<p class="lbs-ftag">${esc(det.tagline)}</p>` : "") +
-      (det.synopsis ? `<p class="lbs-fsyn">${esc(det.synopsis)}</p>` : det.director === undefined ? `<p class="lbs-fsyn -wait">Loading details…</p>` : "") +
+      (det.synopsis ? `<p class="lbs-fsyn">${esc(det.synopsis)}</p>` : !ui.film.det ? `<p class="lbs-fsyn -wait">Loading details…</p>` : "") +
       (det.cast && det.cast.length ? `<p class="lbs-fcast">With ${det.cast.map(esc).join(", ")}</p>` : "") +
       `<p class="lbs-fwhere">${path ? `On the shelf in <b>${path.map(esc).join(" › ")}</b>` : "Not in the store yet"}</p>` +
       filmActs(slug, name) +
@@ -3287,7 +3288,7 @@
       if (act === "f-hold") { holdFilms([[fs, fn]]); ui.pocket = true; renderPocket(); return toast(`‘${titleOf(fn)}’ is in your inventory.`); }
       if (act === "f-jump") return jumpTo(fs, fn);
       if (act === "f-edit") { if (!ui.film || ui.film.slug !== fs) { ui.film = { slug: fs, name: fn }; filmDetails(fs).then((d) => ui.film && ui.film.slug === fs && renderFilm(d)); } ui.pane = ui.pane === "edit" ? null : "edit"; return renderFilm(); }
-      if (act === "f-sort") return openSort(fs, fn);
+      if (act === "f-sort") { closeFilm(); $(".lbs-card", root).hidden = true; return openSort(fs, fn); }
       if (act === "f-return") { releaseFilm(fs); renderPocket(); drawSoon(); return toast(`‘${titleOf(fn)}’ is back on the shelf.`); }
       if (act === "f-color-reset") { delete mine.colors[fs]; saveMine(); drawSoon(); return renderFilm(); }
       if (act === "pocket") { ui.pocket = !ui.pocket; return renderPocket(); }
