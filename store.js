@@ -258,6 +258,54 @@
   let lib = null; // built from stock + mine; see buildLibrary()
   let defaults = null; // slug -> sub id, the house placement
 
+  /* ---------------- the house plan (moderator edits) ----------------
+   * Everything a moderator changes about the community layout: names, new and
+   * deleted folders, where films sit, the order of sections on the wall, and
+   * each section's shape. Published as a static file (data/house-horror.json).
+   * A moderator's unpublished edits stay in this browser until downloaded. */
+  const HOUSE_KEY = `${NS}:store:house:v1`;
+  const HOUSE_FILE = "https://raw.githubusercontent.com/if-iferror/letterbloxd/dev/data/house-horror.json";
+  const blankHouse = () => ({ v: 1, names: {}, hidden: [], cats: {}, subs: {}, place: {}, order: [], subOrder: {}, shape: {} });
+  const fullHouse = (x) => ({ ...blankHouse(), ...(x || {}) });
+  let houseShared = null;
+  let houseLocal = readJSON(HOUSE_KEY, null);
+  const house = () => fullHouse(houseLocal || houseShared);
+  const edit = { on: false, sel: null, renaming: null, deleting: null, undo: [] };
+  const isFixed = (id) => !id || lib.genres.has(id) || /\/(rest|general)$/.test(id);
+  const slugify = (name) => name.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "folder";
+  function freshId(base) {
+    let id = base;
+    for (let n = 2; lib.cats.has(id) || lib.subs.has(id) || house().cats[id] || house().subs[id]; n++) id = `${base}-${n}`;
+    return id;
+  }
+
+  function loadSharedHouse() {
+    if (houseShared) return;
+    houseShared = blankHouse();
+    fetch(HOUSE_FILE, { cache: "no-cache" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (j) { houseShared = fullHouse(j); if (!houseLocal && root && !root.hidden && stock) refresh(); } })
+      .catch(() => {});
+  }
+
+  // Every edit goes through here: snapshot for undo, apply, save, redraw.
+  function houseEdit(label, fn) {
+    edit.undo.push(JSON.stringify(houseLocal));
+    if (edit.undo.length > 60) edit.undo.shift();
+    houseLocal = fullHouse(JSON.parse(JSON.stringify(house())));
+    fn(houseLocal);
+    writeJSON(HOUSE_KEY, houseLocal);
+    refresh();
+    if (label) toast(label, undoHouse);
+  }
+  function undoHouse() {
+    if (!edit.undo.length) return;
+    houseLocal = JSON.parse(edit.undo.pop());
+    if (houseLocal) writeJSON(HOUSE_KEY, houseLocal);
+    else try { localStorage.removeItem(HOUSE_KEY); } catch {}
+    refresh();
+  }
+
   // The house placement for every stocked film: aisle, then the first shelf
   // rule it matches (rules with fewer than MIN_SHELF films fall through).
   function houseDefaults() {
@@ -302,22 +350,59 @@
       addCat({ id, genre: STOCKED, name: a.name, aisle: a, order: a === EVERYTHING ? 2 : 1 });
       for (const r of SHELF_RULES) addSub({ id: `${id}/${r.id}`, cat: id, name: r.name(a), order: r.order });
     }
+    const H = house();
+    for (const [id, c] of Object.entries(H.cats)) if (genres.has(c.genre) && !cats.has(id)) addCat({ id, genre: c.genre, name: c.name, house: true, order: 1 });
     for (const [id, c] of Object.entries(mine.cats)) if (genres.has(c.genre) && !cats.has(id)) addCat({ id, genre: c.genre, name: c.name, own: true, order: 1 });
     for (const c of cats.values()) addSub({ id: `${c.id}/general`, cat: c.id, name: "General", order: 99 });
+    for (const [id, s] of Object.entries(H.subs)) if (cats.has(s.cat) && !subs.has(id)) addSub({ id, cat: s.cat, name: s.name, house: true, order: 50 });
     for (const [id, s] of Object.entries(mine.subs)) if (cats.has(s.cat) && !subs.has(id)) addSub({ id, cat: s.cat, name: s.name, own: true, order: 50 });
+    // Deleted folders (never a genre, "Everything Else" or "General").
+    for (const id of H.hidden) {
+      if (genres.has(id) || /\/(rest|general)$/.test(id)) continue;
+      if (cats.has(id)) {
+        const c = cats.get(id);
+        for (const sid of c.subs) subs.delete(sid);
+        cats.delete(id);
+        const g = genres.get(c.genre);
+        g.cats = g.cats.filter((x) => x !== id);
+      } else if (subs.has(id)) {
+        const sc = subs.get(id);
+        subs.delete(id);
+        const c = cats.get(sc.cat);
+        if (c) c.subs = c.subs.filter((x) => x !== id);
+      }
+    }
+    for (const [id, n] of Object.entries(H.names)) { const o = genres.get(id) || cats.get(id) || subs.get(id); if (o && n) o.name = n; }
 
     // Where every known film sits in the current view.
     const names = new Map(stock.films.map(([slug, name]) => [slug, name]));
     const place = new Map(defaults);
-    if (mine.view === "mine") {
+    for (const [slug, v] of Object.entries(H.place)) {
+      const [sub, name] = Array.isArray(v) ? v : [v];
+      place.set(slug, sub);
+      if (name && !names.has(slug)) names.set(slug, name);
+    }
+    if (mine.view === "mine" && !edit.on) {
       for (const [slug, [sub, name]] of Object.entries(mine.place)) {
         if (!subs.has(sub)) continue;
         place.set(slug, sub);
         if (!names.has(slug)) names.set(slug, name);
       }
     }
+    // A film whose folder was deleted drops one level: to its category's
+    // General, or to the genre's Everything Else.
+    const home = (sub) => {
+      if (subs.has(sub)) return sub;
+      const parts = String(sub).split("/");
+      const cat = parts.slice(0, 2).join("/");
+      return cats.has(cat) ? `${cat}/general` : `${parts[0]}/rest/general`;
+    };
     const inSub = new Map([...subs.keys()].map((k) => [k, []]));
-    for (const [slug, sub] of place) inSub.get(sub)?.push([slug, names.get(slug) || slug]);
+    for (const [slug, sub] of place) {
+      const at = home(sub);
+      if (at !== sub) place.set(slug, at);
+      inSub.get(at)?.push([slug, names.get(slug) || slug]);
+    }
     for (const list of inSub.values()) list.sort(byTitle);
 
     const count = new Map();
@@ -330,7 +415,21 @@
     }
     const byName = (map) => (a, b) => (map.get(a).order || 1) - (map.get(b).order || 1) || collator.compare(map.get(a).name, map.get(b).name);
     for (const g of genres.values()) g.cats.sort(byName(cats));
-    for (const c of cats.values()) c.subs.sort(byName(subs));
+    // The stocked genre lists its categories in wall order: the house order,
+    // then the built-in order, own sections just before Everything Else.
+    const wallKey = (id) => {
+      const i = H.order.indexOf(id);
+      if (i >= 0) return i;
+      const w = WALL_ORDER.indexOf(id.split("/")[1]);
+      return 1000 + (w >= 0 ? w : WALL_ORDER.length - 1.5);
+    };
+    genres.get(STOCKED).cats.sort((a, b) => wallKey(a) - wallKey(b));
+    for (const g of genres.values()) if (g.id !== STOCKED && g.cats.some((c) => H.order.includes(c))) g.cats.sort((a, b) => wallKey(a) - wallKey(b));
+    for (const c of cats.values()) {
+      const o = H.subOrder[c.id];
+      const k = (id) => { const i = o ? o.indexOf(id) : -1; return i < 0 ? 1e6 : i; };
+      c.subs.sort((a, b) => k(a) - k(b) || byName(subs)(a, b));
+    }
     const rank = (lib && lib.rank) || new Map(stock.films.map(([slug], i) => [slug, i]));
     lib = { genres, cats, subs, place, names, inSub, count, rank };
     return lib;
@@ -461,6 +560,12 @@
       root.addEventListener("dragleave", onDragLeave);
       root.addEventListener("drop", onDrop);
       root.addEventListener("contextmenu", onContextMenu);
+      root.addEventListener("dblclick", (e) => {
+        const row = edit.on && e.target.closest(".lbs-folder");
+        if (!row || isFixed(row.dataset.id)) return;
+        edit.renaming = row.dataset.id;
+        renderFolders();
+      });
     }
     document.documentElement.classList.add("lbs-open");
     if (root.hidden || !root.firstChild) {
@@ -498,6 +603,7 @@
         `${c.name} <span>${fmt(c.id === "main" ? total : c.count)}</span>${c.open ? "" : "<em>soon</em>"}</button>`
       ).join("") +
       `</nav>` +
+      (DEV_TOOLS ? `<button type="button" class="lbs-edit-toggle" data-act="edit" aria-pressed="false">Edit store</button>` : "") +
       `<button type="button" class="lbs-close" data-act="close" aria-label="Leave the store">${ICON_CLOSE}</button>` +
       `</header>` +
       `<div class="lbs-hall"></div>`;
@@ -765,12 +871,13 @@
       `<div class="lbs-zoom"><button type="button" data-act="zoom-out" aria-label="Zoom out">−</button><button type="button" data-act="fit">Fit</button><button type="button" data-act="zoom-in" aria-label="Zoom in">+</button></div></div>` +
       `<div class="lbs-aisles"></div><canvas class="lbs-canvas" draggable="false" aria-label="Horror wall. Scroll to move, pinch or Ctrl-scroll to zoom, drag a spine to a folder."></canvas>` +
       `<div class="lbs-tip" hidden></div>` +
-      `<div class="lbs-logopick" hidden></div><div class="lbs-logobuild" hidden></div>` +
+      `<div class="lbs-logopick" hidden></div><div class="lbs-logobuild" hidden></div><div class="lbs-shape" hidden></div>` +
       `<p class="lbs-credit" hidden>Title logos from <a href="https://www.themoviedb.org/" target="_blank" rel="noopener">TMDB</a>. This product uses the TMDB API but is not endorsed or certified by TMDB.</p>` +
       `</div>` +
       `<ul class="lbs-rows" role="listbox" aria-multiselectable="true"></ul>` +
       `</div>` +
       `<div class="lbs-folders">` +
+      `<div class="lbs-editbar" hidden></div>` +
       `<label class="lbs-search">${ICON_SEARCH}<input type="search" class="lbs-dq" placeholder="Search folders" autocomplete="off"></label>` +
       `<div class="lbs-crumbs"></div>` +
       `<div class="lbs-cols"></div>` +
@@ -949,9 +1056,27 @@
         `<button type="button" class="lbs-up" data-act="up" aria-label="Up one level"${p.genre ? "" : " disabled"}>${ICON_UP}</button>` +
         `<button type="button" class="lbs-crumb" data-act="col" data-id="">All genres</button>` +
         (desk.col ? `<i aria-hidden="true">›</i>${pathHTML(desk.col, "open")}` : "");
-      const item = (id, sel, hasKids, o) =>
-        `<li class="lbs-folder${sel ? " -sel" : ""}${desk.folder === id ? " -open" : ""}" data-act="open" data-id="${esc(id)}" data-drop="${esc(id)}">` +
-        `${ICON_FOLDER}<span class="lbs-folder-name">${esc(nameOf(id))}</span>${own(o)}${cnt(id)}${hasKids ? '<i class="lbs-chev" aria-hidden="true">›</i>' : ""}${moveBtn(id)}</li>`;
+      const tools = (id, o) =>
+        !edit.on || lib.genres.has(id)
+          ? ""
+          : `<span class="lbs-tools">` +
+            (o && o.own ? `<button type="button" data-act="approve" data-id="${esc(id)}" title="Approve: add to the house plan">✓</button>` : "") +
+            (isFixed(id) ? "" : `<button type="button" data-act="rename" data-id="${esc(id)}" title="Rename">✎</button><button type="button" data-act="del" data-id="${esc(id)}" title="Delete">✕</button>`) +
+            `</span>`;
+      const item = (id, sel, hasKids, o) => {
+        if (edit.on && edit.renaming === id)
+          return `<li class="lbs-adding"><input type="text" class="lbs-rename" maxlength="40" value="${esc(nameOf(id))}"></li>`;
+        if (edit.on && edit.deleting === id) {
+          const n = lib.count.get(id) || 0;
+          const to = lib.cats.has(id) ? "Everything Else" : "General";
+          return `<li class="lbs-confirm">Delete <b>${esc(nameOf(id))}</b>?${n ? ` Its ${fmt(n)} film${n === 1 ? "" : "s"} go to ${to}.` : ""} <button type="button" data-act="del-yes" data-id="${esc(id)}">Delete</button><button type="button" data-act="del-no">Keep</button></li>`;
+        }
+        const drag = edit.on && !lib.genres.has(id);
+        return (
+          `<li class="lbs-folder${sel ? " -sel" : ""}${desk.folder === id ? " -open" : ""}${edit.on && edit.sel === id ? " -editsel" : ""}" data-act="open" data-id="${esc(id)}" data-drop="${esc(id)}"${drag ? ' draggable="true"' : ""}>` +
+          `${ICON_FOLDER}<span class="lbs-folder-name">${esc(nameOf(id))}</span>${own(o)}${cnt(id)}${tools(id, o)}${hasKids ? '<i class="lbs-chev" aria-hidden="true">›</i>' : ""}${moveBtn(id)}</li>`
+        );
+      };
       const adder = (level, parent) =>
         desk.adding && desk.adding.level === level && desk.adding.parent === parent
           ? `<li class="lbs-adding"><input type="text" class="lbs-new" maxlength="40" placeholder="${level === "cat" ? "New category" : "New subcategory"}"></li>`
@@ -967,9 +1092,11 @@
         const sel = ul.querySelector(".-sel");
         if (sel) sel.scrollIntoView({ block: "nearest" });
       });
-      const input = $(".lbs-new", cols);
-      if (input) input.focus();
+      const input = $(".lbs-new, .lbs-rename", cols);
+      if (input) { input.focus(); if (input.classList.contains("lbs-rename")) input.select(); }
     }
+    renderEditBar();
+    renderShape();
 
     const recent = (mine.recent || []).filter((id) => lib.subs.has(id)).slice(0, 5);
     $(".lbs-recent", root).innerHTML = recent.length
@@ -993,6 +1120,17 @@
     const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "folder";
     let id = `${parent}/u-${slug}`;
     for (let n = 2; lib.cats.has(id) || lib.subs.has(id); n++) id = `${parent}/u-${slug}-${n}`;
+    if (edit.on) {
+      const hid = freshId(`${parent}/h-${slugify(name)}`);
+      desk.adding = null;
+      houseEdit(`Added “${name}”.`, (H) => {
+        if (level === "cat") { H.cats[hid] = { genre: parent, name }; if (parent === STOCKED) H.order = [...lib.genres.get(STOCKED).cats.filter((c) => !/\/rest$/.test(c)), hid, `${STOCKED}/rest`]; }
+        else H.subs[hid] = { cat: parent, name };
+      });
+      desk.col = hid;
+      if (level === "cat") edit.sel = hid;
+      return renderDesk();
+    }
     if (level === "cat") mine.cats[id] = { genre: parent, name };
     else mine.subs[id] = { cat: parent, name };
     saveMine();
@@ -1025,66 +1163,141 @@
   const spineH = (y) => (y && y < 1990 ? 168 : y && y < 2008 ? 158 : 148);
   const hash = (s) => { let x = 2166136261; for (let i = 0; i < s.length; i++) x = Math.imul(x ^ s.charCodeAt(i), 16777619); return x >>> 0; };
 
-  function buildLayout() {
-    const order = WALL_ORDER.map((id) => `${STOCKED}/${id}`).filter((id) => lib.cats.has(id));
-    const extra = lib.genres.get(STOCKED).cats.filter((id) => !order.includes(id)); // your own sections
-    order.splice(order.length - 1, 0, ...extra);
-    const inner = WU.bayW - WU.pad * 2;
-    // How many bays per row, so the whole wall is about the pane's shape.
-    const total = lib.genres.get(STOCKED).cats.reduce((n, c) => n + (lib.count.get(c) || 0), 0);
-    const perBay = Math.floor(inner / 12) * WU.shelves;
-    const bays = Math.max(1, Math.ceil(total / perBay) + 1);
-    const c = wall.canvas;
-    const aspect = c && c.clientHeight ? c.clientWidth / c.clientHeight : 1.4;
-    let k = 1, best = Infinity;
-    for (let t = 1; t <= bays; t++) {
-      const d = Math.abs(Math.log((t * (WU.bayW + WU.gap)) / (Math.ceil(bays / t) * ROW_H) / aspect));
-      if (d < best) { best = d; k = t; }
+  /* Sections fill whole shelves. A section's films are spread evenly over the
+   * shelves it needs (plus any spare "room to grow"), and the slack on each
+   * shelf is taken up the way a real store does it: a few face-out boxes at
+   * the end of the shelf, and the last spines leaning over. Shapes (house plan):
+   *   start  "shelf" = carry on from the last section; "bay" = a fresh bay
+   *   width  bays side by side; each shelf row runs across all of them
+   *   spare  extra shelves to grow into */
+  const FACE_W = 112, FACE_H = 168, MAX_LEAN = 0.6;
+  const shapeOf = (cid) => ({ start: "shelf", width: 1, spare: 0, ...(house().shape[cid] || {}) });
+  const footprint = (list) => list.reduce((n, f) => n + f.w + 1, 0);
+  // Extra room a leaning group takes compared with standing up.
+  const leanReach = (group, a) => (group.length ? group[0].h * Math.sin(a) + group.reduce((n, f) => n + f.w * (1 / Math.cos(a) - 1), 0) : 0);
+  function solveLean(group, gap) {
+    let lo = 0, hi = MAX_LEAN;
+    for (let i = 0; i < 24; i++) { const mid = (lo + hi) / 2; if (leanReach(group, mid) < gap) lo = mid; else hi = mid; }
+    return lo;
+  }
+  // Spread films over n shelves, evenly by width, keeping their order.
+  function spread(items, n, inner) {
+    const total = footprint(items);
+    const bins = Array.from({ length: n }, () => []);
+    let acc = 0;
+    for (const f of items) {
+      bins[Math.min(n - 1, Math.floor(((acc + (f.w + 1) / 2) / total) * n))].push(f);
+      acc += f.w + 1;
     }
-    const origin = (b) => ({ x: (b % k) * (WU.bayW + WU.gap), y: Math.floor(b / k) * ROW_H });
-    const films = [];
-    const chunks = new Map(); // "bay:shelf" -> [film index], left to right
-    const secs = [];
-    let bay = 0, shelf = 0, x = WU.pad;
-    order.forEach((cid, k) => {
-      const sec = { id: cid, name: lib.cats.get(cid).name, hue: HUES[k % HUES.length], films: [], subs: [] };
+    return bins.every((bin) => footprint(bin) <= inner) ? bins : null;
+  }
+
+  function buildLayout() {
+    const order = lib.genres.get(STOCKED).cats;
+    const inner = WU.bayW - WU.pad * 2;
+    const plan = [];
+    order.forEach((cid, n) => {
+      const items = [], subs = [];
       for (const sid of lib.cats.get(cid).subs) {
         const list = lib.inSub.get(sid) || [];
         if (!list.length) continue;
-        sec.subs.push({ id: sid, name: lib.subs.get(sid).name, first: films.length });
+        subs.push({ id: sid, name: lib.subs.get(sid).name, first: items.length });
         for (const [slug, name] of list) {
-          const y = yearOf(name), w = spineW(y);
-          if (x + w > WU.pad + inner) { x = WU.pad; if (++shelf >= WU.shelves) { shelf = 0; bay++; } }
-          const o = origin(bay);
-          const f = { slug, name, year: y, w, h: spineH(y), sec: secs.length, sub: sid, bay, shelf, x: o.x + x, y: o.y + WU.sign + (shelf + 1) * WU.shelfH - WU.lip, rank: lib.rank.get(slug) ?? 1e9 };
-          const key = `${bay}:${shelf}`;
-          if (!chunks.has(key)) chunks.set(key, []);
-          chunks.get(key).push(films.length);
-          sec.films.push(films.length);
-          films.push(f);
-          x += w + 1;
+          const y = yearOf(name);
+          items.push({ slug, name, year: y, w: spineW(y), h: spineH(y), sub: sid, rank: lib.rank.get(slug) ?? 1e9 });
         }
       }
-      if (!sec.films.length) return;
-      // Face-out highlights: the best-known three (popularity order).
+      const shape = shapeOf(cid);
+      if (items.length || shape.spare > 0) plan.push({ id: cid, hue: HUES[n % HUES.length], items, subs, shape });
+    });
+    for (const p of plan) {
+      let n = Math.max(1, Math.ceil(footprint(p.items) / inner)) + Math.max(0, p.shape.spare | 0);
+      while (!(p.bins = spread(p.items, n, inner))) n++;
+    }
+
+    // Lay the shelves out: which bay and shelf each of a section's shelves is.
+    function pour(rowLen) {
+      let bay = 0, shelf = 0;
+      const out = [];
+      const nextRow = (b, k) => (rowLen !== Infinity && (b % rowLen) + k > rowLen ? Math.ceil(b / rowLen) * rowLen : b);
+      for (const p of plan) {
+        const k = Math.max(1, Math.min(p.shape.width | 0 || 1, rowLen));
+        if ((p.shape.start === "bay" || k > 1) && shelf > 0) { bay++; shelf = 0; }
+        const segs = [];
+        if (k === 1) {
+          for (let i = 0; i < p.bins.length; i++) { segs.push({ bay, shelf }); if (++shelf >= WU.shelves) { shelf = 0; bay++; } }
+        } else {
+          let b0 = nextRow(bay, k), r = 0, j = 0;
+          for (let i = 0; i < p.bins.length; i++) {
+            segs.push({ bay: b0 + j, shelf: r });
+            if (++j >= k) { j = 0; if (++r >= WU.shelves) { r = 0; b0 = nextRow(b0 + k, k); } }
+          }
+          bay = r || j ? b0 + k : b0;
+          shelf = 0;
+        }
+        out.push(segs);
+      }
+      return { out, bays: Math.max(1, bay + (shelf > 0 ? 1 : 0)) };
+    }
+    // Bays per row: whatever makes the wall about the pane's shape.
+    const dry = pour(Infinity);
+    const widest = Math.max(1, ...plan.map((p) => p.shape.width | 0 || 1));
+    const c = wall.canvas;
+    const aspect = c && c.clientHeight ? c.clientWidth / c.clientHeight : 1.4;
+    let kRow = widest, best = Infinity;
+    for (let t = widest; t <= Math.max(widest, dry.bays); t++) {
+      const d = Math.abs(Math.log((t * (WU.bayW + WU.gap)) / (Math.ceil(dry.bays / t) * ROW_H) / aspect));
+      if (d < best) { best = d; kRow = t; }
+    }
+    const { out, bays } = pour(kRow);
+    const origin = (b) => ({ x: (b % kRow) * (WU.bayW + WU.gap), y: Math.floor(b / kRow) * ROW_H });
+
+    const films = [], chunks = new Map(), secs = [], runs = [], faces = [], idx = new Map();
+    plan.forEach((p, pi) => {
+      const si = secs.length;
+      const sec = { id: p.id, name: lib.cats.get(p.id).name, hue: p.hue, films: [], subs: p.subs.map((x) => ({ ...x, first: films.length + x.first })), shelves: out[pi].length };
+      const byRank = [...p.items].sort((a, b) => a.rank - b.rank);
+      out[pi].forEach((sg, i) => {
+        const o = origin(sg.bay);
+        const x0 = o.x + WU.pad, y = o.y + WU.sign + (sg.shelf + 1) * WU.shelfH - WU.lip;
+        const list = p.bins[i];
+        runs.push({ sec: si, bay: sg.bay, shelf: sg.shelf, x0, x1: x0 + inner, by: o.y });
+        const key = `${sg.bay}:${sg.shelf}`;
+        if (!chunks.has(key)) chunks.set(key, []);
+        let gap = inner - footprint(list);
+        const m = Math.min(list.length, 6);
+        const group = list.slice(list.length - m);
+        const reach = leanReach(group, MAX_LEAN);
+        // Big gaps: face-out boxes at the right end (this shelf's best first).
+        const here = new Set(list.map((f) => f.slug));
+        const cands = [...list].sort((a, b) => a.rank - b.rank).concat(byRank.filter((f) => !here.has(f.slug)));
+        let xr = x0 + inner, ci = 0;
+        while (gap - reach > 4 && gap >= FACE_W + 6 && ci < cands.length) {
+          const f = cands[ci++];
+          xr -= FACE_W + 4;
+          gap -= FACE_W + 4;
+          faces.push({ slug: f.slug, name: f.name, year: f.year, sec: si, bay: sg.bay, shelf: sg.shelf, x: xr + 2, y, w: FACE_W, h: FACE_H });
+        }
+        // What's left: the last few spines lean over to fill it.
+        const lean = gap > 3 && m ? solveLean(group, Math.min(gap, reach)) : 0;
+        let x = x0;
+        list.forEach((it, j) => {
+          const leaning = lean > 0 && j >= list.length - m;
+          if (leaning && j === list.length - m) x += it.h * Math.sin(lean);
+          const f = { ...it, sec: si, bay: sg.bay, shelf: sg.shelf, x, y, lean: leaning ? lean : 0 };
+          x += leaning ? f.w / Math.cos(lean) + 1 : f.w + 1;
+          chunks.get(key).push(films.length);
+          sec.films.push(films.length);
+          idx.set(f.slug, films.length);
+          films.push(f);
+        });
+      });
       sec.highlights = [...sec.films].sort((a, b) => films[a].rank - films[b].rank).slice(0, 3);
       secs.push(sec);
     });
-    // Runs of one section along one shelf, for the far view and the tags.
-    const runs = [];
-    for (const [key, list] of chunks) {
-      const [b, s] = key.split(":").map(Number);
-      let run = null;
-      for (const i of list) {
-        const f = films[i];
-        if (!run || run.sec !== f.sec) { run = { sec: f.sec, bay: b, shelf: s, x0: f.x, x1: f.x + f.w, by: origin(b).y, first: i }; runs.push(run); }
-        else run.x1 = f.x + f.w;
-      }
-    }
-    const used = bay + 1;
-    const width = Math.min(used, k) * (WU.bayW + WU.gap);
-    const height = Math.ceil(used / k) * ROW_H;
-    wall.lay = { films, chunks, secs, runs, width, height, bays: used, k, origin };
+    const width = Math.min(bays, kRow) * (WU.bayW + WU.gap);
+    const height = Math.ceil(bays / kRow) * ROW_H;
+    wall.lay = { films, chunks, secs, runs, faces, idx, width, height, bays, k: kRow, origin };
     recolourSections();
   }
 
@@ -1556,7 +1769,9 @@
           if (!list) continue;
           for (const i of list) {
             const f = L.films[i];
-            if (f.x + f.w < x0 || f.x > x1) continue;
+            if (f.x + f.w < x0 || f.x - f.h > x1) continue;
+            if (f.lean) { ctx.save(); ctx.translate(f.x, f.y); ctx.rotate(-f.lean); ctx.translate(-f.x, -f.y); }
+            try {
             const top = f.y - f.h;
             ctx.fillStyle = secColor(L.secs[f.sec], f);
             ctx.fillRect(f.x, top, f.w, f.h);
@@ -1612,8 +1827,19 @@
               ctx.fillText(String(f.year || ""), f.h - 26, 0);
               ctx.restore();
             }
+            } finally { if (f.lean) ctx.restore(); }
           }
         }
+      }
+      // Face-out boxes at the ends of shelves.
+      for (const fc of L.faces) {
+        if (!seen.has(fc.bay) || fc.x + fc.w < x0 || fc.x > x1) continue;
+        const top = fc.y - fc.h;
+        ctx.fillStyle = "rgba(0,0,0,0.45)";
+        ctx.fillRect(fc.x + 3, top + 4, fc.w, fc.h);
+        const im = z >= 0.2 ? posterImg(fc.slug) : null;
+        if (im) ctx.drawImage(im, fc.x, top, fc.w, fc.h);
+        else { ctx.fillStyle = secColor(L.secs[fc.sec], fc); ctx.fillRect(fc.x, top, fc.w, fc.h); }
       }
       // MIDDLE: three face-out boxes per section, standing in front.
       if (!near) {
@@ -1638,6 +1864,16 @@
     ctx.textBaseline = "middle";
     const tagged = new Set();
     const boxes = [];
+    wall.signs = [];
+    // Edit mode: outline the selected section's shelves.
+    const selSec = edit.on && edit.sel ? L.secs.findIndex((x) => x.id === edit.sel) : -1;
+    if (selSec >= 0) {
+      ctx.strokeStyle = "#40bcf4";
+      ctx.lineWidth = 3 * px;
+      ctx.setLineDash([10 * px, 6 * px]);
+      for (const r of L.runs) if (r.sec === selSec && seen.has(r.bay)) ctx.strokeRect(r.x0 - 6, r.by + WU.sign + r.shelf * WU.shelfH + 4, r.x1 - r.x0 + 12, WU.shelfH - WU.lip - 2);
+      ctx.setLineDash([]);
+    }
     for (const r of L.runs) {
       if (!seen.has(r.bay)) continue;
       const key = `${r.sec}:${r.bay}`;
@@ -1649,6 +1885,7 @@
       const th = 18 * px;
       if (boxes.some((q) => r.x0 < q[0] + q[2] && q[0] < r.x0 + tw && ty - th / 2 < q[1] + q[3] && q[1] < ty + th / 2)) continue;
       boxes.push([r.x0, ty - th / 2, tw, th]);
+      wall.signs.push([r.x0, ty - th / 2, tw, th, r.sec]);
       ctx.fillStyle = z < FAR ? "rgba(15,19,23,0.75)" : "#f2eee3";
       ctx.fillRect(r.x0, ty - th / 2, tw, th);
       ctx.fillStyle = z < FAR ? "#fff" : "#14181c";
@@ -1658,9 +1895,12 @@
     // Hovered spine
     if (wall.hover != null && z >= NEAR) {
       const f = L.films[wall.hover];
+      ctx.save();
+      if (f.lean) { ctx.translate(f.x, f.y); ctx.rotate(-f.lean); ctx.translate(-f.x, -f.y); }
       ctx.strokeStyle = "#40bcf4";
       ctx.lineWidth = 2 * px;
       ctx.strokeRect(f.x, f.y - f.h, f.w, f.h);
+      ctx.restore();
     }
 
     // Too slow on this machine? Drop the extras (no sheen, no titles, 1x pixels).
@@ -1686,8 +1926,13 @@
     if (!list) return null;
     for (const i of list) {
       const f = L.films[i];
-      if (p.x >= f.x && p.x <= f.x + f.w + 1 && p.y >= f.y - f.h && p.y <= f.y) return i;
+      if (f.lean) {
+        const dx = p.x - f.x, dy = p.y - f.y, c = Math.cos(f.lean), s = Math.sin(f.lean);
+        const lx = dx * c - dy * s, ly = dx * s + dy * c;
+        if (lx >= 0 && lx <= f.w + 1 && ly >= -f.h && ly <= 0) return i;
+      } else if (p.x >= f.x && p.x <= f.x + f.w + 1 && p.y >= f.y - f.h && p.y <= f.y) return i;
     }
+    for (const fc of L.faces) if (fc.bay === b && fc.shelf === s && p.x >= fc.x && p.x <= fc.x + fc.w && p.y >= fc.y - fc.h && p.y <= fc.y) return L.idx.get(fc.slug) ?? null;
     return null;
   }
 
@@ -1768,6 +2013,7 @@
     else {
       runColorJob();
       loadSharedLogos();
+      loadSharedHouse();
       const fresh = wall.canvas !== canvas;
       wall.canvas = canvas;
       buildLayout();
@@ -1775,6 +2021,7 @@
       else drawSoon();
     }
     renderStagePath();
+    renderShape();
   }
 
   function bindCanvas(c) {
@@ -1809,6 +2056,15 @@
       if (!pan) return;
       const clicked = pan.moved < 4 && e.target === c;
       pan = null;
+      // Edit mode: click a section (or its sign) to select it for shaping.
+      if (clicked && edit.on) {
+        const p = toWall(e.offsetX, e.offsetY);
+        const sg = (wall.signs || []).find((q) => p.x >= q[0] && p.x <= q[0] + q[2] && p.y >= q[1] && p.y <= q[1] + q[3]);
+        const { b, s: sh } = bayAt(p);
+        const run = sg ? null : wall.lay.runs.find((r) => r.bay === b && r.shelf === sh && p.x >= r.x0 && p.x <= r.x1);
+        const si = sg ? sg[4] : run ? run.sec : -1;
+        if (si >= 0) return selectSection(wall.lay.secs[si].id);
+      }
       // Click from far or middle: step in toward that spot.
       if (clicked && wall.cam.z < NEAR) {
         const p = toWall(e.offsetX, e.offsetY);
@@ -1848,12 +2104,155 @@
     }).observe(c);
   }
 
+  /* ---------------- editing the store (moderators) ---------------- */
+
+  function toggleEdit(on) {
+    edit.on = on;
+    edit.renaming = edit.deleting = null;
+    if (!on) edit.sel = null;
+    root.classList.toggle("lbs-editing", on);
+    const b = $(".lbs-edit-toggle", root);
+    if (b) { b.setAttribute("aria-pressed", on); b.textContent = on ? "Done editing" : "Edit store"; }
+    refresh();
+    if (on) toast("Editing the house plan: what everyone sees. Drag films and folders, click a section to shape it.");
+  }
+
+  function renderEditBar() {
+    const bar = $(".lbs-editbar", root);
+    if (!bar) return;
+    bar.hidden = !edit.on;
+    if (!edit.on) return;
+    const pending = !!houseLocal;
+    bar.innerHTML =
+      `<b>Editing the store</b><span>${pending ? "Unpublished changes in this browser" : "No changes yet"}</span>` +
+      `<button type="button" data-act="h-undo"${edit.undo.length ? "" : " disabled"}>Undo</button>` +
+      `<button type="button" data-act="h-save"${pending ? "" : " disabled"}>Download plan</button>` +
+      `<button type="button" data-act="h-discard"${pending ? "" : " disabled"}>Discard</button>`;
+  }
+
+  // The selected section's shape, in a small panel over the wall.
+  function renderShape() {
+    const box = $(".lbs-shape", root);
+    if (!box) return;
+    const id = edit.sel;
+    const show = edit.on && id && lib.cats.has(id) && lib.cats.get(id).genre === STOCKED && wall.level === "wall" && desk.mode === "store";
+    box.hidden = !show;
+    if (!show) return;
+    const sh = shapeOf(id);
+    const sec = wall.lay && wall.lay.secs.find((x) => x.id === id);
+    const list = lib.genres.get(STOCKED).cats;
+    const at = list.indexOf(id);
+    const opt = (k, v, label) => `<button type="button" data-act="shape" data-k="${k}" data-v="${v}" class="${String(sh[k]) === String(v) ? "-on" : ""}">${label}</button>`;
+    box.innerHTML =
+      `<b>${esc(nameOf(id))}</b><span>${fmt(lib.count.get(id) || 0)} films · ${sec ? sec.shelves : 0} shelves · section ${at + 1} of ${list.length}</span>` +
+      `<label>Starts</label><div class="lbs-seg">${opt("start", "shelf", "Next shelf")}${opt("start", "bay", "New bay")}</div>` +
+      `<label>Width</label><div class="lbs-seg">${opt("width", 1, "1 bay")}${opt("width", 2, "2")}${opt("width", 3, "3")}${opt("width", 4, "4")}</div>` +
+      `<label>Room to grow</label><div class="lbs-seg"><button type="button" data-act="spare" data-v="-1"${sh.spare > 0 ? "" : " disabled"}>−</button><em>${sh.spare | 0} spare shel${(sh.spare | 0) === 1 ? "f" : "ves"}</em><button type="button" data-act="spare" data-v="1">+</button></div>` +
+      `<label>Order</label><div class="lbs-seg"><button type="button" data-act="nudge" data-v="-1"${at > 0 ? "" : " disabled"}>← Earlier</button><button type="button" data-act="nudge" data-v="1"${at < list.length - 1 ? "" : " disabled"}>Later →</button></div>` +
+      `<small>Drag folders on the right to reorder. Drop a subcategory on another category to move it there.</small>`;
+  }
+
+  function selectSection(id) {
+    edit.sel = id;
+    desk.col = id;
+    renderFolders();
+    drawSoon();
+  }
+
+  function setShape(id, patch, label) {
+    houseEdit(label, (H) => { H.shape[id] = { ...shapeOf(id), ...patch }; });
+  }
+
+  function renameFolder(id, name) {
+    name = String(name || "").trim().replace(/\s+/g, " ");
+    edit.renaming = null;
+    if (!name || name === nameOf(id)) return renderFolders();
+    const was = nameOf(id);
+    houseEdit(`Renamed “${was}” to “${name}”.`, (H) => {
+      if (H.cats[id]) H.cats[id].name = name;
+      else if (H.subs[id]) H.subs[id].name = name;
+      else H.names[id] = name;
+    });
+  }
+
+  function deleteFolder(id) {
+    const p = partsOf(id);
+    const was = nameOf(id);
+    edit.deleting = null;
+    if (edit.sel === id) edit.sel = null;
+    if (desk.col === id || (p.cat === id && desk.col && desk.col.startsWith(id + "/"))) desk.col = p.sub ? p.cat : p.genre;
+    if (desk.folder === id) desk.folder = desk.col;
+    houseEdit(`Deleted “${was}”.`, (H) => {
+      if (H.cats[id]) delete H.cats[id];
+      else if (H.subs[id]) delete H.subs[id];
+      else if (!H.hidden.includes(id)) H.hidden.push(id);
+      H.order = H.order.filter((x) => x !== id);
+    });
+  }
+
+  // A user's proposed folder becomes part of the house plan.
+  function approveFolder(id) {
+    const c = mine.cats[id], sc = mine.subs[id];
+    if (!c && !sc) return;
+    houseEdit(`Approved “${nameOf(id)}”.`, (H) => {
+      if (c) H.cats[id] = { genre: c.genre, name: c.name };
+      else H.subs[id] = { cat: sc.cat, name: sc.name };
+    });
+    delete mine.cats[id];
+    delete mine.subs[id];
+    saveMine();
+    refresh();
+  }
+
+  // Reorder a folder among its siblings (before or after `target`).
+  function reorderFolder(id, target, after) {
+    const isCat = lib.cats.has(id);
+    const parent = isCat ? lib.cats.get(id).genre : lib.subs.get(id).cat;
+    const list = (isCat ? lib.genres.get(parent).cats : lib.cats.get(parent).subs).filter((x) => x !== id);
+    let at = list.indexOf(target);
+    if (at < 0) return;
+    if (after) at++;
+    list.splice(at, 0, id);
+    houseEdit(`Moved “${nameOf(id)}”.`, (H) => {
+      if (isCat) H.order = [...list, ...H.order.filter((x) => !list.includes(x))];
+      else H.subOrder[parent] = list;
+    });
+  }
+
+  // Move a subcategory, with its films, into another category.
+  function reparentSub(id, cat) {
+    const sc = lib.subs.get(id);
+    if (!sc || sc.cat === cat || /\/general$/.test(id)) return;
+    const name = sc.name;
+    const films = (lib.inSub.get(id) || []).slice();
+    const nid = house().subs[id] ? id : freshId(`${cat}/h-${slugify(name)}`);
+    houseEdit(`Moved “${name}” into ${nameOf(cat)}.`, (H) => {
+      if (H.subs[id]) H.subs[id].cat = cat;
+      else { H.subs[nid] = { cat, name }; if (!H.hidden.includes(id)) H.hidden.push(id); }
+      for (const [slug, n] of films) H.place[slug] = [nid, n];
+    });
+  }
+
+  function downloadHouse() {
+    const plan = { ...house(), at: new Date().toISOString().slice(0, 10) };
+    const blob = new Blob([JSON.stringify(plan, null, 1)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "house-horror.json";
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  }
+
   /* ---------------- moving films ---------------- */
 
   // `films` = [[slug, name]]; `target` = any folder id.
   function moveFilms(films, target) {
     const sub = landingSub(target);
     if (!sub || !films.length) return;
+    if (edit.on) {
+      const label = films.length === 1 ? `‘${titleOf(films[0][1])}’` : `${films.length} films`;
+      return houseEdit(`${label} → ${pathOf(sub).join(" › ")}`, (H) => { for (const [slug, name] of films) H.place[slug] = [sub, name]; });
+    }
     const before = films.map(([slug]) => [slug, mine.place[slug]]);
     const prevView = mine.view;
     for (const [slug, name] of films) mine.place[slug] = [sub, name];
@@ -1905,7 +2304,16 @@
     return [el.dataset.slug, el.dataset.name || el.dataset.slug];
   }
 
+  let dragFolder = null;
   function onDragStart(e) {
+    const frow = edit.on && e.target.closest && e.target.closest(".lbs-folder[draggable=true]");
+    if (frow) {
+      dragFolder = frow.dataset.id;
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("text/plain", nameOf(dragFolder));
+      root.classList.add("lbs-dragging-folder");
+      return;
+    }
     if (e.target === wall.canvas) {
       if (wall.hover == null) return e.preventDefault();
       const f = wall.lay.films[wall.hover];
@@ -1937,13 +2345,39 @@
 
   function onDragEnd() {
     dragging = null;
+    dragFolder = null;
+    root.classList.remove("lbs-dragging-folder");
+    root.querySelectorAll(".-before, .-after").forEach((el) => el.classList.remove("-before", "-after"));
     clearTimeout(springTimer);
     springOn = null;
     root.classList.remove("lbs-dragging");
     root.querySelectorAll(".-over").forEach((el) => el.classList.remove("-over"));
   }
 
+  // Where a dragged folder would go: before/after a sibling, or (a
+  // subcategory) into another category.
+  function folderDrop(e) {
+    const t = e.target.closest && e.target.closest(".lbs-folder");
+    if (!t || !dragFolder || t.dataset.id === dragFolder) return null;
+    const id = t.dataset.id, isCat = lib.cats.has(dragFolder);
+    const parentOf = (x) => (lib.cats.has(x) ? lib.cats.get(x).genre : lib.subs.has(x) ? lib.subs.get(x).cat : null);
+    if (parentOf(id) === parentOf(dragFolder)) {
+      const r = t.getBoundingClientRect();
+      return { t, kind: "order", after: e.clientY > r.top + r.height / 2 };
+    }
+    if (!isCat && lib.cats.has(id)) return { t, kind: "into" };
+    return null;
+  }
+
   function onDragOver(e) {
+    if (dragFolder) {
+      const d = folderDrop(e);
+      root.querySelectorAll(".-before, .-after, .-over").forEach((el) => el.classList.remove("-before", "-after", "-over"));
+      if (!d) return;
+      e.preventDefault();
+      d.t.classList.add(d.kind === "into" ? "-over" : d.after ? "-after" : "-before");
+      return;
+    }
     if (!dragging) return;
     const t = e.target.closest && e.target.closest("[data-drop]");
     root.querySelectorAll(".-over").forEach((el) => el !== t && el.classList.remove("-over"));
@@ -1976,6 +2410,14 @@
   }
 
   function onDrop(e) {
+    if (dragFolder) {
+      const d = folderDrop(e), id = dragFolder;
+      e.preventDefault();
+      onDragEnd();
+      if (!d) return;
+      if (d.kind === "into") return reparentSub(id, d.t.dataset.id);
+      return reorderFolder(id, d.t.dataset.id, d.after);
+    }
     const t = e.target.closest && e.target.closest("[data-drop]");
     if (!dragging || !t) return;
     e.preventDefault();
@@ -2029,6 +2471,35 @@
     const act = btn.dataset.act;
     const id = btn.dataset.id;
     if (act === "logo-pick") return pickLogo(btn.dataset.slug, +btn.dataset.n);
+    if (act === "edit") return toggleEdit(!edit.on);
+    if (act === "rename") { e.stopPropagation(); edit.renaming = id; edit.deleting = null; return renderFolders(); }
+    if (act === "del") { e.stopPropagation(); edit.deleting = id; edit.renaming = null; return renderFolders(); }
+    if (act === "del-yes") return deleteFolder(id);
+    if (act === "del-no") { edit.deleting = null; return renderFolders(); }
+    if (act === "approve") { e.stopPropagation(); return approveFolder(id); }
+    if (act === "h-undo") { undoHouse(); return toast("Undone."); }
+    if (act === "h-save") return downloadHouse();
+    if (act === "h-discard") {
+      houseLocal = null;
+      edit.undo = [];
+      try { localStorage.removeItem(HOUSE_KEY); } catch {}
+      refresh();
+      return toast("Discarded your unpublished changes.");
+    }
+    if (act === "shape") {
+      const k = btn.dataset.k, v = k === "width" ? +btn.dataset.v : btn.dataset.v;
+      return setShape(edit.sel, { [k]: v }, `${nameOf(edit.sel)}: ${k === "width" ? `${v} bay${v === 1 ? "" : "s"} wide` : v === "bay" ? "starts a new bay" : "follows on"}.`);
+    }
+    if (act === "spare") {
+      const n = Math.max(0, (shapeOf(edit.sel).spare | 0) + +btn.dataset.v);
+      return setShape(edit.sel, { spare: n }, `${nameOf(edit.sel)}: ${n} spare shel${n === 1 ? "f" : "ves"}.`);
+    }
+    if (act === "nudge") {
+      const list = lib.genres.get(STOCKED).cats;
+      const at = list.indexOf(edit.sel), to = at + +btn.dataset.v;
+      if (to < 0 || to >= list.length) return;
+      return reorderFolder(edit.sel, list[to], +btn.dataset.v > 0);
+    }
     if (act === "logo-build") { const b = $(".lbs-logobuild", root); b.hidden = !b.hidden; return renderLogoBuild(); }
     if (act === "logo-close") { $(".lbs-logobuild", root).hidden = true; return; }
     if (act === "logo-stop") { logoJob.running = false; return renderLogoBuild(); }
@@ -2059,6 +2530,7 @@
       if (el) walkway.track.scrollTo({ left: Math.max(0, el.offsetLeft - 12), behavior: "smooth" });
       return;
     }
+    if (act === "open" && edit.on && lib.cats.has(id) && lib.cats.get(id).genre === STOCKED) { edit.sel = id; drawSoon(); }
     if (act === "open") {
       if (!desk.open) {
         desk.folder = id;
@@ -2127,6 +2599,11 @@
   }
 
   function onFieldKey(e) {
+    if (e.target.classList.contains("lbs-rename")) {
+      if (e.key === "Enter") { e.preventDefault(); renameFolder(edit.renaming, e.target.value); }
+      else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); edit.renaming = null; renderFolders(); }
+      return;
+    }
     if (e.target.classList.contains("lbs-new")) {
       if (e.key === "Enter") { e.preventDefault(); addFolder(desk.adding.level, desk.adding.parent, e.target.value); }
       else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); desk.adding = null; renderFolders(); }

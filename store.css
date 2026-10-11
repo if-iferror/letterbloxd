@@ -1473,3 +1473,185 @@ html.lbs-open {
 .lbs-credit a {
   color: #9ab !important;
 }
+
+/* ---------- editing the store (moderators) ---------- */
+.lbs-edit-toggle {
+  all: unset;
+  margin-left: auto;
+  padding: 6px 12px;
+  border-radius: 3px;
+  background: #2c3440;
+  color: #def;
+  font: 700 11px/1 Arial, sans-serif;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.lbs-edit-toggle:hover {
+  background: #384350;
+  color: #fff;
+}
+.lbs-edit-toggle[aria-pressed="true"] {
+  background: #40bcf4;
+  color: #0b1014;
+}
+.lbs-edit-toggle + .lbs-close {
+  margin-left: 0;
+}
+.lbs-editing .lbs-folders {
+  box-shadow: inset 3px 0 0 #40bcf4;
+}
+.lbs-editbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border-radius: 4px;
+  background: rgba(64, 188, 244, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(64, 188, 244, 0.35);
+  font-size: 12px;
+  color: #9ab;
+}
+.lbs-editbar[hidden],
+.lbs-shape[hidden] {
+  display: none;
+}
+.lbs-editbar b {
+  color: #fff;
+}
+.lbs-editbar span {
+  flex: 1;
+  min-width: 120px;
+}
+.lbs-editbar button,
+.lbs-confirm button,
+.lbs-shape .lbs-seg button {
+  padding: 4px 9px;
+  border: 0;
+  border-radius: 3px;
+  background: #2c3440;
+  color: #def;
+  font: 600 11.5px Arial, sans-serif;
+  cursor: pointer;
+}
+.lbs-editbar button:hover:not([disabled]),
+.lbs-confirm button:hover,
+.lbs-shape .lbs-seg button:hover:not([disabled]) {
+  background: #384350;
+  color: #fff;
+}
+.lbs-editbar button[disabled],
+.lbs-shape .lbs-seg button[disabled] {
+  opacity: 0.4;
+  cursor: default;
+}
+.lbs-tools {
+  display: none;
+  gap: 2px;
+}
+.lbs-editing .lbs-folder:hover .lbs-tools,
+.lbs-editing .lbs-folder.-sel .lbs-tools {
+  display: inline-flex;
+}
+.lbs-tools button {
+  all: unset;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 3px;
+  color: #9ab;
+  font-size: 12px;
+  cursor: pointer;
+}
+.lbs-tools button:hover {
+  background: #384350;
+  color: #fff;
+}
+.lbs-tools [data-act="del"]:hover {
+  background: #a3282f;
+}
+.lbs-tools [data-act="approve"]:hover {
+  background: #00b020;
+}
+.lbs-editing .lbs-folder[draggable="true"] {
+  cursor: grab;
+}
+.lbs-folder.-editsel {
+  box-shadow: inset 0 0 0 1px #40bcf4;
+}
+.lbs-folder.-before {
+  box-shadow: inset 0 2px 0 #40bcf4;
+}
+.lbs-folder.-after {
+  box-shadow: inset 0 -2px 0 #40bcf4;
+}
+.lbs-confirm {
+  list-style: none;
+  padding: 7px 8px;
+  border-radius: 3px;
+  background: rgba(163, 40, 47, 0.2);
+  box-shadow: inset 0 0 0 1px rgba(255, 120, 120, 0.35);
+  color: #def;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.lbs-confirm button[data-act="del-yes"] {
+  background: #a3282f;
+  color: #fff;
+}
+.lbs-shape {
+  position: absolute;
+  z-index: 5;
+  top: 40px;
+  right: 8px;
+  width: 264px;
+  padding: 10px 12px;
+  border-radius: 5px;
+  background: #1e252c;
+  box-shadow: 0 0 0 1px #40bcf4, 0 12px 30px rgba(0, 0, 0, 0.6);
+  font-size: 12px;
+  color: #9ab;
+}
+.lbs-shape b {
+  display: block;
+  color: #fff;
+  font-size: 14px;
+}
+.lbs-shape > span {
+  display: block;
+  margin-bottom: 8px;
+}
+.lbs-shape label {
+  display: block;
+  margin: 8px 0 4px;
+  color: #678;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.lbs-seg {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.lbs-shape .lbs-seg button.-on {
+  background: #40bcf4;
+  color: #0b1014;
+}
+.lbs-seg em {
+  flex: 1;
+  font-style: normal;
+  text-align: center;
+  color: #def;
+}
+.lbs-shape small {
+  display: block;
+  margin-top: 10px;
+  color: #678;
+  line-height: 1.4;
+}
