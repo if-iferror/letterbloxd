@@ -16,32 +16,33 @@ Unofficial. Block films you'll never watch, see status badges and add to your wa
 
 **Detailed Description** (plain text — the store strips formatting)
 
-Hide the films you know you'll never watch. LetterBloxd adds a "Not interested" button to Letterboxd, plus a filter to fade or hide those films everywhere you browse.
+Block the films you'll never watch. LetterBloxd adds a Block button to Letterboxd, plus filters to fade or hide those films everywhere you browse.
 
 FEATURES
-• Not interested — hover any poster and click ⃠, or click "Block" on a film's page. Your choices are saved to a private "Not Interested" list on your own Letterboxd account, so they follow you to any computer.
-• Show, fade or hide — three new choices in Letterboxd's filter menu, right next to its own "Hide watched films" options.
-• One-click watchlist — add or remove a film from your watchlist straight from the poster, without opening the "…" menu.
-• Status badges — a small badge on each poster: Icons (seen, loved, watchlisted) or Ratings (your star rating), or off.
-• Coloured fades — with Letterboxd's "Fade watched films" on, seen films fade toward green and loved films toward orange, so you can still tell them apart.
-• Changed your mind? — watching, loving or watchlisting a film automatically takes it off "Not interested".
-• Seen it? — marking a film watched takes it off your watchlist.
-• Instant — everything updates the moment you click, and hidden films never flash on screen.
+• Block — hover any poster and click Ø, or click "Block" on a film's page. Blocked films are saved to a private "Not Interested" list on your own Letterboxd account, so they follow you to any computer.
+• A tidier filter menu — Not interested, Watched, Liked and Watchlist each get one row: Show · Fade · Hide · Only.
+• Coloured fades — watched films fade toward green, liked toward orange, watchlist toward blue, so you can tell them apart.
+• Badges — a small badge on each poster: Icons (seen, loved, watchlisted), Ratings (☆ 3.5) or off.
+• One-click watchlist — straight from the poster's hover bar, no "…" menu.
+• One-click rating — on hover, the "…" shows your rating, or "☆ Rate" if you haven't rated yet.
+• Tidies up after you — watching, liking or watchlisting a blocked film unblocks it, and marking a film watched takes it off your watchlist.
+• Instant — everything updates as you click, and blocked films never flash on screen.
+• Feedback — a feedback bar (the megaphone tab at the top right).
 
 HOW TO USE
-1. Install the extension and open letterboxd.com while signed in.
-2. Hover a poster and click ⃠ in its top-right corner to mark it Not interested.
-3. Open the eye (filter) menu on any film grid and choose Show, Fade or Hide not interested.
-4. Turn status badges on or off from the same menu.
+1. Install, then open letterboxd.com while signed in.
+2. Hover a poster and click Ø to block it.
+3. Open the eye menu on any film grid to Show, Fade, Hide or show Only blocked films.
+4. Choose a badge style under Badges in the same menu.
 
 PRIVACY
-LetterBloxd has no analytics or tracking. It talks to letterboxd.com, where it makes the changes you ask for on your own account, and keeps your settings in your browser. The only thing it ever sends the developer is feedback you choose to type into the feedback bar, along with the extension version, your browser, the kind of page you were on and your LetterBloxd settings. No username, no page address, nothing about your films.
+No analytics, no tracking. LetterBloxd talks to letterboxd.com, as you, and keeps its settings in your browser. The only thing it ever sends the developer is feedback you choose to send, with the extension version, your browser, the kind of page you were on and your LetterBloxd settings. No username, no page address, nothing about your films.
 
 PERMISSIONS
-• "Read and change your data on letterboxd.com" — needed to add the buttons, badges and filters to Letterboxd pages, and to update your Not Interested list and watchlist when you click. The extension runs on no other website.
+• "Read and change your data on letterboxd.com" — to add buttons, badges and filters, and to update your Not Interested list and watchlist when you click. It runs on no other website.
 
 SUPPORT
-Found a bug or have an idea? Open an issue at https://github.com/if-iferror/letterbloxd/issues.
+Bugs or ideas: https://github.com/if-iferror/letterbloxd/issues
 
 LetterBloxd is free, open source and unofficial. It is not affiliated with or endorsed by Letterboxd.
 
@@ -49,7 +50,7 @@ LetterBloxd is free, open source and unofficial. It is not affiliated with or en
 Social & Communication *(closest fit for a film-tracking social site; Fun is the alternative)*
 
 **Single Purpose**
-Lets you mark films on Letterboxd as "not interested" and hide or fade them while browsing.
+Lets you block films on Letterboxd and hide or fade them while browsing.
 
 **Primary Language**
 English
@@ -66,7 +67,7 @@ English
 | Marquee Promo Tile | 1400×560 | ✅ Ready | store-assets/promo-marquee-1400x560.png |
 
 ### Screenshot Notes
-1. A film grid in Fade mode: a few faded posters with the white ⃠, plus seen / loved / watchlist badges.
+1. A film grid in Fade mode: a few faded posters with the white Ø, plus seen / loved / watchlist badges.
 2. The eye menu open, showing Show / Fade / Hide not interested and Show status badges.
 3. A film page with "Block" beside Watch / Like / Watchlist.
 
