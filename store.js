@@ -1154,11 +1154,12 @@
   const HUES = [282, 262, 220, 350, 160, 95, 120, 8, 0, 35, 315, 190, 48, 210];
   const WU = { bayW: 1000, gap: 36, pad: 5, sign: 80, shelfH: 200, shelves: 6, lip: 14 };
   const ROW_H = WU.sign + WU.shelves * WU.shelfH + 150; // a row of bays plus the floor between rows
-  const FAR = 0.09, NEAR = 0.45, TEXT = 0.8, ZMIN = 0.02, ZMAX = 2.6;
+  const FAR = 0.09, NEAR = 0.45, TEXT = 0.8, ZMIN = 0.02, ZMAX = 6;
   const DEPTH_X = 4, DEPTH_Y = 5; // the sliver of top and side we see
   // Case plastic, as seen on top: VHS clamshells (darkest), DVDs, Blu-rays.
   const caseTop = (y) => (y && y < 1990 ? "#141517" : y && y < 2008 ? "#25272b" : "#1d5aa6");
-  const YEAR_ZONE = 22; // the year sits in this much of the top of a spine
+  const YEAR_ZONE = 18; // the year sits in this much of the bottom of a spine
+  const CASE_END = 3, LAMINATE = 5, PAPER_IN = CASE_END + LAMINATE; // paper wrap stops short of the case ends
   // The year: white, unless the spine is too light for it.
   const yearInk = (own) => (own && lum(rgbOf(own)) > 0.62 ? "rgba(10,12,14,0.85)" : "rgba(255,255,255,0.9)");
   const reduceMotion = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -1900,9 +1901,21 @@
               ctx.lineTo(f.x + f.w * 0.5 + DEPTH_X, top - DEPTH_Y);
               ctx.stroke();
             }
-            ctx.fillStyle = body;
-            if (near && !wall.lite && ctx.roundRect) { ctx.beginPath(); ctx.roundRect(f.x, top, f.w, f.h, 1.6); ctx.fill(); }
-            else ctx.fillRect(f.x, top, f.w, f.h);
+            // The case: plastic all round, the printed paper wrap inside it,
+            // stopping short of each end under a strip of clear laminate.
+            if (near && !wall.lite) {
+              ctx.fillStyle = caseTop(f.year);
+              if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(f.x, top, f.w, f.h, 1.6); ctx.fill(); }
+              else ctx.fillRect(f.x, top, f.w, f.h);
+              ctx.fillStyle = "rgba(255,255,255,0.14)";
+              ctx.fillRect(f.x, top + CASE_END, f.w, LAMINATE);
+              ctx.fillRect(f.x, f.y - CASE_END - LAMINATE, f.w, LAMINATE);
+              ctx.fillStyle = body;
+              ctx.fillRect(f.x, top + PAPER_IN, f.w, f.h - 2 * PAPER_IN);
+            } else {
+              ctx.fillStyle = body;
+              ctx.fillRect(f.x, top, f.w, f.h);
+            }
             if (!near || wall.lite) continue;
             const own = colorOf(f.slug);
             // Light from the left: a soft highlight down the left edge (three
@@ -1918,53 +1931,43 @@
             ctx.fillRect(f.x + f.w - e * 1.6, top + 1, e * 1.6, f.h - 2);
             ctx.fillStyle = "rgba(0,0,0,0.2)";
             ctx.fillRect(f.x + f.w - e * 0.6, top + 1, e * 0.6, f.h - 2);
-            // Title art from TMDB, turned on its side, when there is one.
-            // Spine coordinates below run up from 8 units above the shelf; the
-            // top of the case is at f.h - 8, the colour band just under it.
-            const yearAt = f.h - 8 - YEAR_ZONE / 2;
-            const mid = f.h / 2 - 8; // the middle of the case, in spine coordinates
-            const span = f.h - 2 * YEAR_ZONE - 6; // room for the title, clear of the year at both ends
-            const lg = z >= LOGO_Z ? logoImg(f.slug, z >= 1.6 ? "w300" : "w185") || (z >= 1.6 ? logoImg(f.slug, "w185") : null) : null;
-            if (lg) {
-              const iw = lg.img.naturalWidth || 300, ih = lg.img.naturalHeight || 100;
-              const a = iw / ih;
-              // Along the spine (local x, from 8 units above the shelf upward):
-              // the logo sits in [s0, s1], the year near the top as before.
-              const room = span, thick = f.w - 3;
-              let len = Math.min(room, thick * a), th = len / a;
-              if (th > thick) { th = thick; len = th * a; }
-              const bgL = own ? relLum(rgbOf(own)) : 0.03;
-              const src = contrast(lg.lum, bgL) >= 2 ? lg.img : logoInk(lg, bgL > 0.35 ? "#15181b" : "#f4f1ea");
+            // Spine print reads top to bottom (as on real spines): coordinates
+            // below run down from the top of the case. Year at the bottom,
+            // title or logo centred on the whole spine, clear of the year.
+            const edge = PAPER_IN + YEAR_ZONE;
+            const yearAt = f.h - PAPER_IN - YEAR_ZONE / 2;
+            const mid = f.h / 2;
+            const span = f.h - 2 * edge - 2;
+            const size = z >= 3.4 ? "w500" : z >= 1.6 ? "w300" : "w185";
+            const lg = z >= LOGO_Z ? logoImg(f.slug, size) || (size !== "w185" ? logoImg(f.slug, "w185") : null) : null;
+            const fs = Math.min(f.w * 0.76, 11);
+            if (lg || text) {
               ctx.save();
-              ctx.translate(f.x + f.w / 2, f.y - 8);
-              ctx.rotate(-Math.PI / 2);
-              ctx.drawImage(src, mid - len / 2, -th / 2, len, th);
+              ctx.translate(f.x + f.w / 2, top);
+              ctx.rotate(Math.PI / 2);
+              ctx.textBaseline = "middle";
+              ctx.textAlign = "center";
+              if (lg) {
+                const iw = lg.img.naturalWidth || 300, ih = lg.img.naturalHeight || 100;
+                const a = iw / ih, thick = f.w - 1.5;
+                let len = Math.min(span, thick * a), th = len / a;
+                if (th > thick) { th = thick; len = th * a; }
+                const bgL = own ? relLum(rgbOf(own)) : 0.03;
+                const src = contrast(lg.lum, bgL) >= 2 ? lg.img : logoInk(lg, bgL > 0.35 ? "#15181b" : "#f4f1ea");
+                ctx.drawImage(src, mid - len / 2, -th / 2, len, th);
+              } else {
+                ctx.font = `700 ${fs}px "Helvetica Neue", Arial, sans-serif`;
+                const light = own && lum(rgbOf(own)) > 0.58;
+                ctx.fillStyle = light ? "rgba(10,12,14,0.9)" : "rgba(255,255,255,0.92)";
+                let t = titleOf(f.name).toUpperCase();
+                if (ctx.measureText(t).width > span) { while (t.length > 3 && ctx.measureText(t + "…").width > span) t = t.slice(0, -1); t += "…"; }
+                ctx.fillText(t, mid, 0);
+              }
               if (text) {
-                ctx.font = `600 ${Math.min(f.w * 0.62, 10) * 0.8}px Arial, sans-serif`;
-                ctx.textBaseline = "middle";
-                ctx.textAlign = "center";
+                ctx.font = `600 ${fs * 0.78}px Arial, sans-serif`;
                 ctx.fillStyle = yearInk(own);
                 ctx.fillText(String(f.year || ""), yearAt, 0);
               }
-              ctx.restore();
-            } else if (text) {
-              ctx.save();
-              ctx.translate(f.x + f.w / 2, f.y - 8);
-              ctx.rotate(-Math.PI / 2);
-              const fs = Math.min(f.w * 0.62, 10);
-              ctx.font = `700 ${fs}px "Helvetica Neue", Arial, sans-serif`;
-              const light = own && lum(rgbOf(own)) > 0.58;
-              ctx.fillStyle = light ? "rgba(10,12,14,0.9)" : "rgba(255,255,255,0.92)";
-              ctx.textBaseline = "middle";
-              let t = titleOf(f.name).toUpperCase();
-              const room = span;
-              if (ctx.measureText(t).width > room) { while (t.length > 3 && ctx.measureText(t + "…").width > room) t = t.slice(0, -1); t += "…"; }
-              ctx.textAlign = "center";
-              ctx.fillText(t, mid, 0);
-              ctx.font = `600 ${fs * 0.8}px Arial, sans-serif`;
-              ctx.textAlign = "center";
-              ctx.fillStyle = yearInk(own);
-              ctx.fillText(String(f.year || ""), yearAt, 0);
               ctx.restore();
             }
             } finally { if (f.lean) ctx.restore(); }
@@ -2380,7 +2383,7 @@
       `<div class="lbs-box" style="--w:${w}px;--h:${h}px;--d:${d}px;--spine:${spine};--top:${caseTop(y)};--ink:${ink}">` +
       `<div class="lbs-box3d">` +
       `<div class="lbs-face -front"><img data-poster="${esc(slug)}" alt=""></div>` +
-      `<div class="lbs-face -spine"><span class="lbs-spine-year">${y || ""}</span>${lp ? `<img class="lbs-spine-logo" src="${TMDB_IMG}w300/${esc(lp)}" alt="" crossorigin="anonymous">` : `<b>${esc(titleOf(name))}</b>`}</div>` +
+      `<div class="lbs-face -spine"><div class="lbs-spine-paper">${lp ? `<img class="lbs-spine-logo" src="${TMDB_IMG}w300/${esc(lp)}" alt="" crossorigin="anonymous">` : `<b>${esc(titleOf(name))}</b>`}<span class="lbs-spine-year">${y || ""}</span></div></div>` +
       `<div class="lbs-face -top"><i></i></div>` +
       `</div></div>`
     );
