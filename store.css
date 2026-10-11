@@ -1345,3 +1345,131 @@ html.lbs-open {
   color: #678;
   font-size: 11px;
 }
+
+/* Title logos: right-click picker, builder, credit */
+.lbs-logopick,
+.lbs-logobuild {
+  position: absolute;
+  z-index: 5;
+  padding: 10px 12px;
+  border-radius: 5px;
+  background: #1e252c;
+  box-shadow: 0 0 0 1px #384350, 0 12px 30px rgba(0, 0, 0, 0.6);
+  font-size: 12px;
+  color: #9ab;
+}
+.lbs-logopick[hidden],
+.lbs-logobuild[hidden],
+.lbs-credit[hidden] {
+  display: none;
+}
+.lbs-logopick {
+  width: 260px;
+}
+.lbs-logopick b,
+.lbs-logobuild b {
+  display: block;
+  margin-bottom: 8px;
+  color: #fff;
+  font-size: 13px;
+}
+.lbs-logopick-list {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.lbs-logopick-list button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 52px;
+  padding: 6px;
+  border: 0;
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+}
+.lbs-logopick-list button:hover {
+  box-shadow: inset 0 0 0 2px #678;
+}
+.lbs-logopick-list button.-on {
+  box-shadow: inset 0 0 0 2px #40bcf4;
+}
+.lbs-logopick-list img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+.lbs-logopick-list .-plain {
+  background: #2c3440;
+  color: #def;
+  font: 700 11px Arial, sans-serif;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.lbs-logopick a {
+  color: #40bcf4 !important;
+}
+.lbs-logobuild {
+  top: 40px;
+  right: 8px;
+  width: 300px;
+}
+.lbs-logobuild p {
+  margin: 0 0 8px;
+}
+.lbs-logobuild p.-err {
+  color: #ff8a80;
+}
+.lbs-logobuild label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.lbs-logobuild input {
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 3px;
+  background: #2c3440;
+  color: #fff;
+  font: 12px monospace;
+}
+.lbs-logobuild-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.lbs-logobuild-row button {
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 3px;
+  background: #2c3440;
+  color: #def;
+  font: 600 12px Arial, sans-serif;
+  cursor: pointer;
+}
+.lbs-logobuild-row button.-go {
+  background: #00b020;
+  color: #fff;
+}
+.lbs-logos-btn {
+  margin-left: 8px;
+}
+.lbs-credit {
+  position: absolute;
+  left: 8px;
+  bottom: 6px;
+  z-index: 3;
+  margin: 0;
+  padding: 2px 6px;
+  border-radius: 2px;
+  background: rgba(15, 19, 23, 0.8);
+  color: #678;
+  font-size: 10px;
+  pointer-events: auto;
+}
+.lbs-credit a {
+  color: #9ab !important;
+}

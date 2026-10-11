@@ -765,6 +765,8 @@
       `<div class="lbs-zoom"><button type="button" data-act="zoom-out" aria-label="Zoom out">−</button><button type="button" data-act="fit">Fit</button><button type="button" data-act="zoom-in" aria-label="Zoom in">+</button></div></div>` +
       `<div class="lbs-aisles"></div><canvas class="lbs-canvas" draggable="false" aria-label="Horror wall. Scroll to move, pinch or Ctrl-scroll to zoom, drag a spine to a folder."></canvas>` +
       `<div class="lbs-tip" hidden></div>` +
+      `<div class="lbs-logopick" hidden></div><div class="lbs-logobuild" hidden></div>` +
+      `<p class="lbs-credit" hidden>Title logos from <a href="https://www.themoviedb.org/" target="_blank" rel="noopener">TMDB</a>. This product uses the TMDB API but is not endorsed or certified by TMDB.</p>` +
       `</div>` +
       `<ul class="lbs-rows" role="listbox" aria-multiselectable="true"></ul>` +
       `</div>` +
@@ -1018,7 +1020,7 @@
   const FAR = 0.09, NEAR = 0.45, TEXT = 0.8, ZMIN = 0.02, ZMAX = 2.6;
   const reduceMotion = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-  const wall = { level: "aisles", lay: null, cam: { x: 0, y: 0, z: 0.05 }, hover: null, pin: null, lite: false, slow: 0, imgs: new Map(), frame: 0 };
+  const wall = { level: "aisles", lay: null, cam: { x: 0, y: 0, z: 0.05 }, hover: null, pin: null, lite: false, slow: 0, imgs: new Map(), logos: new Map(), frame: 0 };
   const spineW = (y) => (y && y < 1990 ? 20 : y && y < 2008 ? 12 : 10);
   const spineH = (y) => (y && y < 1990 ? 168 : y && y < 2008 ? 158 : 148);
   const hash = (s) => { let x = 2166136261; for (let i = 0; i < s.length; i++) x = Math.imul(x ^ s.charCodeAt(i), 16777619); return x >>> 0; };
@@ -1231,6 +1233,252 @@
     }
   }
 
+  /* ---------------- title logos (TMDB) ----------------
+   * Each film's title art comes from TMDB's "logos": the first English one,
+   * else the original-language one, else any. A one-off build job (run by the
+   * developer, with their own TMDB key, which never leaves their browser)
+   * matches every film to TMDB and writes a small index:
+   *   films: { slug: [tmdbId, "logo1.png", "logo2.svg", ...] }   (0 = no match)
+   * The index is a static file; viewers' browsers load the images straight
+   * from image.tmdb.org and never talk to the TMDB API.
+   * Right-click a spine to pick a different logo (your pick is kept here and
+   * becomes a vote once community voting exists). */
+  const DEV_TOOLS = true; // dev: logo builder on (release builds set this false)
+  const LOGO_KEY = `${NS}:store:logos:v1`;
+  const LOGO_PICK_KEY = `${NS}:store:logo-picks:v1`;
+  const SUGGEST_KEY = `${NS}:store:suggest:v1`;
+  const TMDB_KEY = `${NS}:dev:tmdb`; // the developer's own key, this browser only
+  const LOGO_FILE = "https://raw.githubusercontent.com/if-iferror/letterbloxd/dev/data/horror-logos.json";
+  const TMDB_IMG = "https://image.tmdb.org/t/p/";
+  const LOGO_Z = 0.7; // logos appear from this zoom in
+  let logoIndex = readJSON(LOGO_KEY, null) || { v: 1, films: {} };
+  let logoShared = null; // the published index, once fetched
+  const logoPicks = readJSON(LOGO_PICK_KEY, {});
+  const logoLoad = limiter(10);
+  const logoJob = { running: false, done: 0, total: 0, found: 0, error: "" };
+
+  const logoEntry = (slug) => logoIndex.films[slug] || (logoShared && logoShared[slug]) || null;
+  function logoPath(slug) {
+    const e = logoEntry(slug);
+    if (!e || e.length < 2) return null;
+    const pick = logoPicks[slug];
+    if (pick === -1) return null;
+    return e[1 + (pick > 0 && pick < e.length - 1 ? pick : 0)];
+  }
+
+  function loadSharedLogos() {
+    if (logoShared) return;
+    logoShared = {};
+    fetch(LOGO_FILE, { cache: "no-cache" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (j && j.films) { logoShared = j.films; drawSoon(); renderStagePath(); } })
+      .catch(() => {});
+  }
+
+  // Linear-light luminance, for contrast against the spine.
+  const relLum = ([r, g, b]) => {
+    const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+    return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+  };
+  const contrast = (a, b) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+
+  // A logo image, ready to draw, or null (and it starts loading).
+  // Kept in wall.logos: key -> { img, ok, lum, ink: { colour: canvas } }
+  function logoImg(slug, size) {
+    const path = logoPath(slug);
+    if (!path) return null;
+    const key = `${size}/${path}`;
+    let L = wall.logos.get(key);
+    if (L) return L.ok ? L : null;
+    L = { ok: false, lum: 0.5, ink: {} };
+    wall.logos.set(key, L);
+    if (wall.logos.size > 1600) [...wall.logos.keys()].slice(0, 400).forEach((k) => wall.logos.delete(k));
+    logoLoad(() => new Promise((done) => {
+      const im = new Image();
+      im.crossOrigin = "anonymous";
+      im.decoding = "async";
+      im.onload = () => {
+        if (!im.naturalWidth) im.width = 300; // a few SVGs have no size
+        L.img = im;
+        L.ok = true;
+        try {
+          const c = document.createElement("canvas");
+          c.width = 48; c.height = 16;
+          const x = c.getContext("2d", { willReadFrequently: true });
+          x.drawImage(im, 0, 0, 48, 16);
+          const d = x.getImageData(0, 0, 48, 16).data;
+          let s = 0, n = 0;
+          for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 128) { s += relLum([d[i], d[i + 1], d[i + 2]]); n++; }
+          if (n) L.lum = s / n;
+        } catch {}
+        drawSoon();
+        done();
+      };
+      im.onerror = () => { wall.logos.set(key, { ok: false, dead: true }); done(); };
+      im.src = TMDB_IMG + size + "/" + path;
+    }));
+    return null;
+  }
+
+  // The logo as a flat silhouette in one colour, for logos that would vanish
+  // into their spine (black logo on a black box, and so on).
+  function logoInk(L, colour) {
+    if (L.ink[colour]) return L.ink[colour];
+    const w = L.img.naturalWidth || 300, h = L.img.naturalHeight || 100;
+    const c = document.createElement("canvas");
+    c.width = w; c.height = h;
+    const x = c.getContext("2d");
+    x.drawImage(L.img, 0, 0, w, h);
+    x.globalCompositeOperation = "source-in";
+    x.fillStyle = colour;
+    x.fillRect(0, 0, w, h);
+    return (L.ink[colour] = c);
+  }
+
+  /* Build job (developer only). Matches each film to TMDB:
+   *   1. search by title + year; one exact title match within a year: done
+   *   2. otherwise ask Letterboxd which film each candidate is
+   *      (HEAD /tmdb/<id>/ redirects to the film's page, no page download)
+   *   3. then fetch that film's logos */
+  async function runLogoJob(key) {
+    if (logoJob.running || !stock) return;
+    logoJob.running = true;
+    logoJob.error = "";
+    const bearer = key.length > 40;
+    const api = async (path, params, tries = 0) => {
+      const u = new URL(`https://api.themoviedb.org/3/${path}`);
+      for (const [k, v] of Object.entries(params || {})) u.searchParams.set(k, v);
+      if (!bearer) u.searchParams.set("api_key", key);
+      const r = await fetch(u, bearer ? { headers: { Authorization: `Bearer ${key}` } } : {});
+      if (r.status === 401) throw new Error("TMDB didn't accept that key.");
+      if (r.status === 429 && tries < 5) { await new Promise((ok) => setTimeout(ok, 1500 * (tries + 1))); return api(path, params, tries + 1); }
+      if (!r.ok) throw new Error(`TMDB ${r.status}`);
+      return r.json();
+    };
+    const norm = (s) => String(s || "").toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/&/g, "and").replace(/[^a-z0-9]+/g, "");
+    const yr = (c) => +String(c.release_date || "").slice(0, 4) || 0;
+    const isOurs = async (id, slug) => {
+      try {
+        const r = await fetch(`/tmdb/${id}/`, { method: "HEAD", credentials: "include" });
+        return r.ok && new URL(r.url).pathname.startsWith(`/film/${slug}/`);
+      } catch { return false; }
+    };
+    const verify = limiter(3); // gentle on Letterboxd
+
+    async function match(slug, name) {
+      const t = titleOf(name), y = yearOf(name), nt = norm(t);
+      let res = (await api("search/movie", { query: t, year: y || "", include_adult: "true" })).results || [];
+      const exact = res.filter((c) => (norm(c.title) === nt || norm(c.original_title) === nt) && (!y || Math.abs(yr(c) - y) <= 1));
+      if (exact.length === 1) return exact[0];
+      if (!res.length) res = (await api("search/movie", { query: t, include_adult: "true" })).results || [];
+      const order = [...exact, ...res.filter((c) => !exact.includes(c))].slice(0, 4);
+      for (const c of order) if (await verify(() => isOurs(c.id, slug))) return c;
+      return null;
+    }
+
+    const lane = limiter(6);
+    const todo = stock.films.filter(([slug]) => !logoIndex.films[slug]);
+    logoJob.total = stock.films.length;
+    logoJob.done = logoJob.total - todo.length;
+    logoJob.found = Object.values(logoIndex.films).filter((e) => e.length > 1).length;
+    let n = 0;
+    const save = () => { logoIndex.at = Date.now(); writeJSON(LOGO_KEY, logoIndex); };
+    try {
+      await Promise.all(todo.map(([slug, name]) => lane(async () => {
+        if (!logoJob.running) return;
+        try {
+          const c = await match(slug, name);
+          if (!c) { logoIndex.films[slug] = [0]; }
+          else {
+            const lang = c.original_language || "en";
+            const im = await api(`movie/${c.id}/images`, { include_image_language: `en,${lang},null` });
+            const logos = im.logos || [];
+            const rank = (l) => (l.iso_639_1 === "en" ? 0 : l.iso_639_1 === lang ? 1 : l.iso_639_1 == null ? 2 : 3);
+            // Stable sort keeps TMDB's own order inside each language.
+            const paths = logos.map((l, i) => [rank(l), i, l.file_path]).sort((a, b) => a[0] - b[0] || a[1] - b[1]).slice(0, 4).map((l) => l[2].replace(/^\//, ""));
+            logoIndex.films[slug] = [c.id, ...paths];
+            if (paths.length) logoJob.found++;
+          }
+        } catch (err) {
+          if (/key/.test(err.message)) { logoJob.error = err.message; logoJob.running = false; }
+          return; // try this one again next run
+        }
+        logoJob.done++;
+        if (++n % 40 === 0) { save(); renderStagePath(); renderLogoBuild(); drawSoon(); }
+      })));
+    } finally {
+      save();
+      logoJob.running = false;
+      renderStagePath();
+      renderLogoBuild();
+      drawSoon();
+    }
+  }
+
+  function renderLogoBuild() {
+    const box = $(".lbs-logobuild", root);
+    if (!box || box.hidden) return;
+    const have = !!readJSON(TMDB_KEY, "");
+    const pct = logoJob.done ? Math.round((logoJob.found / logoJob.done) * 100) : 0;
+    const counted = Object.keys(logoIndex.films).length;
+    box.innerHTML =
+      `<b>Title logos from TMDB</b>` +
+      `<p>Matches each Horror film to TMDB and keeps its first logo. Your TMDB key stays in this browser; it's only used for this.</p>` +
+      (have ? "" : `<label>TMDB API key or read token<input type="password" class="lbs-tmdb-key" autocomplete="off" spellcheck="false"></label>`) +
+      (logoJob.error ? `<p class="-err">${esc(logoJob.error)}</p>` : "") +
+      `<p>${fmt(logoJob.done || counted)} / ${fmt(logoJob.total || (stock ? stock.films.length : 0))} checked · ${fmt(logoJob.found)} with a logo${logoJob.done ? ` (${pct}%)` : ""}</p>` +
+      `<div class="lbs-logobuild-row">` +
+      (logoJob.running ? `<button type="button" data-act="logo-stop">Pause</button>` : `<button type="button" data-act="logo-start" class="-go">${counted ? "Continue" : "Start"}</button>`) +
+      (counted ? `<button type="button" data-act="logo-save">Download index</button>` : "") +
+      (have ? `<button type="button" data-act="logo-forget">Forget key</button>` : "") +
+      `<button type="button" data-act="logo-close">Close</button></div>`;
+  }
+
+  function downloadLogos() {
+    const films = Object.fromEntries(Object.entries(logoIndex.films).filter(([, e]) => e[0]).sort());
+    const blob = new Blob([JSON.stringify({ v: 1, at: new Date().toISOString().slice(0, 10), source: "TMDB", films })], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "horror-logos.json";
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  }
+
+  // Right-click a spine: the film's other TMDB logos, to pick from.
+  function openLogoPicker(i, sx, sy) {
+    const f = wall.lay.films[i];
+    const e = logoEntry(f.slug);
+    const box = $(".lbs-logopick", root);
+    if (!box || !e || !e[0]) return false;
+    const cur = logoPicks[f.slug] ?? 0;
+    const bg = colors[f.slug] ? `#${colors[f.slug].slice(0, 6)}` : "#2c3440";
+    box.innerHTML =
+      `<b>${esc(titleOf(f.name))}: spine logo</b>` +
+      `<div class="lbs-logopick-list">` +
+      e.slice(1).map((p, n) => `<button type="button" data-act="logo-pick" data-slug="${esc(f.slug)}" data-n="${n}" class="${cur === n ? "-on" : ""}" style="background:${bg}"><img src="${TMDB_IMG}w185/${esc(p)}" alt="Logo ${n + 1}"></button>`).join("") +
+      `<button type="button" data-act="logo-pick" data-slug="${esc(f.slug)}" data-n="-1" class="-plain${cur === -1 ? " -on" : ""}">Plain title</button>` +
+      `</div>` +
+      `<a href="https://www.themoviedb.org/movie/${e[0]}/images/logos" target="_blank" rel="noopener">${e.length > 1 ? "See every logo on TMDB ↗" : "No logo yet. Add one on TMDB ↗"}</a>`;
+    box.hidden = false;
+    const st = $(".lbs-stage", root).getBoundingClientRect();
+    box.style.left = `${Math.max(8, Math.min(sx, st.width - box.offsetWidth - 8))}px`;
+    box.style.top = `${Math.max(8, Math.min(sy, st.height - box.offsetHeight - 8))}px`;
+    return true;
+  }
+
+  function pickLogo(slug, n) {
+    if (n === 0) delete logoPicks[slug];
+    else logoPicks[slug] = n;
+    writeJSON(LOGO_PICK_KEY, logoPicks);
+    const e = logoEntry(slug);
+    const list = readJSON(SUGGEST_KEY, []).filter((s) => !(s.type === "logo" && s.slug === slug));
+    list.push({ type: "logo", slug, tmdb: e && e[0], path: n === -1 ? null : e && e[1 + n], at: Date.now() });
+    writeJSON(SUGGEST_KEY, list.slice(-500));
+    $(".lbs-logopick", root).hidden = true;
+    drawSoon();
+    toast(n === 0 ? "Back to the first logo." : "Saved. It'll count as your vote once community voting opens.");
+  }
+
   function drawSoon() {
     if (wall.frame) return;
     wall.frame = requestAnimationFrame(() => { wall.frame = 0; draw(); });
@@ -1319,7 +1567,31 @@
             ctx.fillStyle = "rgba(255,255,255,0.10)";
             ctx.fillRect(f.x, top, Math.max(px, f.w * 0.18), f.h);
             if (f.year && f.year < 1990) { ctx.fillStyle = "rgba(235,232,222,0.85)"; ctx.fillRect(f.x + 2, top + 22, f.w - 4, f.h - 50); }
-            if (text) {
+            // Title art from TMDB, turned on its side, when there is one.
+            const vhs = f.year && f.year < 1990;
+            const L = z >= LOGO_Z ? logoImg(f.slug, z >= 1.6 ? "w300" : "w185") || (z >= 1.6 ? logoImg(f.slug, "w185") : null) : null;
+            if (L) {
+              const iw = L.img.naturalWidth || 300, ih = L.img.naturalHeight || 100;
+              const a = iw / ih;
+              // Along the spine (local x, from 8 units above the shelf upward):
+              // the logo sits in [s0, s1], the year near the top as before.
+              const s0 = vhs ? 34 : 10, s1 = f.h - 34, room = s1 - s0, thick = f.w - (vhs ? 6 : 3);
+              let len = Math.min(room, thick * a), th = len / a;
+              if (th > thick) { th = thick; len = th * a; }
+              const bgL = vhs ? 0.8 : own ? relLum(rgbOf(own)) : 0.03;
+              const src = contrast(L.lum, bgL) >= 2 ? L.img : logoInk(L, bgL > 0.35 ? "#15181b" : "#f4f1ea");
+              ctx.save();
+              ctx.translate(f.x + f.w / 2, f.y - 8);
+              ctx.rotate(-Math.PI / 2);
+              ctx.drawImage(src, s0 + (room - len) / 2, -th / 2, len, th);
+              if (text) {
+                ctx.font = `600 ${Math.min(f.w * 0.62, 10) * 0.8}px Arial, sans-serif`;
+                ctx.textBaseline = "middle";
+                ctx.fillStyle = vhs ? "rgba(20,20,20,0.7)" : "rgba(255,255,255,0.6)";
+                ctx.fillText(String(f.year || ""), f.h - 26, 0);
+              }
+              ctx.restore();
+            } else if (text) {
               ctx.save();
               ctx.translate(f.x + f.w / 2, f.y - 8);
               ctx.rotate(-Math.PI / 2);
@@ -1439,7 +1711,10 @@
       (wall.level === "wall" ? `<i>›</i><button type="button" class="lbs-crumb" data-act="fit">Horror</button>` : "") +
       (sec ? `<i>›</i><button type="button" class="lbs-crumb" data-act="open" data-id="${esc(sec.id)}" data-drop="${esc(sec.id)}">${esc(sec.name)}</button>` : "") +
       (wall.level === "wall" ? `<span class="lbs-lod">${lod}</span>` : "") +
-      (colorJob.total && colorJob.done < colorJob.total ? `<span class="lbs-hint">colours ${fmt(colorJob.done)} / ${fmt(colorJob.total)}</span>` : "");
+      (colorJob.total && colorJob.done < colorJob.total ? `<span class="lbs-hint">colours ${fmt(colorJob.done)} / ${fmt(colorJob.total)}</span>` : "") +
+      (DEV_TOOLS && wall.level === "wall" ? `<button type="button" class="lbs-crumb lbs-logos-btn" data-act="logo-build">${logoJob.running ? `logos ${fmt(logoJob.done)} / ${fmt(logoJob.total)}` : "Logos…"}</button>` : "");
+    const credit = $(".lbs-credit", root);
+    if (credit) credit.hidden = !(wall.level === "wall" && (Object.keys(logoIndex.films).length || (logoShared && Object.keys(logoShared).length)));
   }
 
   // The tip: poster + title for the spine under the pointer.
@@ -1452,7 +1727,7 @@
     tip.innerHTML =
       `<img src="${cached ? esc(cached[0]) : EMPTY}" alt="" width="70" height="105">` +
       `<div><b>${esc(titleOf(f.name))}</b><span>${f.year || ""}</span><small>${esc(pathOf(f.sub).join(" › "))}</small>` +
-      `<a href="/film/${esc(f.slug)}/" target="_blank" rel="noopener">Open on Letterboxd ↗</a><em>Drag to a folder to re-file</em></div>`;
+      `<a href="/film/${esc(f.slug)}/" target="_blank" rel="noopener">Open on Letterboxd ↗</a><em>Drag to a folder to re-file${logoEntry(f.slug)?.[0] ? " · right-click for other logos" : ""}</em></div>`;
     if (!cached) posterFor(f.slug).then(([u]) => { const im = tip.querySelector("img"); if (im && wall.hover === i) im.src = u; }).catch(() => {});
     const st = $(".lbs-stage", root).getBoundingClientRect();
     tip.hidden = false;
@@ -1491,6 +1766,7 @@
     if (wall.level === "aisles") renderAisles();
     else {
       runColorJob();
+      loadSharedLogos();
       const fresh = wall.canvas !== canvas;
       wall.canvas = canvas;
       buildLayout();
@@ -1546,6 +1822,10 @@
       showTip(i, e.offsetX, e.offsetY);
     });
     c.addEventListener("mouseleave", () => { wall.hover = null; showTip(null); drawSoon(); });
+    c.addEventListener("contextmenu", (e) => {
+      const i = filmAt(e.offsetX, e.offsetY);
+      if (i != null && openLogoPicker(i, e.offsetX, e.offsetY)) { e.preventDefault(); showTip(null); }
+    });
     c.addEventListener("dblclick", (e) => {
       const i = filmAt(e.offsetX, e.offsetY);
       if (i != null) window.open(`/film/${wall.lay.films[i].slug}/`, "_blank", "noopener");
@@ -1718,6 +1998,8 @@
   /* ---------------- clicks, typing ---------------- */
 
   function onClick(e) {
+    const pick = $(".lbs-logopick", root);
+    if (pick && !pick.hidden && !e.target.closest(".lbs-logopick")) pick.hidden = true;
     const row = e.target.closest(".lbs-row");
     if (row && !e.target.closest("a, button")) return selectRow(row, e);
     const btn = e.target.closest("[data-act], [data-coll], [data-scope], [data-view]");
@@ -1745,6 +2027,20 @@
     }
     const act = btn.dataset.act;
     const id = btn.dataset.id;
+    if (act === "logo-pick") return pickLogo(btn.dataset.slug, +btn.dataset.n);
+    if (act === "logo-build") { const b = $(".lbs-logobuild", root); b.hidden = !b.hidden; return renderLogoBuild(); }
+    if (act === "logo-close") { $(".lbs-logobuild", root).hidden = true; return; }
+    if (act === "logo-stop") { logoJob.running = false; return renderLogoBuild(); }
+    if (act === "logo-save") return downloadLogos();
+    if (act === "logo-forget") { try { localStorage.removeItem(TMDB_KEY); } catch {} return renderLogoBuild(); }
+    if (act === "logo-start") {
+      const input = $(".lbs-tmdb-key", root);
+      if (input && input.value.trim()) writeJSON(TMDB_KEY, input.value.trim());
+      const key = readJSON(TMDB_KEY, "");
+      if (!key) { logoJob.error = "Paste your TMDB key first."; return renderLogoBuild(); }
+      runLogoJob(key);
+      return renderLogoBuild();
+    }
     if (act === "close") return leaveStore();
     if (act === "retry") return render();
     if (act === "desk") return setDesk(!desk.open);
