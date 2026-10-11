@@ -1143,6 +1143,9 @@
   const WU = { bayW: 1000, gap: 36, pad: 22, sign: 80, shelfH: 200, shelves: 6, lip: 14 };
   const ROW_H = WU.sign + WU.shelves * WU.shelfH + 150; // a row of bays plus the floor between rows
   const FAR = 0.09, NEAR = 0.45, TEXT = 0.8, ZMIN = 0.02, ZMAX = 2.6;
+  const DEPTH_X = 4, DEPTH_Y = 5; // the sliver of top and side we see
+  const BAND = 22; // colour band at the top of a spine; the year sits in it
+  const yearInk = (own) => (own && lum(rgbOf(own.slice(6))) > 0.55 ? "rgba(10,12,14,0.8)" : "rgba(255,255,255,0.85)");
   const reduceMotion = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   const wall = { level: "aisles", lay: null, cam: { x: 0, y: 0, z: 0.05 }, hover: null, pin: null, lite: false, slow: 0, imgs: new Map(), logos: new Map(), frame: 0 };
@@ -1320,6 +1323,7 @@
     }
     const parseRef = (ref) => [refCid.get(ref)];
     wall.refs = { refCid, refU };
+    wall.leftovers = leftovers;
 
     const films = [], chunks = new Map(), secs = [], secIndex = new Map(), runs = [], bookends = [], idx = new Map();
     for (const P of sections.values()) {
@@ -1854,12 +1858,30 @@
             if (f.lean) { ctx.save(); ctx.translate(f.x, f.y); ctx.rotate(-f.lean); ctx.translate(-f.x, -f.y); }
             try {
             const top = f.y - f.h;
-            ctx.fillStyle = secColor(L.secs[f.sec], f);
+            const body = secColor(L.secs[f.sec], f);
+            // A whisper of depth: we stand a little above and to the right,
+            // so each box shows a sliver of its top and of its right-hand
+            // face (the cover edge). Neighbours drawn after cover most of it.
+            if (near && !wall.lite) {
+              ctx.fillStyle = body;
+              ctx.beginPath();
+              ctx.moveTo(f.x + f.w, top); ctx.lineTo(f.x + f.w + DEPTH_X, top - DEPTH_Y); ctx.lineTo(f.x + f.w + DEPTH_X, f.y - DEPTH_Y); ctx.lineTo(f.x + f.w, f.y);
+              ctx.fill();
+              ctx.fillStyle = "rgba(0,0,0,0.38)";
+              ctx.fill();
+              ctx.fillStyle = body;
+              ctx.beginPath();
+              ctx.moveTo(f.x, top); ctx.lineTo(f.x + DEPTH_X, top - DEPTH_Y); ctx.lineTo(f.x + f.w + DEPTH_X, top - DEPTH_Y); ctx.lineTo(f.x + f.w, top);
+              ctx.fill();
+              ctx.fillStyle = "rgba(255,255,255,0.28)";
+              ctx.fill();
+            }
+            ctx.fillStyle = body;
             ctx.fillRect(f.x, top, f.w, f.h);
             if (!near || wall.lite) continue;
             const own = colors[f.slug];
-            // the poster's accent colour as a band across the top
-            if (own) { ctx.fillStyle = `#${own.slice(6)}`; ctx.fillRect(f.x, top, f.w, 16); }
+            // the poster's accent colour as a band across the top, with the year in it
+            if (own) { ctx.fillStyle = `#${own.slice(6)}`; ctx.fillRect(f.x, top, f.w, BAND); }
             // a little plastic: lit edge, VHS label band
             ctx.fillStyle = "rgba(255,255,255,0.10)";
             ctx.fillRect(f.x, top, Math.max(px, f.w * 0.18), f.h);
@@ -1884,8 +1906,8 @@
               if (text) {
                 ctx.font = `600 ${Math.min(f.w * 0.62, 10) * 0.8}px Arial, sans-serif`;
                 ctx.textBaseline = "middle";
-                ctx.fillStyle = vhs ? "rgba(20,20,20,0.7)" : "rgba(255,255,255,0.6)";
-                ctx.fillText(String(f.year || ""), f.h - 26, 0);
+                ctx.fillStyle = yearInk(own);
+                ctx.fillText(String(f.year || ""), f.h - BAND / 2, 0);
               }
               ctx.restore();
             } else if (text) {
@@ -1904,8 +1926,8 @@
               if (ctx.measureText(t).width > room) { while (t.length > 3 && ctx.measureText(t + "…").width > room) t = t.slice(0, -1); t += "…"; }
               ctx.fillText(t, start, 0);
               ctx.font = `600 ${fs * 0.8}px Arial, sans-serif`;
-              ctx.fillStyle = "rgba(255,255,255,0.6)";
-              ctx.fillText(String(f.year || ""), f.h - 26, 0);
+              ctx.fillStyle = yearInk(own);
+              ctx.fillText(String(f.year || ""), f.h - BAND / 2, 0);
               ctx.restore();
             }
             } finally { if (f.lean) ctx.restore(); }
@@ -1994,34 +2016,44 @@
       }
     }
 
-    // Up close: laminated signs on the shelf edge. Each piece's sign slides
-    // along with you so there's always one in view.
+    // Up close: laminated signs hung from the shelf edge, always the same
+    // size on screen, repeated along each section so one is always in view.
     wall.signs = [];
     if (veil < 0.3) {
-      const fsz = Math.max(10, Math.min(14, 10 + z * 4)) * px;
+      const fsz = 13 * px, th = 22 * px, gapPx = 340 * px;
       ctx.font = `800 ${fsz}px Arial, sans-serif`;
       ctx.textBaseline = "middle";
-      const th = fsz + 8 * px;
       for (const r of L.runs) {
         if (!seen.has(r.bay) || r.x1 < x0 || r.x0 > x1) continue;
         const sec = L.secs[r.sec];
         const mode = sortOf(sec.id);
         const label = sec.name.toUpperCase() + (mode === "year" ? " · BY YEAR" : mode === "index" ? " · INDEX" : "") + " ▾";
-        const tw = ctx.measureText(label).width + 14 * px;
+        const tw = ctx.measureText(label).width + 16 * px;
         if (tw > r.x1 - r.x0 + 4) continue;
-        const sx = Math.min(Math.max(r.x0 + 4, x0 + 12 * px), r.x1 - tw - 2);
-        const ty = r.by + WU.sign + (r.shelf + 1) * WU.shelfH - WU.lip / 2;
-        ctx.fillStyle = "rgba(0,0,0,0.35)";
-        ctx.fillRect(sx + 2 * px, ty - th / 2 + 2 * px, tw, th);
-        ctx.fillStyle = "#f4f1e8";
-        ctx.fillRect(sx, ty - th / 2, tw, th);
-        ctx.fillStyle = `hsl(${sec.hue} 60% 45%)`;
-        ctx.fillRect(sx, ty - th / 2, 4 * px, th);
-        ctx.fillStyle = "rgba(255,255,255,0.35)"; // laminate shine
-        ctx.fillRect(sx, ty - th / 2, tw, th * 0.35);
-        ctx.fillStyle = "#14181c";
-        ctx.fillText(label, sx + 9 * px, ty + px);
-        wall.signs.push({ x: sx, y: ty - th / 2, w: tw, h: th, sec: r.sec });
+        const ty = r.by + WU.sign + (r.shelf + 1) * WU.shelfH - WU.lip + 3 * px; // hangs from the shelf's front edge
+        const step = tw + gapPx;
+        const spots = [];
+        for (let k = Math.max(0, Math.floor((x0 - r.x0) / step) - 1); ; k++) {
+          const sx = r.x0 + 4 * px + k * step;
+          if (sx > x1 || sx + tw > r.x1) break;
+          if (sx + tw >= x0) spots.push(sx);
+        }
+        if (!spots.length) spots.push(Math.min(Math.max(r.x0 + 4 * px, x0 + 12 * px), r.x1 - tw - 2 * px));
+        for (const sx of spots) {
+          ctx.fillStyle = "rgba(0,0,0,0.4)";
+          ctx.fillRect(sx + 2 * px, ty + 2 * px, tw, th);
+          ctx.fillStyle = "#f4f1e8";
+          ctx.fillRect(sx, ty, tw, th);
+          ctx.fillStyle = `hsl(${sec.hue} 60% 45%)`;
+          ctx.fillRect(sx, ty, 5 * px, th);
+          ctx.fillStyle = "rgba(255,255,255,0.35)"; // laminate shine
+          ctx.fillRect(sx, ty, tw, th * 0.35);
+          ctx.fillStyle = "rgba(0,0,0,0.25)"; // tape
+          ctx.fillRect(sx + tw / 2 - 14 * px, ty - 3 * px, 28 * px, 6 * px);
+          ctx.fillStyle = "#14181c";
+          ctx.fillText(label, sx + 10 * px, ty + th / 2 + px);
+          wall.signs.push({ x: sx, y: ty, w: tw, h: th, sec: r.sec });
+        }
       }
     }
 
@@ -2418,6 +2450,44 @@
     houseEdit(`Moved all of ${nameOf(t.cid)}.`, (H) => { H.wall = { perRow: wall.plan.perRow, shelves: out }; });
   }
 
+  // Group grab from the inventory: pour the whole section in from where you
+  // drop it, filling free space shelf by shelf (down the bay, then on).
+  function pourTarget(g, sx, sy) {
+    const L = wall.lay, p = toWall(sx, sy);
+    let { b, s } = bayAt(p);
+    if (b < 0 || b >= L.bays || s < 0 || s >= WU.shelves) return null;
+    const items = (wall.leftovers && wall.leftovers.get(g.cid)) || [];
+    const out = [];
+    let k = 0, first = true;
+    while (k < items.length && b < L.bays) {
+      const key = `${b}:${s}`;
+      const list = wall.plan.shelves[key] || [];
+      const free = CAP - list.reduce((n, pc) => n + pc.u, 0) - BOOKEND * list.length;
+      let at = 0;
+      if (first) {
+        const runs = list.map((_, i) => L.runs.find((r) => r.ref === `${key}/${i}`)).filter(Boolean);
+        at = runs.filter((r) => (r.x0 + r.x1) / 2 < p.x).length;
+      }
+      let u = 0, j = k;
+      while (j < items.length && u + items[j].w + 1 <= free) u += items[j++].w + 1;
+      // Skip gaps too small to bother with (unless it's the last few films).
+      if (u >= MIN_PIECE || (u > 0 && j >= items.length)) {
+        k = j;
+        const runs = list.map((_, i) => L.runs.find((r) => r.ref === `${key}/${i}`)).filter(Boolean);
+        const x = at === 0 ? L.origin(b).x + WU.pad : runs[at - 1].x1 + BOOKEND;
+        out.push({ key, at, u, bay: b, shelf: s, x, w: u });
+      }
+      first = false;
+      if (++s >= WU.shelves) { s = 0; b++; }
+    }
+    return { group: true, pour: true, cid: g.cid, items: out, ok: k >= items.length && out.length > 0 };
+  }
+  function placePour(t) {
+    const sh = shelvesNow();
+    for (const it of t.items) (sh[it.key] ||= []).splice(it.at, 0, { c: t.cid, u: it.u });
+    houseEdit(`Poured all of ${nameOf(t.cid)} onto ${t.items.length} shel${t.items.length === 1 ? "f" : "ves"}.`, (H) => { H.wall = { perRow: wall.plan.perRow, shelves: sh }; });
+  }
+
   function unplaceGrab(g) {
     const sh = shelvesNow();
     const [k, slot] = g.ref.split("/");
@@ -2466,7 +2536,11 @@
     if (!d.live) {
       if (Math.abs(e.clientX - d.x) + Math.abs(e.clientY - d.y) < 5) return;
       d.live = true;
-      if (d.kind === "piece" && d.ref && edit.grab === "group") {
+      if (d.kind === "piece" && !d.ref && edit.grab === "group") {
+        d.pour = true;
+        d.ghost = h("div", "lbs-piece lbs-piece-ghost", `<b>${esc(nameOf(d.cid))}</b><span>all</span>`);
+        d.ghost.style.setProperty("--h", secHue(lib.genres.get(STOCKED).cats.indexOf(d.cid)));
+      } else if (d.kind === "piece" && d.ref && edit.grab === "group") {
         const cid = grabCid(d), n = groupRefs(cid).length;
         d.group = true;
         d.ghost = h("div", "lbs-piece lbs-piece-ghost", `<b>${esc(nameOf(cid))}</b><span>all ${n}</span>`);
@@ -2488,7 +2562,7 @@
     d.ghost.style.top = `${e.clientY + 8}px`;
     const c = wall.canvas, r = c.getBoundingClientRect();
     const over = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
-    wall.dropHint = over ? (d.kind === "piece" ? (d.group ? groupTarget(d, e.clientX - r.left, e.clientY - r.top) : dropTarget(d, e.clientX - r.left, e.clientY - r.top)) : edit.on ? dvdTarget(d.slug, e.clientX - r.left, e.clientY - r.top) : null) : null;
+    wall.dropHint = over ? (d.kind === "piece" ? (d.pour ? pourTarget(d, e.clientX - r.left, e.clientY - r.top) : d.group ? groupTarget(d, e.clientX - r.left, e.clientY - r.top) : dropTarget(d, e.clientX - r.left, e.clientY - r.top)) : edit.on ? dvdTarget(d.slug, e.clientX - r.left, e.clientY - r.top) : null) : null;
     root.querySelectorAll(".lbs-folder.-over").forEach((el) => el.classList.remove("-over"));
     const folder = d.kind === "dvd" && document.elementFromPoint(e.clientX, e.clientY)?.closest?.(".lbs-folder[data-drop]");
     // Hold a film over a folder to open it, as when dragging.
@@ -2520,6 +2594,7 @@
         return houseEdit(`Took all of ${nameOf(grabCid(d))} down.`, (H) => { H.wall = { perRow: wall.plan.perRow, shelves: sh }; });
       }
       if (toTray) { if (d.from === "wall") unplaceGrab(d); return drawSoon(); }
+      if (hint && hint.pour) { if (hint.ok) return placePour(hint); toast("Not enough room from there on to fit the whole section."); return drawSoon(); }
       if (hint && hint.group) { if (hint.ok) return placeGroup(hint); toast("The whole section doesn't fit there."); return drawSoon(); }
       if (hint && hint.ok) return placeGrab(d, hint);
       if (hint) toast("No room on that shelf.");
