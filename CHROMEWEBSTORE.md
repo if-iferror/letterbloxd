@@ -128,7 +128,7 @@ What it handles, for the record (all stays between the user's browser and their 
 
 | Version | Date | Changes | Status |
 |---------|------|---------|--------|
-| 1.3.0 | 2026-10-10 | Renamed to LetterBloxd with a new icon; film-page button is now "Block"; Badges choice (Icons / Ratings / Off); hover buttons sized to large posters; watchlist button in Letterboxd's hover bar; feedback bar with Ko-fi link; Firefox support. | Ready |
+| 1.3.0 | 2026-10-10 | Renamed to LetterBloxd; film-page button is now "Block"; Badges choice (Icons / Ratings / Off); hover buttons sized to large posters; watchlist button in Letterboxd's hover bar; feedback bar with Ko-fi link; Firefox support. | Ready |
 | 1.2.1 | 2026-10-06 | Compact filter menu (Show · Fade · Hide · Only), instant Watched / Liked / Watchlist filters, independent coloured fades, rating pill in place of "…", red ⃠ when selected, matching poster corners. | Draft |
 | 1.0.0 | 2026-10-04 | First public release: Not interested button and filter, one-click watchlist, status badges, coloured fades, auto-undo, watched-removes-from-watchlist. | Submitted |
 
