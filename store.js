@@ -1280,12 +1280,15 @@
         }
         // What's left: the last few spines lean over to fill it.
         const lean = gap > 3 && m ? solveLean(group, Math.min(gap, reach)) : 0;
+        // Anything still left over: a hair of air between the standing spines.
+        const standing = list.length - (lean > 0 ? m : 0);
+        const air = standing > 0 ? Math.min(3, Math.max(0, gap - (lean > 0 ? leanReach(group, lean) : 0)) / standing) : 0;
         let x = x0;
         list.forEach((it, j) => {
           const leaning = lean > 0 && j >= list.length - m;
           if (leaning && j === list.length - m) x += it.h * Math.sin(lean);
           const f = { ...it, sec: si, bay: sg.bay, shelf: sg.shelf, x, y, lean: leaning ? lean : 0 };
-          x += leaning ? f.w / Math.cos(lean) + 1 : f.w + 1;
+          x += leaning ? f.w / Math.cos(lean) + 1 : f.w + 1 + air;
           chunks.get(key).push(films.length);
           sec.films.push(films.length);
           idx.set(f.slug, films.length);
