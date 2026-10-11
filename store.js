@@ -1399,7 +1399,8 @@
     }
     for (const sec of secs) sec.highlights = [...sec.films].sort((a, b) => films[a].rank - films[b].rank).slice(0, 3);
     // Edit mode keeps an empty bay at the end to drop pieces into.
-    const bays = maxBay + 1 + (edit.on ? 1 : 0);
+    const allPieces = [...pieces.values()].reduce((n, P) => n + P.sizes.length, 0);
+    const bays = edit.on ? Math.max(maxBay + 2, Math.ceil(allPieces / WU.shelves) + 1) : maxBay + 1;
     const width = Math.min(bays, perRow) * (WU.bayW + WU.gap);
     const height = Math.ceil(bays / perRow) * ROW_H;
     wall.lay = { films, chunks, secs, runs, bookends, faces: [], idx, bucket, held: H.held, width, height, bays, k: perRow, origin };
