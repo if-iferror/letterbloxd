@@ -252,7 +252,7 @@
   // Your own moves and folders ("Mine"). Kept in this browser only.
   const MINE_KEY = `${NS}:store:mine:v1`;
   let mine = readJSON(MINE_KEY, null) || {};
-  mine = { place: {}, cats: {}, subs: {}, recent: [], view: "community", sort: {}, held: [], colors: {}, ...mine };
+  mine = { place: {}, cats: {}, subs: {}, recent: [], view: "community", sort: {}, held: [], colors: {}, wash: {}, ...mine };
   const saveMine = () => writeJSON(MINE_KEY, mine);
 
   let lib = null; // built from stock + mine; see buildLibrary()
@@ -1168,6 +1168,9 @@
   const caseTop = (y) => (y && y < 1990 ? "#141517" : y && y < 2008 ? "#25272b" : "#1d5aa6");
   const YEAR_ZONE = 18; // the year sits in this much of the bottom of a spine
   const CASE_END = 3, LAMINATE = 5, PAPER_IN = CASE_END + LAMINATE; // paper wrap stops short of the case ends
+  const PAPER_TOP = PAPER_IN - 3; // ...a little less at the top
+  const CORNER = 1.6; // rounded case corners
+  const YEAR_FS = 6.6; // the year: one size on every format
   // The year: white, unless the spine is too light for it.
   const yearInk = (own) => (own && lum(rgbOf(own)) > 0.62 ? "rgba(10,12,14,0.85)" : "rgba(255,255,255,0.9)");
   const reduceMotion = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -2015,9 +2018,19 @@
               ctx.fillStyle = "rgba(0,0,0,0.38)";
               ctx.fill();
               // The top is bare case plastic: VHS clamshell, DVD, Blu-ray.
+              // Its front and back edges follow the case's rounded corners.
+              const r = Math.min(CORNER, f.w / 2);
               ctx.fillStyle = caseTop(f.year);
               ctx.beginPath();
-              ctx.moveTo(f.x, top); ctx.lineTo(f.x + DEPTH_X, top - DEPTH_Y); ctx.lineTo(f.x + f.w + DEPTH_X, top - DEPTH_Y); ctx.lineTo(f.x + f.w, top);
+              ctx.moveTo(f.x, top + r);
+              ctx.quadraticCurveTo(f.x, top, f.x + r, top);
+              ctx.lineTo(f.x + f.w - r, top);
+              ctx.quadraticCurveTo(f.x + f.w, top, f.x + f.w, top + r);
+              ctx.lineTo(f.x + f.w + DEPTH_X, top + r - DEPTH_Y);
+              ctx.quadraticCurveTo(f.x + f.w + DEPTH_X, top - DEPTH_Y, f.x + f.w - r + DEPTH_X, top - DEPTH_Y);
+              ctx.lineTo(f.x + r + DEPTH_X, top - DEPTH_Y);
+              ctx.quadraticCurveTo(f.x + DEPTH_X, top - DEPTH_Y, f.x + DEPTH_X, top + r - DEPTH_Y);
+              ctx.closePath();
               ctx.fill();
               // the seam where the case opens
               ctx.strokeStyle = "rgba(0,0,0,0.55)";
@@ -2031,13 +2044,13 @@
             // stopping short of each end under a strip of clear laminate.
             if (near && !wall.lite) {
               ctx.fillStyle = caseTop(f.year);
-              if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(f.x, top, f.w, f.h, 1.6); ctx.fill(); }
+              if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(f.x, top, f.w, f.h, Math.min(CORNER, f.w / 2)); ctx.fill(); }
               else ctx.fillRect(f.x, top, f.w, f.h);
               ctx.fillStyle = "rgba(255,255,255,0.14)";
               ctx.fillRect(f.x, top + CASE_END, f.w, LAMINATE);
               ctx.fillRect(f.x, f.y - CASE_END - LAMINATE, f.w, LAMINATE);
               ctx.fillStyle = body;
-              ctx.fillRect(f.x, top + PAPER_IN, f.w, f.h - 2 * PAPER_IN);
+              ctx.fillRect(f.x, top + PAPER_TOP, f.w, f.h - PAPER_TOP - PAPER_IN);
             } else {
               ctx.fillStyle = body;
               ctx.fillRect(f.x, top, f.w, f.h);
@@ -2078,19 +2091,26 @@
                 const a = iw / ih, thick = f.w - 1.5;
                 let len = Math.min(span, thick * a), th = len / a;
                 if (th > thick) { th = thick; len = th * a; }
-                const bgL = own ? relLum(rgbOf(own)) : 0.03;
-                const src = contrast(lg.lum, bgL) >= 2 ? lg.img : logoInk(lg, bgL > 0.35 ? "#15181b" : "#f4f1ea");
-                ctx.drawImage(src, mid - len / 2, -th / 2, len, th);
+                // Logo colour wash: off unless chosen for this film (Edit).
+                const wash = mine.wash && mine.wash[f.slug];
+                ctx.drawImage(wash ? logoInk(lg, wash) : lg.img, mid - len / 2, -th / 2, len, th);
               } else {
                 ctx.font = `700 ${fs}px "Helvetica Neue", Arial, sans-serif`;
                 const light = own && lum(rgbOf(own)) > 0.58;
                 ctx.fillStyle = light ? "rgba(10,12,14,0.9)" : "rgba(255,255,255,0.92)";
-                let t = titleOf(f.name).toUpperCase();
-                if (ctx.measureText(t).width > span) { while (t.length > 3 && ctx.measureText(t + "…").width > span) t = t.slice(0, -1); t += "…"; }
-                ctx.fillText(t, mid, 0);
+                const t = titleOf(f.name).toUpperCase();
+                const tw = ctx.measureText(t).width;
+                if (tw <= span) ctx.fillText(t, mid, 0);
+                else {
+                  // Too long: shrink to fit, starting from the top of the spine.
+                  ctx.font = `700 ${Math.max(2.5, (fs * span) / tw)}px "Helvetica Neue", Arial, sans-serif`;
+                  ctx.textAlign = "left";
+                  ctx.fillText(t, edge + 1, 0, span);
+                  ctx.textAlign = "center";
+                }
               }
               if (text) {
-                ctx.font = `600 ${fs * 0.78}px Arial, sans-serif`;
+                ctx.font = `600 ${YEAR_FS}px Arial, sans-serif`;
                 ctx.fillStyle = yearInk(own);
                 ctx.fillText(String(f.year || ""), yearAt, 0);
               }
@@ -2112,30 +2132,52 @@
       }
     }
 
-    // Where one section ends and the next begins on a shelf: a divider card
-    // standing between the films, with a tab in the new section's colour.
+    // Where one section ends and the next begins on a shelf: a brushed
+    // steel divider standing between the films (with a little thickness and
+    // a top edge, like the cases), and a tab in the new section's colour.
     if (z >= FAR) {
       for (const be of L.bookends) {
         if (!be.change || !seen.has(be.bay) || be.x < x0 - 200 || be.x > x1 + 20) continue;
-        const cardTop = be.y - (WU.shelfH - WU.lip) + 6;
-        ctx.fillStyle = "rgba(0,0,0,0.35)";
-        ctx.fillRect(be.x + 2, cardTop + 4, 4, be.y - cardTop - 4);
-        ctx.fillStyle = "#e9e4d8";
-        ctx.fillRect(be.x, cardTop, 4, be.y - cardTop);
+        const top = be.y - (WU.shelfH - WU.lip) + 8, T = 4; // T: thickness facing us
+        const steel = ctx.createLinearGradient(be.x, 0, be.x + T, 0);
+        steel.addColorStop(0, "#5d646c");
+        steel.addColorStop(0.35, "#e9eef2");
+        steel.addColorStop(0.55, "#9aa3ab");
+        steel.addColorStop(1, "#4a5158");
+        // side face, then the top edge, then the face
+        ctx.fillStyle = "#2e3338";
+        ctx.beginPath();
+        ctx.moveTo(be.x + T, top); ctx.lineTo(be.x + T + DEPTH_X, top - DEPTH_Y); ctx.lineTo(be.x + T + DEPTH_X, be.y - DEPTH_Y); ctx.lineTo(be.x + T, be.y);
+        ctx.fill();
+        ctx.fillStyle = "#c9d0d6";
+        ctx.beginPath();
+        ctx.moveTo(be.x, top); ctx.lineTo(be.x + DEPTH_X, top - DEPTH_Y); ctx.lineTo(be.x + T + DEPTH_X, top - DEPTH_Y); ctx.lineTo(be.x + T, top);
+        ctx.fill();
+        ctx.fillStyle = steel;
+        ctx.fillRect(be.x, top, T, be.y - top);
+        // a soft travelling highlight sells the gloss
+        const glint = ctx.createLinearGradient(0, top, 0, be.y);
+        glint.addColorStop(0, "rgba(255,255,255,0)");
+        glint.addColorStop(0.18, "rgba(255,255,255,0.55)");
+        glint.addColorStop(0.3, "rgba(255,255,255,0)");
+        ctx.fillStyle = glint;
+        ctx.fillRect(be.x, top, T, be.y - top);
         // the tab
         const sec = L.secs[be.next];
         const label = sec ? sec.name.toUpperCase() : "";
         ctx.font = "800 11px Arial, sans-serif";
         const tw = Math.min(150, ctx.measureText(label).width + 14);
         ctx.fillStyle = `hsl(${be.hue} 60% 46%)`;
-        if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(be.x, cardTop - 2, tw, 18, [4, 4, 0, 0]); ctx.fill(); }
-        else ctx.fillRect(be.x, cardTop - 2, tw, 18);
+        if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(be.x, top - 4, tw, 18, [4, 4, 0, 0]); ctx.fill(); }
+        else ctx.fillRect(be.x, top - 4, tw, 18);
+        ctx.fillStyle = "rgba(255,255,255,0.22)";
+        ctx.fillRect(be.x, top - 4, tw, 5);
         ctx.fillStyle = "#fff";
         ctx.textBaseline = "middle";
         ctx.textAlign = "left";
         ctx.save();
-        ctx.beginPath(); ctx.rect(be.x, cardTop - 2, tw - 4, 18); ctx.clip();
-        ctx.fillText(label, be.x + 7, cardTop + 7.5);
+        ctx.beginPath(); ctx.rect(be.x, top - 4, tw - 4, 18); ctx.clip();
+        ctx.fillText(label, be.x + 7, top + 5.5);
         ctx.restore();
       }
     }
@@ -2522,11 +2564,12 @@
   function boxHTML(slug, name, big) {
     const y = yearOf(name), own = colorOf(slug);
     const spine = own ? `#${own.slice(0, 6)}` : "#2c3440";
-    const w = big ? 230 : 120, h = Math.round(w * 1.42), d = Math.round((y && y < 1990 ? 0.2 : y && y < 2008 ? 0.12 : 0.1) * w * 1.4);
+    // The cover art (2:3) fills the paper area exactly; the case is as wide as that.
+    const h = big ? 330 : 170, inset = big ? 8 : 5, w = Math.round(((h - 2 * inset) * 2) / 3), d = Math.round((y && y < 1990 ? 0.2 : y && y < 2008 ? 0.12 : 0.1) * w * 1.4);
     const ink = own && lum(rgbOf(own)) > 0.62 ? "#14181c" : "#fff";
     const lp = logoPath(slug);
     return (
-      `<div class="lbs-box" style="--w:${w}px;--h:${h}px;--d:${d}px;--spine:${spine};--top:${caseTop(y)};--ink:${ink}">` +
+      `<div class="lbs-box" style="--w:${w}px;--h:${h}px;--d:${d}px;--in:${inset}px;--spine:${spine};--top:${caseTop(y)};--ink:${ink}">` +
       `<div class="lbs-box3d">` +
       `<div class="lbs-face -front"><img data-poster="${esc(slug)}" alt=""></div>` +
       `<div class="lbs-face -spine"><div class="lbs-spine-paper">${lp ? `<img class="lbs-spine-logo" src="${TMDB_IMG}w300/${esc(lp)}" alt="" crossorigin="anonymous">` : `<b>${esc(titleOf(name))}</b>`}<span class="lbs-spine-year">${y || ""}</span></div></div>` +
@@ -2572,6 +2615,7 @@
         (list ? list.map((pth, n) => `<button type="button" data-act="logo-pick" data-slug="${esc(slug)}" data-path="${esc(pth)}" class="${cur === pth ? "-on" : ""}"><img src="${TMDB_IMG}w185/${esc(pth)}" alt="Logo ${n + 1}" loading="lazy"></button>`).join("") : `<p class="lbs-fwait">Fetching every logo from TMDB…</p>`) +
         `<button type="button" data-act="logo-pick" data-slug="${esc(slug)}" data-path="-1" class="-plain${cur === null ? " -on" : ""}">Plain title</button>` +
         `</div>` +
+        `<label class="lbs-fwash"><input type="checkbox" class="lbs-f-wash" data-slug="${esc(slug)}"${mine.wash && mine.wash[slug] ? " checked" : ""}> Logo colour wash <input type="color" class="lbs-f-washc" data-slug="${esc(slug)}" value="${esc((mine.wash && mine.wash[slug]) || "#ffffff")}"${mine.wash && mine.wash[slug] ? "" : " disabled"}></label>` +
         (e && e[0] ? `<a class="lbs-fmore" href="https://www.themoviedb.org/movie/${e[0]}/images/logos" target="_blank" rel="noopener">Upload more on TMDB ↗</a>` : "") +
         `</div>`;
     }
@@ -3711,6 +3755,17 @@
   }
 
   function onInput(e) {
+    if (e.target.classList.contains("lbs-f-wash") || e.target.classList.contains("lbs-f-washc")) {
+      const ws = e.target.dataset.slug, pane = e.target.closest(".lbs-fpane");
+      const on = pane.querySelector(".lbs-f-wash").checked, col = pane.querySelector(".lbs-f-washc").value;
+      if (on) mine.wash[ws] = col; else delete mine.wash[ws];
+      pane.querySelector(".lbs-f-washc").disabled = !on;
+      saveMine();
+      drawSoon();
+      clearTimeout(ui.washT);
+      ui.washT = setTimeout(() => shareEdit("wash", ws, on ? col : null), 1200);
+      return;
+    }
     if (e.target.classList.contains("lbs-fr-q")) return franchiseSearch(e.target.value);
     if (e.target.classList.contains("lbs-fr-name")) { if (ui.fr) ui.fr.name = e.target.value; return; }
     if (e.target.classList.contains("lbs-sp-genre-pick")) { ui.sortGenre = e.target.value; ui.sortCat = null; ui.sortSub = null; return renderSortPanel(); }
