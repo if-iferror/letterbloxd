@@ -871,13 +871,13 @@
       `<div class="lbs-zoom"><button type="button" data-act="zoom-out" aria-label="Zoom out">−</button><button type="button" data-act="fit">Fit</button><button type="button" data-act="zoom-in" aria-label="Zoom in">+</button></div></div>` +
       `<div class="lbs-aisles"></div><canvas class="lbs-canvas" draggable="false" aria-label="Horror wall. Scroll to move, pinch or Ctrl-scroll to zoom, drag a spine to a folder."></canvas>` +
       `<div class="lbs-tip" hidden></div>` +
-      `<div class="lbs-logopick" hidden></div><div class="lbs-logobuild" hidden></div><div class="lbs-shape" hidden></div>` +
+      `<div class="lbs-logopick" hidden></div><div class="lbs-logobuild" hidden></div>` +
       `<p class="lbs-credit" hidden>Title logos from <a href="https://www.themoviedb.org/" target="_blank" rel="noopener">TMDB</a>. This product uses the TMDB API but is not endorsed or certified by TMDB.</p>` +
       `</div>` +
       `<ul class="lbs-rows" role="listbox" aria-multiselectable="true"></ul>` +
       `</div>` +
       `<div class="lbs-folders">` +
-      `<div class="lbs-editbar" hidden></div>` +
+      `<div class="lbs-editbar" hidden></div><div class="lbs-shape" hidden></div>` +
       `<label class="lbs-search">${ICON_SEARCH}<input type="search" class="lbs-dq" placeholder="Search folders" autocomplete="off"></label>` +
       `<div class="lbs-crumbs"></div>` +
       `<div class="lbs-cols"></div>` +
@@ -1220,13 +1220,21 @@
       let bay = 0, shelf = 0;
       const out = [];
       const nextRow = (b, k) => (rowLen !== Infinity && (b % rowLen) + k > rowLen ? Math.ceil(b / rowLen) * rowLen : b);
+      let last = null; // the previous section, if it ended part-way down a bay
       for (const p of plan) {
         const k = Math.max(1, Math.min(p.shape.width | 0 || 1, rowLen));
-        if ((p.shape.start === "bay" || k > 1) && shelf > 0) { bay++; shelf = 0; }
+        if ((p.shape.start === "bay" || k > 1) && shelf > 0) {
+          // Don't leave bare shelves: the section before spreads out to fill its bay.
+          if (last) while (shelf < WU.shelves) last.push({ bay, shelf: shelf++ });
+          bay++;
+          shelf = 0;
+        }
         const segs = [];
         if (k === 1) {
           for (let i = 0; i < p.bins.length; i++) { segs.push({ bay, shelf }); if (++shelf >= WU.shelves) { shelf = 0; bay++; } }
+          last = segs;
         } else {
+          last = null;
           let b0 = nextRow(bay, k), r = 0, j = 0;
           for (let i = 0; i < p.bins.length; i++) {
             segs.push({ bay: b0 + j, shelf: r });
@@ -1257,6 +1265,7 @@
       const si = secs.length;
       const sec = { id: p.id, name: lib.cats.get(p.id).name, hue: p.hue, films: [], subs: p.subs.map((x) => ({ ...x, first: films.length + x.first })), shelves: out[pi].length };
       const byRank = [...p.items].sort((a, b) => a.rank - b.rank);
+      if (out[pi].length > p.bins.length) p.bins = spread(p.items, out[pi].length, inner);
       out[pi].forEach((sg, i) => {
         const o = origin(sg.bay);
         const x0 = o.x + WU.pad, y = o.y + WU.sign + (sg.shelf + 1) * WU.shelfH - WU.lip;
@@ -2138,7 +2147,7 @@
     const box = $(".lbs-shape", root);
     if (!box) return;
     const id = edit.sel;
-    const show = edit.on && id && lib.cats.has(id) && lib.cats.get(id).genre === STOCKED && wall.level === "wall" && desk.mode === "store";
+    const show = edit.on && id && lib.cats.has(id) && lib.cats.get(id).genre === STOCKED;
     box.hidden = !show;
     if (!show) return;
     const sh = shapeOf(id);
@@ -2147,12 +2156,13 @@
     const at = list.indexOf(id);
     const opt = (k, v, label) => `<button type="button" data-act="shape" data-k="${k}" data-v="${v}" class="${String(sh[k]) === String(v) ? "-on" : ""}">${label}</button>`;
     box.innerHTML =
-      `<b>${esc(nameOf(id))}</b><span>${fmt(lib.count.get(id) || 0)} films · ${sec ? sec.shelves : 0} shelves · section ${at + 1} of ${list.length}</span>` +
-      `<label>Starts</label><div class="lbs-seg">${opt("start", "shelf", "Next shelf")}${opt("start", "bay", "New bay")}</div>` +
-      `<label>Width</label><div class="lbs-seg">${opt("width", 1, "1 bay")}${opt("width", 2, "2")}${opt("width", 3, "3")}${opt("width", 4, "4")}</div>` +
-      `<label>Room to grow</label><div class="lbs-seg"><button type="button" data-act="spare" data-v="-1"${sh.spare > 0 ? "" : " disabled"}>−</button><em>${sh.spare | 0} spare shel${(sh.spare | 0) === 1 ? "f" : "ves"}</em><button type="button" data-act="spare" data-v="1">+</button></div>` +
-      `<label>Order</label><div class="lbs-seg"><button type="button" data-act="nudge" data-v="-1"${at > 0 ? "" : " disabled"}>← Earlier</button><button type="button" data-act="nudge" data-v="1"${at < list.length - 1 ? "" : " disabled"}>Later →</button></div>` +
-      `<small>Drag folders on the right to reorder. Drop a subcategory on another category to move it there.</small>`;
+      `<div class="lbs-shape-head"><b>Section shape: ${esc(nameOf(id))}</b><span>${fmt(lib.count.get(id) || 0)} films · ${sec ? sec.shelves : 0} shelves · ${at + 1} of ${list.length} on the wall</span></div>` +
+      `<div class="lbs-shape-row">` +
+      `<div><label>Starts</label><div class="lbs-seg">${opt("start", "shelf", "Next shelf")}${opt("start", "bay", "New bay")}</div></div>` +
+      `<div><label>Width (bays)</label><div class="lbs-seg">${opt("width", 1, "1")}${opt("width", 2, "2")}${opt("width", 3, "3")}${opt("width", 4, "4")}</div></div>` +
+      `<div><label>Room to grow</label><div class="lbs-seg"><button type="button" data-act="spare" data-v="-1"${sh.spare > 0 ? "" : " disabled"}>−</button><em>${sh.spare | 0} shel${(sh.spare | 0) === 1 ? "f" : "ves"}</em><button type="button" data-act="spare" data-v="1">+</button></div></div>` +
+      `<div><label>Order</label><div class="lbs-seg"><button type="button" data-act="nudge" data-v="-1"${at > 0 ? "" : " disabled"}>← Earlier</button><button type="button" data-act="nudge" data-v="1"${at < list.length - 1 ? "" : " disabled"}>Later →</button></div></div>` +
+      `</div>`;
   }
 
   function selectSection(id) {
