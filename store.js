@@ -1083,6 +1083,7 @@
     const width = Math.min(used, k) * (WU.bayW + WU.gap);
     const height = Math.ceil(used / k) * ROW_H;
     wall.lay = { films, chunks, secs, runs, width, height, bays: used, k, origin };
+    recolourSections();
   }
 
   // Screen <-> wall coordinates.
@@ -1143,6 +1144,93 @@
     flyTo(f.x + 300, f.y - 120, p.sub ? 0.9 : 0.25);
   }
 
+  /* Colour catalogue: each film's main + accent colour, read from its poster.
+   * Built a few films at a time while the store is open and kept in this
+   * browser ("RRGGBBrrggbb" per film). Later this can be seeded from a shared
+   * file so nobody has to build it themselves. */
+  const COLOR_KEY = `${NS}:store:colors:v1`;
+  const colors = readJSON(COLOR_KEY, {});
+  const colorJob = { running: false, done: 0, total: 0 };
+  let colorSaveTimer = 0;
+  const hex = (r, g, b) => [r, g, b].map((v) => Math.round(v).toString(16).padStart(2, "0")).join("");
+  const rgbOf = (h6) => [0, 2, 4].map((i) => parseInt(h6.slice(i, i + 2), 16));
+  const lum = ([r, g, b]) => (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+
+  // Dominant colour, not the average (averages turn most posters to mud).
+  function measure(img) {
+    const c = document.createElement("canvas");
+    c.width = 16; c.height = 24;
+    const x = c.getContext("2d", { willReadFrequently: true });
+    x.drawImage(img, 0, 0, 16, 24);
+    const d = x.getImageData(0, 0, 16, 24).data;
+    const bins = new Map();
+    for (let i = 0; i < d.length; i += 4) {
+      const k = ((d[i] >> 4) << 8) | ((d[i + 1] >> 4) << 4) | (d[i + 2] >> 4);
+      const b = bins.get(k) || [0, 0, 0, 0];
+      b[0]++; b[1] += d[i]; b[2] += d[i + 1]; b[3] += d[i + 2];
+      bins.set(k, b);
+    }
+    const cands = [...bins.values()].map(([n, r, g, b]) => {
+      const rgb = [r / n, g / n, b / n];
+      const mx = Math.max(...rgb) / 255, mn = Math.min(...rgb) / 255, l = (mx + mn) / 2;
+      const sat = mx === mn ? 0 : (mx - mn) / (1 - Math.abs(2 * l - 1));
+      return { n, rgb, score: n * (0.25 + sat) * (l < 0.07 || l > 0.93 ? 0.15 : 1) };
+    }).sort((a, b) => b.score - a.score);
+    const main = cands[0].rgb;
+    const far = (c) => Math.hypot(c.rgb[0] - main[0], c.rgb[1] - main[1], c.rgb[2] - main[2]) > 70;
+    const accent = (cands.find(far) || { rgb: main.map((v) => (lum(main) > 0.5 ? v * 0.5 : v + (255 - v) * 0.5)) }).rgb;
+    return hex(...main) + hex(...accent);
+  }
+
+  function colorOne(slug) {
+    return posterFor(slug).then(([url]) => new Promise((ok) => {
+      const im = new Image();
+      im.crossOrigin = "anonymous";
+      im.onload = () => { try { colors[slug] = measure(im); } catch {} ok(); };
+      im.onerror = () => ok();
+      im.src = url;
+    })).catch(() => {});
+  }
+
+  async function runColorJob() {
+    if (colorJob.running || !stock) return;
+    colorJob.running = true;
+    const todo = stock.films.map(([slug]) => slug).filter((s) => !colors[s]);
+    colorJob.total = stock.films.length;
+    colorJob.done = colorJob.total - todo.length;
+    const lane = limiter(4); // gentle on Letterboxd
+    let n = 0;
+    await Promise.all(todo.map((slug) => lane(async () => {
+      if (!root || root.hidden) return; // store closed: stop, resume next visit
+      await colorOne(slug);
+      colorJob.done++;
+      if (++n % 25 === 0) {
+        if (wall.lay) recolourSections();
+        drawSoon();
+        clearTimeout(colorSaveTimer);
+        colorSaveTimer = setTimeout(() => writeJSON(COLOR_KEY, colors), 400);
+      }
+    })));
+    writeJSON(COLOR_KEY, colors);
+    colorJob.running = false;
+    if (wall.lay) recolourSections();
+    drawSoon();
+  }
+
+  // A section's far-away colour = the average of its films' colours.
+  function recolourSections() {
+    for (const sec of wall.lay.secs) {
+      let r = 0, g = 0, b = 0, n = 0;
+      for (const i of sec.films) {
+        const c = colors[wall.lay.films[i].slug];
+        if (!c) continue;
+        const [cr, cg, cb] = rgbOf(c);
+        r += cr; g += cg; b += cb; n++;
+      }
+      sec.avg = n >= 15 ? `rgb(${r / n | 0},${g / n | 0},${b / n | 0})` : null;
+    }
+  }
+
   function drawSoon() {
     if (wall.frame) return;
     wall.frame = requestAnimationFrame(() => { wall.frame = 0; draw(); });
@@ -1193,6 +1281,9 @@
     }
 
     const secColor = (sec, f) => {
+      if (!f) return sec.avg || `hsl(${sec.hue} 38% 34%)`;
+      const own = colors[f.slug];
+      if (own) return `#${own.slice(0, 6)}`;
       const hv = f ? hash(f.slug) : 0;
       const hue = sec.hue + ((hv % 37) - 18);
       if (!f) return `hsl(${sec.hue} 38% 34%)`;
@@ -1221,6 +1312,9 @@
             ctx.fillStyle = secColor(L.secs[f.sec], f);
             ctx.fillRect(f.x, top, f.w, f.h);
             if (!near || wall.lite) continue;
+            const own = colors[f.slug];
+            // the poster's accent colour as a band across the top
+            if (own) { ctx.fillStyle = `#${own.slice(6)}`; ctx.fillRect(f.x, top, f.w, 16); }
             // a little plastic: lit edge, VHS label band
             ctx.fillStyle = "rgba(255,255,255,0.10)";
             ctx.fillRect(f.x, top, Math.max(px, f.w * 0.18), f.h);
@@ -1231,7 +1325,8 @@
               ctx.rotate(-Math.PI / 2);
               const fs = Math.min(f.w * 0.62, 10);
               ctx.font = `700 ${fs}px "Helvetica Neue", Arial, sans-serif`;
-              ctx.fillStyle = f.year && f.year < 1990 ? "#1a1a1a" : "rgba(255,255,255,0.92)";
+              const light = own && lum(rgbOf(own)) > 0.58;
+              ctx.fillStyle = f.year && f.year < 1990 ? "#1a1a1a" : light ? "rgba(10,12,14,0.9)" : "rgba(255,255,255,0.92)";
               ctx.textBaseline = "middle";
               let t = titleOf(f.name).toUpperCase();
               const vhs = f.year && f.year < 1990;
@@ -1343,7 +1438,8 @@
       `<button type="button" class="lbs-crumb" data-act="aisles">Store</button>` +
       (wall.level === "wall" ? `<i>›</i><button type="button" class="lbs-crumb" data-act="fit">Horror</button>` : "") +
       (sec ? `<i>›</i><button type="button" class="lbs-crumb" data-act="open" data-id="${esc(sec.id)}" data-drop="${esc(sec.id)}">${esc(sec.name)}</button>` : "") +
-      (wall.level === "wall" ? `<span class="lbs-lod">${lod}</span>` : "");
+      (wall.level === "wall" ? `<span class="lbs-lod">${lod}</span>` : "") +
+      (colorJob.total && colorJob.done < colorJob.total ? `<span class="lbs-hint">colours ${fmt(colorJob.done)} / ${fmt(colorJob.total)}</span>` : "");
   }
 
   // The tip: poster + title for the spine under the pointer.
@@ -1394,6 +1490,7 @@
     $(".lbs-zoom", root).hidden = wall.level !== "wall";
     if (wall.level === "aisles") renderAisles();
     else {
+      runColorJob();
       const fresh = wall.canvas !== canvas;
       wall.canvas = canvas;
       buildLayout();
