@@ -1394,7 +1394,7 @@
         runs.push({ ref, sec: si, bay, shelf, x0: start, x1: Math.max(start + 8, x), by: o.y });
         if (ri < refs.length - 1) {
           const next = secIndex.get(parseRef(refs[ri + 1])[0]);
-          bookends.push({ x: x + 1, y, bay, change: next !== si, hue: secs[next].hue });
+          bookends.push({ x: x + 3, y, bay, change: next !== si, next, hue: secs[next].hue });
           x += BOOKEND * squeeze;
         }
       });
@@ -1804,6 +1804,31 @@
     toast(n === 0 ? "Back to the first logo." : "Saved. It'll count as your vote once community voting opens.");
   }
 
+  // Wood grain: a 256x64 tile drawn once, then used as a pattern fill.
+  let woodTile = null, woodFor = null, woodPat = null;
+  function woodPattern(ctx) {
+    if (woodPat && woodFor === ctx) return woodPat;
+    if (!woodTile) {
+      woodTile = document.createElement("canvas");
+      woodTile.width = 256; woodTile.height = 64;
+      const x = woodTile.getContext("2d");
+      x.fillStyle = "#6e4b2e";
+      x.fillRect(0, 0, 256, 64);
+      let seed = 7;
+      const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+      for (let i = 0; i < 46; i++) {
+        const y0 = rnd() * 64, amp = 1 + rnd() * 3, f = 0.01 + rnd() * 0.03, ph = rnd() * 6;
+        x.strokeStyle = rnd() < 0.5 ? `rgba(40,24,12,${0.18 + rnd() * 0.3})` : `rgba(200,150,100,${0.08 + rnd() * 0.12})`;
+        x.lineWidth = 0.6 + rnd() * 1.4;
+        x.beginPath();
+        for (let px = 0; px <= 256; px += 8) { const yy = y0 + Math.sin(px * f * 6.283 + ph) * amp; px ? x.lineTo(px, yy) : x.moveTo(px, yy); }
+        x.stroke();
+      }
+    }
+    woodFor = ctx;
+    return (woodPat = ctx.createPattern(woodTile, "repeat"));
+  }
+
   function drawSoon() {
     if (wall.frame) return;
     wall.frame = requestAnimationFrame(() => { wall.frame = 0; draw(); });
@@ -1841,16 +1866,31 @@
     const seen = new Set(inView);
     const px = 1 / z; // one screen pixel in wall units
 
-    // Bays: back panel, shelf boards, uprights.
+    // Bays: a dark wood back panel, wood shelf boards and uprights. The
+    // grain is one small tile drawn once and repeated (a pattern fill).
+    const grain = woodPattern(ctx);
     for (const b of inView) {
       const { x: bx, y: by } = L.origin(b);
-      ctx.fillStyle = "#171c21";
-      ctx.fillRect(bx, by + WU.sign - 10, WU.bayW, WU.shelves * WU.shelfH + 10);
-      ctx.fillStyle = "#2f3842";
-      for (let s = 1; s <= WU.shelves; s++) ctx.fillRect(bx, by + WU.sign + s * WU.shelfH - WU.lip, WU.bayW, WU.lip);
-      ctx.fillStyle = "#3a4552";
-      ctx.fillRect(bx - 6, by + WU.sign - 10, 10, WU.shelves * WU.shelfH + 20);
-      ctx.fillRect(bx + WU.bayW - 4, by + WU.sign - 10, 10, WU.shelves * WU.shelfH + 20);
+      const H = WU.shelves * WU.shelfH;
+      ctx.fillStyle = grain;
+      ctx.fillRect(bx, by + WU.sign - 10, WU.bayW, H + 10);
+      ctx.fillStyle = "rgba(12,9,7,0.78)"; // the back panel sits in shadow
+      ctx.fillRect(bx, by + WU.sign - 10, WU.bayW, H + 10);
+      for (let s = 1; s <= WU.shelves; s++) {
+        const sy = by + WU.sign + s * WU.shelfH - WU.lip;
+        ctx.fillStyle = grain;
+        ctx.fillRect(bx, sy, WU.bayW, WU.lip);
+        ctx.fillStyle = "rgba(255,230,200,0.16)"; // the lit front edge
+        ctx.fillRect(bx, sy, WU.bayW, 2);
+        ctx.fillStyle = "rgba(0,0,0,0.28)";
+        ctx.fillRect(bx, sy + WU.lip - 3, WU.bayW, 3);
+      }
+      ctx.fillStyle = grain;
+      ctx.fillRect(bx - 6, by + WU.sign - 10, 10, H + 20);
+      ctx.fillRect(bx + WU.bayW - 4, by + WU.sign - 10, 10, H + 20);
+      ctx.fillStyle = "rgba(0,0,0,0.22)";
+      ctx.fillRect(bx + 2, by + WU.sign - 10, 2, H + 20);
+      ctx.fillRect(bx + WU.bayW + 4, by + WU.sign - 10, 2, H + 20);
     }
 
     const secColor = (sec, f) => {
@@ -1986,18 +2026,31 @@
       }
     }
 
-    // Bookends between pieces; where the section changes, tape on the shelf edge too.
+    // Where one section ends and the next begins on a shelf: a divider card
+    // standing between the films, with a tab in the new section's colour.
     if (z >= FAR) {
       for (const be of L.bookends) {
-        if (!seen.has(be.bay) || be.x < x0 - 20 || be.x > x1 + 20) continue;
-        ctx.fillStyle = "#59636e";
-        ctx.fillRect(be.x, be.y - 110, BOOKEND - 3, 110);
-        ctx.fillStyle = "#8a96a3";
-        ctx.fillRect(be.x, be.y - 110, 2, 110);
-        if (be.change) {
-          ctx.fillStyle = `hsl(${be.hue} 70% 55%)`;
-          ctx.fillRect(be.x - 4, be.y, BOOKEND + 5, WU.lip);
-        }
+        if (!be.change || !seen.has(be.bay) || be.x < x0 - 200 || be.x > x1 + 20) continue;
+        const cardTop = be.y - (WU.shelfH - WU.lip) + 6;
+        ctx.fillStyle = "rgba(0,0,0,0.35)";
+        ctx.fillRect(be.x + 2, cardTop + 4, 4, be.y - cardTop - 4);
+        ctx.fillStyle = "#e9e4d8";
+        ctx.fillRect(be.x, cardTop, 4, be.y - cardTop);
+        // the tab
+        const sec = L.secs[be.next];
+        const label = sec ? sec.name.toUpperCase() : "";
+        ctx.font = "800 11px Arial, sans-serif";
+        const tw = Math.min(150, ctx.measureText(label).width + 14);
+        ctx.fillStyle = `hsl(${be.hue} 60% 46%)`;
+        if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(be.x, cardTop - 2, tw, 18, [4, 4, 0, 0]); ctx.fill(); }
+        else ctx.fillRect(be.x, cardTop - 2, tw, 18);
+        ctx.fillStyle = "#fff";
+        ctx.textBaseline = "middle";
+        ctx.textAlign = "left";
+        ctx.save();
+        ctx.beginPath(); ctx.rect(be.x, cardTop - 2, tw - 4, 18); ctx.clip();
+        ctx.fillText(label, be.x + 7, cardTop + 7.5);
+        ctx.restore();
       }
     }
 
@@ -2056,42 +2109,40 @@
       }
     }
 
-    // Up close: laminated signs hung from the shelf edge, always the same
-    // size on screen, repeated along each section so one is always in view.
+    // Up close: laminated signs hung from each shelf's front edge. They're
+    // part of the wall (they zoom with it), overhang the shelf, and repeat
+    // along every section. Click one for its options.
     wall.signs = [];
     if (veil < 0.3) {
-      const fsz = 13 * px, th = 22 * px, gapPx = 340 * px;
+      const fsz = 15, th = 30, spacing = 520;
       ctx.font = `800 ${fsz}px Arial, sans-serif`;
       ctx.textBaseline = "middle";
+      ctx.textAlign = "left";
       for (const r of L.runs) {
         if (!seen.has(r.bay) || r.x1 < x0 || r.x0 > x1) continue;
         const sec = L.secs[r.sec];
         const mode = sortOf(sec.id);
-        const label = sec.name.toUpperCase() + (mode === "year" ? " · BY YEAR" : mode === "index" ? " · INDEX" : "") + " ▾";
-        const tw = ctx.measureText(label).width + 16 * px;
-        if (tw > r.x1 - r.x0 + 4) continue;
-        const ty = r.by + WU.sign + (r.shelf + 1) * WU.shelfH - WU.lip + 3 * px; // hangs from the shelf's front edge
-        const step = tw + gapPx;
-        const spots = [];
-        for (let k = Math.max(0, Math.floor((x0 - r.x0) / step) - 1); ; k++) {
-          const sx = r.x0 + 4 * px + k * step;
-          if (sx > x1 || sx + tw > r.x1) break;
-          if (sx + tw >= x0) spots.push(sx);
-        }
-        if (!spots.length) spots.push(Math.min(Math.max(r.x0 + 4 * px, x0 + 12 * px), r.x1 - tw - 2 * px));
-        for (const sx of spots) {
-          ctx.fillStyle = "rgba(0,0,0,0.4)";
-          ctx.fillRect(sx + 2 * px, ty + 2 * px, tw, th);
+        const label = sec.name.toUpperCase() + (mode === "year" ? " · BY YEAR" : mode === "index" ? " · INDEX" : "");
+        const tw = Math.min(r.x1 - r.x0 - 4, ctx.measureText(label).width + 26);
+        if (tw < 40) continue;
+        const ty = r.by + WU.sign + (r.shelf + 1) * WU.shelfH - WU.lip + 2;
+        for (let sx = r.x0 + 4; sx + tw <= r.x1 + 1; sx += Math.max(spacing, tw + 120)) {
+          if (sx + tw < x0 || sx > x1) continue;
+          ctx.fillStyle = "rgba(0,0,0,0.45)";
+          ctx.fillRect(sx + 3, ty + 3, tw, th);
           ctx.fillStyle = "#f4f1e8";
           ctx.fillRect(sx, ty, tw, th);
           ctx.fillStyle = `hsl(${sec.hue} 60% 45%)`;
-          ctx.fillRect(sx, ty, 5 * px, th);
-          ctx.fillStyle = "rgba(255,255,255,0.35)"; // laminate shine
-          ctx.fillRect(sx, ty, tw, th * 0.35);
-          ctx.fillStyle = "rgba(0,0,0,0.25)"; // tape
-          ctx.fillRect(sx + tw / 2 - 14 * px, ty - 3 * px, 28 * px, 6 * px);
+          ctx.fillRect(sx, ty, 6, th);
+          ctx.fillStyle = "rgba(255,255,255,0.4)"; // laminate shine
+          ctx.fillRect(sx, ty, tw, th * 0.32);
+          ctx.fillStyle = "rgba(220,220,200,0.55)"; // tape at the top
+          ctx.fillRect(sx + tw / 2 - 16, ty - 4, 32, 9);
           ctx.fillStyle = "#14181c";
-          ctx.fillText(label, sx + 10 * px, ty + th / 2 + px);
+          ctx.save();
+          ctx.beginPath(); ctx.rect(sx + 10, ty, tw - 14, th); ctx.clip();
+          ctx.fillText(label, sx + 13, ty + th / 2 + 1);
+          ctx.restore();
           wall.signs.push({ x: sx, y: ty, w: tw, h: th, sec: r.sec });
         }
       }
@@ -2260,7 +2311,8 @@
         if (run) { c.draggable = false; e.preventDefault(); wall.grabAt = p.x - run.x0; return grabDown({ kind: "piece", ref: run.ref, from: "wall" }, e); }
       }
       const i = filmAt(e.offsetX, e.offsetY);
-      if (edit.on && e.button === 0 && i != null) {
+      if (e.button === 0 && i != null) {
+        // Pick the box up (our own drag, not the browser's, which drags the whole picture).
         const f = wall.lay.films[i];
         c.draggable = false;
         e.preventDefault();
@@ -2316,6 +2368,7 @@
       if (i != null && openLogoPicker(i, e.offsetX, e.offsetY)) { e.preventDefault(); showTip(null); }
     });
     c.addEventListener("click", (e) => {
+      if (wall.dragged) { wall.dragged = false; return; }
       if (edit.on) return;
       const i = filmAt(e.offsetX, e.offsetY);
       if (i != null) { showTip(null); openFilm(wall.lay.films[i].slug, wall.lay.films[i].name); }
@@ -2877,7 +2930,13 @@
     const over = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
     wall.dropHint = over ? (d.kind === "piece" ? (d.pour ? pourTarget(d, e.clientX - r.left, e.clientY - r.top) : d.group ? groupTarget(d, e.clientX - r.left, e.clientY - r.top) : dropTarget(d, e.clientX - r.left, e.clientY - r.top)) : dvdTarget(d.slug, e.clientX - r.left, e.clientY - r.top)) : null;
     root.querySelectorAll(".lbs-folder.-over").forEach((el) => el.classList.remove("-over"));
-    const folder = d.kind === "dvd" && document.elementFromPoint(e.clientX, e.clientY)?.closest?.(".lbs-folder[data-drop]");
+    const under = document.elementFromPoint(e.clientX, e.clientY);
+    // Over the inventory tab: open the drawer to drop into.
+    if (d.kind === "dvd" && !ui.pocket && under && under.closest && under.closest(".lbs-pocket-tab")) { ui.pocket = true; renderPocket(); }
+    root.querySelectorAll(".lbs-pocket.-over, .lbs-pocket-tab.-over").forEach((el) => el.classList.remove("-over"));
+    const pocketOver = d.kind === "dvd" && under && under.closest && under.closest(".lbs-pocket, .lbs-pocket-tab");
+    if (pocketOver) { pocketOver.classList.add("-over"); wall.dropHint = null; }
+    const folder = d.kind === "dvd" && under?.closest?.(".lbs-folder[data-drop]");
     // Hold a film over a folder to open it, as when dragging.
     if (folder && folder.dataset.drop && (lib.genres.has(folder.dataset.drop) || lib.cats.has(folder.dataset.drop))) {
       if (d.spring !== folder.dataset.drop) {
@@ -2894,6 +2953,7 @@
     const d = grab;
     if (!d) return;
     grab = null;
+    if (d.live) { wall.dragged = true; setTimeout(() => (wall.dragged = false), 0); }
     if (d.ghost) d.ghost.remove();
     const hint = wall.dropHint;
     wall.dropHint = null;
@@ -2939,7 +2999,9 @@
     const opt = (v, label) => `<button type="button" data-act="sort" data-id="${esc(sec.id)}" data-v="${v}" class="${cur === v ? "-on" : ""}">${label}</button>`;
     box.innerHTML =
       `<b>Sort ${esc(sec.name)}</b><div class="lbs-sortpick-row">${opt("title", "Title")}${opt("year", "Year")}${opt("index", "Index")}</div>` +
-      `<small>${edit.on ? "Sets the default for everyone. In Index, drag DVDs along the shelf to arrange them." : "Just for you. Index is the store's own hand-made order."}</small>`;
+      `<small>${edit.on ? "Sets the default for everyone. In Index, drag DVDs along the shelf to arrange them." : "Just for you. Index is the store's own hand-made order."}</small>` +
+      `<div class="lbs-sortpick-more"><a href="https://docs.google.com/forms/d/e/1FAIpQLSdimOuu93oNmPj3PoPkcWgJNrHqhD9rTCV17-gz_ba05AgPrw/viewform?usp=pp_url&entry.1491097896=${encodeURIComponent(`Sign artwork for the “${sec.name}” section (${sec.id}). Link to the image: `)}" target="_blank" rel="noopener">Upload artwork ↗</a>` +
+      `<button type="button" data-act="req-remove" data-id="${esc(sec.id)}">Request removal</button></div>`;
     box.hidden = false;
     const st = $(".lbs-stage", root).getBoundingClientRect();
     box.style.left = `${Math.max(8, Math.min(sx, st.width - box.offsetWidth - 8))}px`;
