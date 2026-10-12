@@ -2468,10 +2468,10 @@
         const todo = Object.keys(st.lists).filter((k) => !st.lists[k].ids);
         let since = 0;
         await Promise.all(todo.map((key) => (async () => {
-          // Three pages at a time (big lists like Drama run to hundreds of pages).
+          // Page 1, then three pages at a time (big lists like Drama run to hundreds of pages).
           const ids = [];
-          outer: for (let p = 1; p <= 2000; p += 3) {
-            const pages = await Promise.all([p, p + 1, p + 2].map((n) => catPage(key, n)));
+          outer: for (let p = 1; p <= 2000; p += p === 1 ? 1 : 3) {
+            const pages = await Promise.all((p === 1 ? [1] : [p, p + 1, p + 2]).map((n) => catPage(key, n)));
             for (const list of pages) {
               const hits = list.map((f) => index.get(f.slug)).filter((i) => i != null);
               ids.push(...hits);
