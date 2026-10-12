@@ -244,7 +244,13 @@
     ["horror", "Horror"], ["music", "Music"], ["mystery", "Mystery"], ["romance", "Romance"], ["science-fiction", "Science Fiction"],
     ["thriller", "Thriller"], ["tv-movie", "TV Movie"], ["war", "War"], ["western", "Western"],
   ];
-  const STOCKED = "horror";
+  const STOCKED = "horror"; // the genre with hand-made aisles (its own placement rules)
+  // The room: every genre that has films, in genre order, each in its own run
+  // of aisles. (For now only Horror is stocked; the others join as the
+  // catalogue grows.)
+  const roomGenres = () => (lib ? GENRES.map(([id]) => id).filter((g) => lib.genres.has(g) && (lib.count.get(g) || 0) > 0) : [STOCKED]);
+  const inRoom = (genreId) => roomGenres().includes(genreId);
+  const roomCats = () => roomGenres().flatMap((g) => lib.genres.get(g).cats);
   // For now the Store opens straight into the Sorting Desk; the walkable
   // aisles are switched off (set false to bring them back).
   const DESK_ONLY = true;
@@ -1304,7 +1310,9 @@
     return lo;
   }
   // One colour per section, spread round the wheel so neighbours never match.
-  const secHue = (i) => { const n = Math.max(1, lib.genres.get(STOCKED).cats.length), step = n % 5 ? 5 : 3; return (((i * step) % n) * 360) / n + 10; };
+  // One colour per category, spread round the wheel across the whole room.
+  let roomCatCount = 1;
+  const secHue = (i) => { const n = Math.max(1, roomCatCount), step = n % 5 ? 5 : 3; return (((i * step) % n) * 360) / n + 10; };
 
   // Every section's films (shelf order) and its pieces' lengths.
   // How a section is ordered: your own choice, else the house's, else A-Z.
@@ -1393,8 +1401,11 @@
   // its films in shelf order and how much shelf they need.
   function sectionStock() {
     const out = new Map();
-    lib.genres.get(STOCKED).cats.forEach((cid, n) => {
-      for (const bid of blocksOf(cid)) out.set(bid, { id: bid, cat: cid, n, items: [], total: 0 });
+    const cats = roomCats();
+    roomCatCount = cats.length;
+    cats.forEach((cid, n) => {
+      const genre = lib.cats.get(cid).genre;
+      for (const bid of blocksOf(cid)) out.set(bid, { id: bid, cat: cid, genre, n, items: [], total: 0 });
       for (const f of sectionOrder(cid)) {
         const y = yearOf(f.name);
         const B = out.get(f.blk) || out.get(blocksOf(cid).slice(-1)[0]);
@@ -1445,7 +1456,11 @@
     const shelves = {};
     let b = 0, s = 0, used = 0;
     const next = () => { used = 0; if (++s >= WU.shelves) { s = 0; b++; } };
+    let genre = null;
     for (const P of stock_.values()) {
+      // Each genre starts its own run of aisles (a fresh row of bays).
+      if (genre && P.genre && P.genre !== genre && (b > 0 || s > 0 || used > 0)) { b = Math.ceil((b + (s || used ? 1 : 0)) / perRow) * perRow; s = 0; used = 0; }
+      if (P.genre) genre = P.genre;
       let k = 0;
       while (k < P.items.length) {
         let free = CAP - used - (used ? BOOKEND : 0);
@@ -1542,8 +1557,12 @@
     if (edit.on) {
       for (const [bid, list] of leftovers) bucket.push({ sec: bid, cat: sections.get(bid).cat, n: sections.get(bid).n, size: footprint(list), count: list.length, whole: list.length === sections.get(bid).items.length });
     } else if (leftovers.size) {
-      const rest = autoArrange(new Map([...leftovers].map(([cid, items]) => [cid, { id: cid, items }])), perRow).shelves;
-      const start = 1 + Math.max(-1, ...[...where.values()].map((w) => w.bay));
+      const rest = autoArrange(new Map([...leftovers].map(([cid, items]) => [cid, { id: cid, items, genre: sections.get(cid).genre }])), perRow).shelves;
+      let start = 1 + Math.max(-1, ...[...where.values()].map((w) => w.bay));
+      // A different genre than the wall's last starts on a fresh row.
+      const lastGenre = [...refCid].map(([r, c]) => [where.get(r), c]).sort((a, b) => b[0].bay - a[0].bay)[0];
+      const firstLeft = sections.get([...leftovers.keys()][0]);
+      if (lastGenre && firstLeft && sections.get(lastGenre[1]) && sections.get(lastGenre[1]).genre !== firstLeft.genre) start = Math.ceil(start / perRow) * perRow;
       const fed = new Map([...leftovers].map(([cid]) => [cid, 0]));
       for (const [key, list] of Object.entries(rest)) {
         const [b0, sh] = key.split(":").map(Number);
@@ -1704,9 +1723,11 @@
     const aisles = [];
     for (const r of [...runs].sort((a, c) => a.bay - c.bay || a.shelf - c.shelf || a.x0 - c.x0)) {
       const row = Math.floor(r.bay / perRow);
-      const a = aisles[row] || (aisles[row] = { row, y: row * ROW_H, secs: [] });
+      const a = aisles[row] || (aisles[row] = { row, y: row * ROW_H, secs: [], genre: lib.cats.get(secs[r.sec].id).genre });
       if (!a.secs.includes(r.sec)) a.secs.push(r.sec);
     }
+    // Aisles are numbered within their genre.
+    { const seen = new Map(); for (const a of aisles.filter(Boolean)) { const n = (seen.get(a.genre) || 0) + 1; seen.set(a.genre, n); a.num = n; } }
     wall.lay = { films, chunks, secs, runs, bookends, stickers, hang, aisles: aisles.filter(Boolean), left: -AISLE_W - AISLE_GAP, faces: [], idx, bucket, held: H.held, width, height, bays, k: perRow, origin };
     recolourSections();
     renderTray();
@@ -1764,7 +1785,8 @@
   function flyToFolder(id) {
     if (!wall.lay || wall.level !== "wall") return;
     const p = partsOf(id);
-    if (p.genre !== STOCKED || !p.cat) return fit();
+    if (!inRoom(p.genre)) return fit();
+    if (!p.cat) { const g = wall.lay.secs.find((x) => lib.cats.get(x.id).genre === p.genre); const f = g && wall.lay.films[g.films[0]]; return f ? flyTo(f.x + 300, f.y - 120, 0.12) : fit(); }
     const L = wall.lay;
     const i = p.niche ? L.films.findIndex((f) => f.sub === p.niche) : p.sub ? L.films.findIndex((f) => f.sub === p.sub || (lib.subs.get(f.sub) || {}).parent === p.sub) : L.secs.find((s) => s.id === p.cat)?.films[0];
     if (i == null || i < 0) return;
@@ -2873,7 +2895,7 @@
       ctx.textBaseline = "middle";
       ctx.fillStyle = "#f0e6cf";
       ctx.font = `800 64px "Helvetica Neue", Arial, sans-serif`;
-      ctx.fillText(`AISLE ${a.row + 1}`, ax + AISLE_W / 2, ay + 120);
+      ctx.fillText(roomGenres().length > 1 ? `${nameOf(a.genre).toUpperCase()} · AISLE ${a.num}` : `AISLE ${a.num}`, ax + AISLE_W / 2, ay + 120, AISLE_W - 100);
       const n = a.secs.length, top = ay + 200, room = ah - 200 - 80;
       const fs = Math.min(130, (room / n) * 0.6);
       ctx.font = `800 ${fs}px "Helvetica Neue", Arial, sans-serif`;
@@ -3047,7 +3069,7 @@
     box.innerHTML = [...lib.genres.values()]
       .map((g) => {
         const n = lib.count.get(g.id) || 0;
-        const live = g.id === STOCKED;
+        const live = n > 0;
         return (
           `<button type="button" class="lbs-aisle-box${live ? " -live" : ""}" data-act="${live ? "enter" : "open"}" data-id="${esc(g.id)}" data-drop="${esc(g.id)}">` +
           `<span class="lbs-aisle-sign">${esc(g.name)}</span>` +
@@ -3669,7 +3691,7 @@
     const target = right && !lib.genres.has(right) ? landingSub(right) : null;
     // Jump to: the last thing you clicked (a film, or a folder), else the open folder.
     const focus = libUI.focus && (libUI.focus.film ? (lib.place.has(libUI.focus.film[0]) ? libUI.focus : null) : path.includes(libUI.focus.folder) ? libUI.focus : null) || (right ? { folder: right } : null);
-    const jumpOk = focus && (focus.film || (partsOf(focus.folder).genre === STOCKED && focus.folder !== STOCKED));
+    const jumpOk = focus && (focus.film || inRoom(partsOf(focus.folder).genre));
     const jumpLabel = focus ? (focus.film ? titleOf(focus.film[1]) : nameOf(focus.folder)) : "";
     const jumpBtn = `<button type="button" data-act="lib-jump"${jumpOk ? "" : " disabled"} title="${jumpOk ? `Fly to ${esc(jumpLabel)} on the wall` : ""}">Jump to section</button>`;
     const canMove = sel && target && target !== selAt;
@@ -4316,7 +4338,7 @@
 
   // A block's (or category's) colour: its category's.
   const catOfBlock = (id) => (lib.cats.has(id) ? id : lib.subs.has(id) ? lib.subs.get(id).cat : id);
-  const hueOfBlock = (id) => secHue(Math.max(0, lib.genres.get(STOCKED).cats.indexOf(catOfBlock(id))));
+  const hueOfBlock = (id) => secHue(Math.max(0, roomCats().indexOf(catOfBlock(id))));
   function selectSection(id) {
     id = catOfBlock(id);
     edit.sel = id;
@@ -4810,14 +4832,14 @@
       if (el) walkway.track.scrollTo({ left: Math.max(0, el.offsetLeft - 12), behavior: "smooth" });
       return;
     }
-    if (act === "open" && edit.on && lib.cats.has(id) && lib.cats.get(id).genre === STOCKED) { edit.sel = id; drawSoon(); }
+    if (act === "open" && edit.on && lib.cats.has(id) && inRoom(lib.cats.get(id).genre)) { edit.sel = id; drawSoon(); }
     if (act === "open") {
       if (!desk.open) {
         desk.folder = id;
         desk.folder = id;
         return setDesk(true);
       }
-      if (desk.mode === "store" && partsOf(id).genre === STOCKED && wall.level === "aisles" && id !== STOCKED) wall.level = "wall";
+      if (desk.mode === "store" && inRoom(partsOf(id).genre) && wall.level === "aisles" && !lib.genres.has(id)) wall.level = "wall";
       openFolder(id);
       if (desk.mode === "store") requestAnimationFrame(() => flyToFolder(id));
       return;
