@@ -970,7 +970,7 @@
       `<div class="lbs-stage" hidden>` +
       `<div class="lbs-stage-top"><div class="lbs-stage-path"></div>` +
       `<div class="lbs-zoom"><button type="button" data-act="zoom-out" aria-label="Zoom out">−</button><button type="button" data-act="zoom-in" aria-label="Zoom in">+</button></div></div>` +
-      `<div class="lbs-aisles"></div><canvas class="lbs-canvas" draggable="false" aria-label="Horror wall. Scroll to move, pinch or Ctrl-scroll to zoom, drag a spine to a folder."></canvas>` +
+      `<canvas class="lbs-canvas" draggable="false" aria-label="Horror wall. Scroll to move, pinch or Ctrl-scroll to zoom, drag a spine to a folder."></canvas>` +
       `<div class="lbs-tip" hidden></div><div class="lbs-sortpick" hidden></div>` +
       `<div class="lbs-find">` +
       `<div class="lbs-find-box">${ICON_SEARCH}<input type="search" class="lbs-find-q" placeholder="Find a movie in the store" autocomplete="off" spellcheck="false">` +
@@ -3121,35 +3121,16 @@
     tip.style.top = `${Math.max(8, Math.min(sy - th / 2, st.height - th - 8))}px`;
   }
 
-  // The aisles: one box per genre, Horror stocked.
-  function renderAisles() {
-    const box = $(".lbs-aisles", root);
-    const top3 = stock.films.slice(0, 3).map(([s]) => s);
-    box.innerHTML = [...lib.genres.values()]
-      .map((g) => {
-        const n = lib.count.get(g.id) || 0;
-        const live = n > 0;
-        return (
-          `<button type="button" class="lbs-aisle-box${live ? " -live" : ""}" data-act="${live ? "enter" : "open"}" data-id="${esc(g.id)}" data-drop="${esc(g.id)}">` +
-          `<span class="lbs-aisle-sign">${esc(g.name)}</span>` +
-          (live ? `<span class="lbs-aisle-posters">${top3.map((s) => `<img data-slug="${esc(s)}" src="${posterCache.has(s) ? esc(posterCache.get(s)[0]) : EMPTY}" alt="">`).join("")}</span>` : `<span class="lbs-aisle-empty">not stocked yet</span>`) +
-          `<span class="lbs-aisle-n">${fmt(n)} film${n === 1 ? "" : "s"}</span></button>`
-        );
-      })
-      .join("");
-    box.querySelectorAll("img[data-slug]").forEach((im) => posterFor(im.dataset.slug).then(([u]) => (im.src = u)).catch(() => {}));
-  }
-
   function showStage() {
     const stage = $(".lbs-stage", root);
     if (!stage) return;
     stage.hidden = false;
-    const aisles = $(".lbs-aisles", root), canvas = $(".lbs-canvas", root);
-    aisles.hidden = wall.level !== "aisles";
-    canvas.hidden = wall.level !== "wall";
-    $(".lbs-zoom", root).hidden = wall.level !== "wall";
-    if (wall.level === "aisles") renderAisles();
-    else {
+    // One room: the wall is the only view.
+    wall.level = "wall";
+    const canvas = $(".lbs-canvas", root);
+    canvas.hidden = false;
+    $(".lbs-zoom", root).hidden = false;
+    {
       runColorJob();
       loadSharedLogos();
       loadSharedHouse();
@@ -4904,7 +4885,6 @@
         desk.folder = id;
         return setDesk(true);
       }
-      if (desk.mode === "store" && inRoom(partsOf(id).genre) && wall.level === "aisles" && !lib.genres.has(id)) wall.level = "wall";
       openFolder(id);
       if (desk.mode === "store") requestAnimationFrame(() => flyToFolder(id));
       return;
