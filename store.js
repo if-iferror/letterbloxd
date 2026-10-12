@@ -366,17 +366,19 @@
     catState = "loading";
     return fetch(CAT_FILE)
       .then((r) => (r.ok ? r.json() : null))
-      .then((j) => {
-        if (!j || !Array.isArray(j.films)) { catState = "none"; return; }
-        const lists = new Map();
-        for (const [key, [name, gaps]] of Object.entries(j.lists || {})) {
-          let i = -1;
-          lists.set(key, { name, set: new Set(gaps.map((d) => (i += d))) });
-        }
-        catalogue = { at: j.at, films: j.films, lists };
-        catState = "ready";
-      })
+      .then((j) => { if (!useCatalogue(j)) catState = "none"; })
       .catch(() => { catState = "none"; });
+  }
+  function useCatalogue(j) {
+    if (!j || !Array.isArray(j.films)) return false;
+    const lists = new Map();
+    for (const [key, [name, gaps]] of Object.entries(j.lists || {})) {
+      let i = -1;
+      lists.set(key, { name, set: new Set(gaps.map((d) => (i += d))) });
+    }
+    catalogue = { at: j.at, films: j.films, lists };
+    catState = "ready";
+    return true;
   }
   // The films matching a browse path ("genre/horror+comedy/country/italy/decade/1970s"),
   // or null when the catalogue lacks one of its lists.
@@ -2515,14 +2517,14 @@
       (catJob.error ? `<p class="-err">${esc(catJob.error)}</p>` : "") +
       `<div class="lbs-logobuild-row">` +
       (catJob.running ? `<button type="button" data-act="cat-stop">Pause</button>` : st && st.phase === "done" && neededLists().every((k) => st.lists[k]) ? "" : `<button type="button" data-act="cat-start" class="-go">${st && (st.films.length || Object.keys(st.probes).length) ? "Continue" : "Start"}</button>`) +
-      (st && st.phase === "done" ? `<button type="button" data-act="cat-save" class="-go">Download catalogue</button>` : "") +
+      (st && st.phase === "done" ? `<button type="button" data-act="cat-save" class="-go">Download catalogue</button><button type="button" data-act="cat-try">Try it here</button>` : "") +
       (!catJob.running && st ? `<button type="button" data-act="cat-reset">Start over</button>` : "") +
       `<button type="button" data-act="cat-close">Close</button></div>`;
   }
 
   // The file: films in popularity order, [slug, "Title (Year)", rating x100];
   // each list as its name and the gaps between its films' places (small numbers).
-  function downloadCatalogue() {
+  function catalogueJSON() {
     const st = catJob.st;
     const lists = {};
     for (const [k, l] of Object.entries(st.lists)) {
@@ -2530,9 +2532,11 @@
       let prev = -1;
       lists[k] = [l.name, l.ids.map((i) => { const d = i - prev; prev = i; return d; })];
     }
-    const out = { v: 1, at: new Date().toISOString().slice(0, 10), min: st.min, cutPage: st.cutPage, films: st.films, lists };
+    return { v: 1, at: new Date().toISOString().slice(0, 10), min: st.min, cutPage: st.cutPage, films: st.films, lists };
+  }
+  function downloadCatalogue() {
     const a = document.createElement("a");
-    a.href = URL.createObjectURL(new Blob([JSON.stringify(out)], { type: "application/json" }));
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(catalogueJSON())], { type: "application/json" }));
     a.download = "catalogue.json";
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
@@ -5260,6 +5264,12 @@
     if (act === "cat-stop") { catJob.running = false; catJob.msg = "pausing after the requests in flight…"; return renderCatBuild(); }
     if (act === "cat-start") { runCatJob(); return; }
     if (act === "cat-save") return downloadCatalogue();
+    if (act === "cat-try") {
+      // Stock the store from the finished job, in this tab only (nothing published).
+      useCatalogue(JSON.parse(JSON.stringify(catalogueJSON())));
+      stock = stockFromCatalogue(); defaults = null; lib = null;
+      return render();
+    }
     if (act === "cat-reset") { catJob.st = catBlank(); idbDel(CAT_KEY).catch(() => {}); return renderCatBuild(); }
     if (act === "logo-build") { const b = $(".lbs-logobuild", root); b.hidden = !b.hidden; return renderLogoBuild(); }
     if (act === "logo-close") { $(".lbs-logobuild", root).hidden = true; return; }
