@@ -979,7 +979,7 @@
       `<ul class="lbs-find-types lbs-menu" role="menu" hidden><li><button type="button" data-act="find-as" data-v="film" class="-on">Movie</button></li><li><button type="button" disabled>Actor <em>soon</em></button></li><li><button type="button" disabled>Director <em>soon</em></button></li><li><button type="button" disabled>Crew <em>soon</em></button></li></ul>` +
       `<div class="lbs-settings lbs-menu" role="menu" hidden></div>` +
       `<ul class="lbs-find-list" hidden></ul><div class="lbs-card" hidden></div></div>` +
-      `<div class="lbs-logopick" hidden></div><div class="lbs-logobuild" hidden></div>` +
+      `<div class="lbs-logopick" hidden></div><div class="lbs-logobuild" hidden></div><div class="lbs-logobuild lbs-catbuild" hidden></div>` +
       `<p class="lbs-credit" hidden>Title logos from <a href="https://www.themoviedb.org/" target="_blank" rel="noopener">TMDB</a>. This product uses the TMDB API but is not endorsed or certified by TMDB.</p>` +
       `</div>` +
       `<ul class="lbs-rows" role="listbox" aria-multiselectable="true"></ul>` +
@@ -2170,6 +2170,242 @@
     a.download = "horror-logos.json";
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  }
+
+  /* ---------------- the catalogue builder (developer only) ----------------
+   * Reads every popular film once, with its genres, countries, languages and
+   * Letterboxd themes, and saves it as one file (data/catalogue.json) that the
+   * store then loads instead of scraping. Steps:
+   *   1. cutoff  find how far down Letterboxd's popularity list films still
+   *              have about MIN_WATCHES watches (popularity isn't watch count,
+   *              so this samples pages and takes the median)
+   *   2. films   every film above that point, in popularity order
+   *   3. themes  which themes exist: read the Genres tab of a sample of films
+   *   4. lists   every genre, country, language and theme list, read down to
+   *              the cutoff, keeping which of our films are in it
+   * Progress is saved in this browser (IndexedDB), so it can be paused,
+   * closed and continued. */
+  const CAT_DB = `${NS}-store`;
+  const CAT_KEY = "catalogue-job:v1";
+  const CAT_SAMPLE = 1500; // most film pages read to find themes
+  const catJob = { running: false, st: null, msg: "", error: "", started: 0, reqs: 0 };
+  const catLane = limiter(4); // gentle: four requests at a time
+
+  function idb(mode, fn) {
+    return new Promise((ok, fail) => {
+      const open = indexedDB.open(CAT_DB, 1);
+      open.onupgradeneeded = () => open.result.createObjectStore("kv");
+      open.onerror = () => fail(open.error);
+      open.onsuccess = () => {
+        const db = open.result;
+        const tx = db.transaction("kv", mode);
+        const req = fn(tx.objectStore("kv"));
+        tx.oncomplete = () => { db.close(); ok(req && req.result); };
+        tx.onerror = () => { db.close(); fail(tx.error); };
+      };
+    });
+  }
+  const idbGet = (k) => idb("readonly", (s) => s.get(k));
+  const idbPut = (k, v) => idb("readwrite", (s) => s.put(v, k));
+  const idbDel = (k) => idb("readwrite", (s) => s.delete(k));
+
+  // A Letterboxd page, politely: four at a time, backing off when told to.
+  async function lbGet(url) {
+    for (let tries = 0; ; tries++) {
+      if (!catJob.running) throw new Error("paused");
+      const r = await catLane(() => fetch(url, { credentials: "include" }));
+      catJob.reqs++;
+      if (r.ok || r.status === 404) return r.ok ? r.text() : "";
+      if (tries >= 6) throw new Error(`Letterboxd answered ${r.status}`);
+      const wait = r.status === 429 || r.status >= 500 ? 5000 * 2 ** tries : 1500;
+      catJob.msg = `Letterboxd asked us to slow down; waiting ${Math.round(wait / 1000)}s`;
+      renderCatBuild();
+      await new Promise((ok) => setTimeout(ok, wait));
+    }
+  }
+  const parse = (html) => new DOMParser().parseFromString(html, "text/html");
+  async function catPage(path, page) {
+    const html = await lbGet(`/csi/films/films-browser-list/${path ? path + "/" : ""}by/popular/${page > 1 ? `page/${page}/` : ""}?esiAllowFilters=false`);
+    return [...parse(html).querySelectorAll("[data-item-slug]")].map((el) => {
+      const li = el.closest("li") || el;
+      const r = li.querySelector("[data-average-rating]") || (li.dataset.averageRating ? li : null);
+      return { slug: el.dataset.itemSlug, name: el.dataset.itemFullDisplayName || el.dataset.itemName || el.dataset.itemSlug, rating: r ? Math.round(+r.dataset.averageRating * 100) || 0 : 0 };
+    });
+  }
+  async function catWatches(slug) {
+    const a = parse(await lbGet(`/csi/film/${slug}/stats/`)).querySelector('[title^="Watched by"]');
+    return a ? +a.getAttribute("title").replace(/\D/g, "") : 0;
+  }
+
+  const catBlank = () => ({ v: 1, phase: "cutoff", min: 1000, lo: 300, hi: 3000, probes: {}, cutPage: 0, page: 0, films: [], lists: {}, sampled: 0, quiet: 0, names: {} });
+
+  async function catSave() { catJob.st.at = Date.now(); await idbPut(CAT_KEY, catJob.st); }
+
+  async function runCatJob() {
+    if (catJob.running) return;
+    catJob.running = true;
+    catJob.error = "";
+    catJob.started = Date.now();
+    catJob.reqs = 0;
+    renderCatBuild();
+    try {
+      if (!catJob.st) catJob.st = (await idbGet(CAT_KEY)) || catBlank();
+      const st = catJob.st;
+      const tick = () => { catJob.msg = ""; renderCatBuild(); };
+
+      // 1. The cutoff: the last page whose sampled films have a median of MIN watches.
+      if (st.phase === "cutoff") {
+        while (st.hi - st.lo > 8) {
+          const mid = Math.round((st.lo + st.hi) / 2);
+          const list = await catPage("", mid);
+          const pick = [0, 9, 18, 27, 36, 45, 54, 63, 71].map((i) => list[i]).filter(Boolean);
+          const w = (await Promise.all(pick.map((f) => catWatches(f.slug)))).sort((a, b) => a - b);
+          const median = w[w.length >> 1] || 0;
+          st.probes[mid] = median;
+          if (median >= st.min) st.lo = mid; else st.hi = mid;
+          await catSave();
+          tick();
+        }
+        st.cutPage = st.lo;
+        st.phase = "films";
+        await catSave();
+      }
+
+      // 2. Every film down to the cutoff, in popularity order.
+      if (st.phase === "films") {
+        const seen = new Set(st.films.map((f) => f[0]));
+        while (st.page < st.cutPage) {
+          const from = st.page + 1, to = Math.min(st.cutPage, st.page + 20);
+          const pages = await Promise.all(Array.from({ length: to - from + 1 }, (_, i) => catPage("", from + i)));
+          for (const f of pages.flat()) if (!seen.has(f.slug)) { seen.add(f.slug); st.films.push([f.slug, f.name, f.rating]); }
+          st.page = to;
+          await catSave();
+          tick();
+        }
+        st.phase = "themes";
+        await catSave();
+      }
+
+      // 3. Which lists exist: genres, countries and languages are listed by
+      //    Letterboxd; themes are found on a spread-out sample of film pages.
+      if (st.phase === "themes") {
+        for (const [id, name] of GENRES) if (!st.lists[`genre/${id}`]) st.lists[`genre/${id}`] = { name, ids: null };
+        if (!Object.keys(st.lists).some((k) => k.startsWith("country/"))) {
+          const doc = parse(await lbGet("/countries/"));
+          for (const a of doc.querySelectorAll('a[href^="/films/country/"], a[href^="/films/language/"]')) {
+            const m = a.getAttribute("href").match(/^\/films\/(country|language)\/([a-z0-9-]+)\/$/);
+            const name = (a.querySelector(".name") || a).textContent.replace(/[\d,]+\s*$/, "").trim();
+            if (m && name && !st.lists[`${m[1]}/${m[2]}`]) st.lists[`${m[1]}/${m[2]}`] = { name, ids: null };
+          }
+          await catSave();
+        }
+        const N = st.films.length;
+        const step = Math.max(1, Math.floor(N / CAT_SAMPLE));
+        // A fixed shuffle of the sample, so stopping early still covers every rank.
+        const order = Array.from({ length: Math.ceil(N / step) }, (_, i) => i * step).sort((a, b) => ((a * 2654435761) % 4093) - ((b * 2654435761) % 4093));
+        while (st.sampled < order.length && !(st.sampled >= 400 && st.quiet >= 250)) {
+          const batch = order.slice(st.sampled, st.sampled + 8);
+          const pages = await Promise.all(batch.map((i) => lbGet(`/film/${st.films[i][0]}/genres/`)));
+          for (const html of pages) {
+            let fresh = false;
+            for (const m of html.matchAll(/href="\/films\/((?:mini-)?theme\/[a-z0-9-]+)\/[^"]*"[^>]*>([^<]+)</g)) {
+              if (st.lists[m[1]]) continue;
+              st.lists[m[1]] = { name: parse(m[2]).body.textContent.trim(), ids: null };
+              fresh = true;
+            }
+            st.quiet = fresh ? 0 : st.quiet + 1;
+          }
+          st.sampled += batch.length;
+          await catSave();
+          tick();
+        }
+        st.phase = "lists";
+        await catSave();
+      }
+
+      // 4. Each list, read down to the cutoff. A list is in popularity order,
+      //    so the first page with none of our films ends it.
+      if (st.phase === "lists") {
+        const index = new Map(st.films.map((f, i) => [f[0], i]));
+        const todo = Object.keys(st.lists).filter((k) => !st.lists[k].ids);
+        let since = 0;
+        await Promise.all(todo.map((key) => (async () => {
+          const ids = [];
+          for (let p = 1; p <= 2000; p++) {
+            const list = await catPage(key, p);
+            const hits = list.map((f) => index.get(f.slug)).filter((i) => i != null);
+            ids.push(...hits);
+            if (!hits.length || list.length < PER_PAGE) break;
+          }
+          st.lists[key].ids = [...new Set(ids)].sort((a, b) => a - b);
+          if (++since % 10 === 0) await catSave();
+          tick();
+        })()));
+        st.phase = "done";
+        await catSave();
+      }
+    } catch (err) {
+      if (err.message !== "paused") catJob.error = err.message;
+      if (catJob.st) await catSave().catch(() => {});
+    } finally {
+      catJob.running = false;
+      catJob.msg = "";
+      renderCatBuild();
+    }
+  }
+
+  function catProgress(st) {
+    if (!st) return "Not started.";
+    const lists = Object.values(st.lists);
+    const done = lists.filter((l) => l.ids).length;
+    if (st.phase === "cutoff") return `Finding the cutoff (${fmt(st.min)}+ watches)… ${Object.keys(st.probes).length} pages sampled`;
+    if (st.phase === "films") return `Reading films: page ${fmt(st.page)} / ${fmt(st.cutPage)} · ${fmt(st.films.length)} films`;
+    if (st.phase === "themes") return `Finding themes: ${fmt(st.sampled)} film pages read · ${fmt(Object.keys(st.lists).filter((k) => /theme\//.test(k)).length)} themes so far`;
+    if (st.phase === "lists") return `Reading lists: ${fmt(done)} / ${fmt(lists.length)}`;
+    return `Done: ${fmt(st.films.length)} films · ${fmt(lists.length)} lists`;
+  }
+
+  function renderCatBuild() {
+    const box = $(".lbs-catbuild", root);
+    if (!box || box.hidden) return;
+    const st = catJob.st;
+    const mins = catJob.running ? Math.round((Date.now() - catJob.started) / 60000) : 0;
+    box.innerHTML =
+      `<b>Catalogue builder</b>` +
+      `<p>Reads every popular film with its genres, countries, languages and themes, then downloads <code>catalogue.json</code> for the repo. Takes about an hour; keep this tab open. You can pause and continue later.</p>` +
+      `<p>${esc(catProgress(st))}</p>` +
+      (st && st.cutPage ? `<p>Cutoff: page ${fmt(st.cutPage)} (about ${fmt(st.cutPage * PER_PAGE)} films)</p>` : "") +
+      (catJob.running ? `<p>${fmt(catJob.reqs)} requests in ${mins} min${catJob.msg ? ` · ${esc(catJob.msg)}` : ""}</p>` : "") +
+      (catJob.error ? `<p class="-err">${esc(catJob.error)}</p>` : "") +
+      `<div class="lbs-logobuild-row">` +
+      (catJob.running ? `<button type="button" data-act="cat-stop">Pause</button>` : st && st.phase === "done" ? "" : `<button type="button" data-act="cat-start" class="-go">${st && (st.films.length || Object.keys(st.probes).length) ? "Continue" : "Start"}</button>`) +
+      (st && st.phase === "done" ? `<button type="button" data-act="cat-save" class="-go">Download catalogue</button>` : "") +
+      (!catJob.running && st ? `<button type="button" data-act="cat-reset">Start over</button>` : "") +
+      `<button type="button" data-act="cat-close">Close</button></div>`;
+  }
+
+  // The file: films in popularity order, [slug, "Title (Year)", rating x100];
+  // each list as its name and the gaps between its films' places (small numbers).
+  function downloadCatalogue() {
+    const st = catJob.st;
+    const lists = {};
+    for (const [k, l] of Object.entries(st.lists)) {
+      if (!l.ids || !l.ids.length) continue;
+      let prev = -1;
+      lists[k] = [l.name, l.ids.map((i) => { const d = i - prev; prev = i; return d; })];
+    }
+    const out = { v: 1, at: new Date().toISOString().slice(0, 10), min: st.min, cutPage: st.cutPage, films: st.films, lists };
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(out)], { type: "application/json" }));
+    a.download = "catalogue.json";
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  }
+  async function openCatBuild() {
+    const b = $(".lbs-catbuild", root);
+    b.hidden = !b.hidden;
+    if (!catJob.st) catJob.st = (await idbGet(CAT_KEY).catch(() => null)) || null;
+    renderCatBuild();
   }
 
   // Right-click a spine: the film's other TMDB logos, to pick from.
@@ -3561,7 +3797,7 @@
       `<h6>Your store</h6>` +
       `<p class="lbs-menu-note">Your shelves, picks and inventory live in this browser. Back them up before clearing your browser's data.</p>` +
       `<div class="lbs-menu-btns"><button type="button" data-act="mine-save">Back up</button><label class="lbs-restore">Restore<input type="file" accept="application/json,.json" class="lbs-restore-file" hidden></label></div>` +
-      (DEV_TOOLS ? `<h6>Developer</h6><div class="lbs-menu-btns"><button type="button" data-act="logo-build">${logoJob.running ? `Logos ${fmt(logoJob.done)} / ${fmt(logoJob.total)}` : "Logo builder…"}</button></div>` : "");
+      (DEV_TOOLS ? `<h6>Developer</h6><div class="lbs-menu-btns"><button type="button" data-act="logo-build">${logoJob.running ? `Logos ${fmt(logoJob.done)} / ${fmt(logoJob.total)}` : "Logo builder…"}</button><button type="button" data-act="cat-build">${catJob.running ? "Catalogue: running" : "Catalogue builder…"}</button></div>` : "");
   }
   // Formats: each on or off, each with the last year it covers. The last one
   // switched on covers everything after, so its cutoff is greyed out (as is
@@ -4848,6 +5084,12 @@
       return toast("Discarded your unpublished changes.");
     }
 
+    if (act === "cat-build") return openCatBuild();
+    if (act === "cat-close") { $(".lbs-catbuild", root).hidden = true; return; }
+    if (act === "cat-stop") { catJob.running = false; catJob.msg = "pausing after the requests in flight…"; return renderCatBuild(); }
+    if (act === "cat-start") { runCatJob(); return; }
+    if (act === "cat-save") return downloadCatalogue();
+    if (act === "cat-reset") { catJob.st = catBlank(); idbDel(CAT_KEY).catch(() => {}); return renderCatBuild(); }
     if (act === "logo-build") { const b = $(".lbs-logobuild", root); b.hidden = !b.hidden; return renderLogoBuild(); }
     if (act === "logo-close") { $(".lbs-logobuild", root).hidden = true; return; }
     if (act === "logo-stop") { logoJob.running = false; return renderLogoBuild(); }
