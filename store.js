@@ -259,13 +259,15 @@
   const MINE_KEY = `${NS}:store:mine:v1`;
   let mine = readJSON(MINE_KEY, null) || {};
   mine = { place: {}, cats: {}, subs: {}, recent: [], view: "community", sort: {}, held: [], colors: {}, wash: {}, ...mine };
-  const saveMine = () => writeJSON(MINE_KEY, mine);
+  let paintVer = 0; // bumps when anything that colours the far-away wall changes
+  const saveMine = () => { paintVer++; return writeJSON(MINE_KEY, mine); };
 
   /* What everyone has changed (the store's shared edits), folded by the
    * backend into one small state file and fetched once per visit. Layers:
    * built-in defaults < house plan < shared edits < your own edits. */
   let shared = { place: {}, logo: {}, color: {}, wash: {}, franchises: {}, cats: {}, subs: {} };
   function applySharedState(data) {
+    paintVer++;
     const next = { place: {}, logo: {}, color: {}, wash: {}, franchises: {}, cats: {}, subs: {} };
     const parse = (v) => { try { return typeof v === "string" && /^[\[{"]|^null$|^-?\d/.test(v) ? JSON.parse(v) : v; } catch { return v; } };
     for (const [kind, target, raw] of Object.values((data && data.edits) || {})) {
@@ -1381,7 +1383,7 @@
   const yearInk = (own) => (own && lum(rgbOf(own)) > 0.62 ? "rgba(10,12,14,0.85)" : "rgba(255,255,255,0.9)");
   const reduceMotion = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-  const wall = { level: "wall", lay: null, cam: { x: 0, y: 0, z: 0.05 }, hover: null, pin: null, lite: false, slow: 0, imgs: new Map(), logos: new Map(), frame: 0 };
+  const wall = { level: "wall", bayCache: new Map(), lay: null, cam: { x: 0, y: 0, z: 0.05 }, hover: null, pin: null, lite: false, slow: 0, imgs: new Map(), logos: new Map(), frame: 0 };
   // 1969 and earlier: round steel film cans, standing on edge. Then VHS, DVD, Blu-ray.
   const isCan = (y) => fmtOf(y) === "can";
   const CAN_RX = 5, CAN_T = 25; // a can's lid ellipse half-width and rim thickness (see drawCan)
@@ -1998,7 +2000,7 @@
     return posterFor(slug).then(([url]) => new Promise((ok) => {
       const im = new Image();
       im.crossOrigin = "anonymous";
-      im.onload = () => { try { colors[slug] = measure(im); } catch {} ok(); };
+      im.onload = () => { try { colors[slug] = measure(im); paintVer++; } catch {} ok(); };
       im.onerror = () => ok();
       im.src = url;
     })).catch(() => {});
@@ -2982,7 +2984,41 @@
     {
       // Every spine in view (detail only up close).
       const near = z >= NEAR, text = z >= TEXT && !wall.lite;
+      // From far away each bay's spines are flat blocks of colour: draw them
+      // once into a small picture per bay and reuse it while nothing changes.
+      const zd = z * dpr;
+      const cacheS = !near && zd <= 0.2 ? (zd <= 0.07 ? 0.07 : 0.2) : 0;
+      const sig = `${paintVer}|${blk ? blk.size : 0}|${wall.lifted || ""}`;
       for (const b of inView) {
+        if (cacheS) {
+          const key = `${b}:${cacheS}`;
+          let e = wall.bayCache.get(key);
+          if (!e || e.lay !== L || e.sig !== sig) {
+            const { x: bx, y: by } = L.origin(b);
+            const X = bx - 30, Y = by + WU.sign - 60, Wd = WU.bayW + 60, Hd = WU.shelves * WU.shelfH + 70;
+            const cv = (e && e.cv) || document.createElement("canvas");
+            cv.width = Math.ceil(Wd * cacheS); cv.height = Math.ceil(Hd * cacheS);
+            const g = cv.getContext("2d");
+            g.setTransform(cacheS, 0, 0, cacheS, -X * cacheS, -Y * cacheS);
+            for (let s = 0; s < WU.shelves; s++) {
+              for (const i of L.chunks.get(`${b}:${s}`) || []) {
+                const f = L.films[i];
+                if (f.slug === wall.lifted || (blk && blk.has(f.slug))) continue;
+                if (f.lean) { g.save(); g.translate(f.x, f.y); g.rotate(-f.lean); g.translate(-f.x, -f.y); }
+                const top = f.y - f.h, body = secColor(L.secs[f.sec], f);
+                if (isCan(f.year)) { g.fillStyle = "#8f979f"; g.fillRect(f.x, top, f.w, f.h); g.fillStyle = body; g.fillRect(f.x + 2, top + PAPER_IN, f.w - 4, f.h - 2 * PAPER_IN); }
+                else { g.fillStyle = body; g.fillRect(f.x, top, f.w, f.h); }
+                if (f.lean) g.restore();
+              }
+            }
+            e = { cv, lay: L, sig, X, Y, Wd, Hd };
+          }
+          wall.bayCache.delete(key);
+          wall.bayCache.set(key, e); // most recently used last
+          if (wall.bayCache.size > 300) wall.bayCache.delete(wall.bayCache.keys().next().value);
+          ctx.drawImage(e.cv, e.X, e.Y, e.Wd, e.Hd);
+          continue;
+        }
         for (let s = 0; s < WU.shelves; s++) {
           const list = L.chunks.get(`${b}:${s}`);
           if (!list) continue;
@@ -3956,6 +3992,7 @@
     all[k] = next;
     saveMine();
     fmtPlan = null;
+    paintVer++;
     canLabels.clear();
     const was = document.activeElement && document.activeElement.dataset && document.activeElement.dataset.fmtTo;
     refresh();
