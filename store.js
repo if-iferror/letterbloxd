@@ -4063,7 +4063,7 @@
       (placing
         ? `<div class="lbs-tray-tools"><span class="lbs-grabtype">Grab <button type="button" data-act="grab" data-v="one" class="${edit.grab === "one" ? "-on" : ""}">Individual</button><button type="button" data-act="grab" data-v="group" class="${edit.grab === "group" ? "-on" : ""}">Group</button></span>` +
           `<span><button type="button" data-act="w-auto">Auto-arrange</button><button type="button" data-act="w-clear">Everything down</button></span></div>` +
-          `<h4>Blocks to place <select class="lbs-tray-filter" aria-label="Show blocks from"><option value="">All categories</option>${[...new Set(list.map((pc) => pc.cat))].map((c) => `<option value="${esc(c)}"${edit.filter === c ? " selected" : ""}>${esc(nameOf(c))}</option>`).join("")}</select></h4>` +
+          `<h4>Blocks to place <select class="lbs-tray-filter" aria-label="Show blocks from"><option value="">All categories</option>${[...new Set(list.map((pc) => pc.cat))].map((c) => `<option value="${esc(c)}"${edit.filter === c ? " selected" : ""}>${esc(roomGenres().length > 1 ? pathOf(c).join(" › ") : nameOf(c))}</option>`).join("")}</select></h4>` +
           `<div class="lbs-tray-list">` +
           (list.length
             ? list.filter((pc) => !edit.filter || pc.cat === edit.filter).map((pc) => {
