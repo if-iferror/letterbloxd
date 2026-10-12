@@ -1283,7 +1283,7 @@
   const yearInk = (own) => (own && lum(rgbOf(own)) > 0.62 ? "rgba(10,12,14,0.85)" : "rgba(255,255,255,0.9)");
   const reduceMotion = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-  const wall = { level: "aisles", lay: null, cam: { x: 0, y: 0, z: 0.05 }, hover: null, pin: null, lite: false, slow: 0, imgs: new Map(), logos: new Map(), frame: 0 };
+  const wall = { level: "wall", lay: null, cam: { x: 0, y: 0, z: 0.05 }, hover: null, pin: null, lite: false, slow: 0, imgs: new Map(), logos: new Map(), frame: 0 };
   // 1969 and earlier: round steel film cans, standing on edge. Then VHS, DVD, Blu-ray.
   const isCan = (y) => fmtOf(y) === "can";
   const CAN_RX = 5, CAN_T = 25; // a can's lid ellipse half-width and rim thickness (see drawCan)
@@ -3093,8 +3093,8 @@
     if (!el) return;
     const sec = wall.level === "wall" ? sectionAtCenter() : null;
     el.innerHTML =
-      `<button type="button" class="lbs-crumb" data-act="aisles">Store</button>` +
-      (wall.level === "wall" ? `<i>›</i><button type="button" class="lbs-crumb" data-act="fit">Horror</button>` : "") +
+      `<button type="button" class="lbs-crumb" data-act="fit" title="See the whole room">Store</button>` +
+      (sec ? `<i>›</i><button type="button" class="lbs-crumb" data-act="go-genre" data-id="${esc(lib.cats.get(sec.id).genre)}">${esc(nameOf(lib.cats.get(sec.id).genre))}</button>` : "") +
       (sec ? `<i>›</i><button type="button" class="lbs-crumb" data-act="open" data-id="${esc(sec.id)}" data-drop="${esc(sec.id)}">${esc(sec.name)}</button>` : "") +
       (colorJob.total && colorJob.done < colorJob.total ? `<span class="lbs-hint">colours ${fmt(colorJob.done)} / ${fmt(colorJob.total)}</span>` : "") +
       (logoJob.running ? `<span class="lbs-hint">logos ${fmt(logoJob.done)} / ${fmt(logoJob.total)}</span>` : "");
@@ -4909,7 +4909,8 @@
       if (desk.mode === "store") requestAnimationFrame(() => flyToFolder(id));
       return;
     }
-    if (act === "aisles") { wall.level = "aisles"; return showStage(); }
+    if (act === "aisles") return fit(); // (there's only the room now)
+    if (act === "go-genre") return flyToFolder(id);
     if (act === "enter") { wall.level = "wall"; desk.folder = id; renderFolders(); return showStage(); }
     if (act === "fit") return fit();
     if (act === "zoom-in" || act === "zoom-out") {
