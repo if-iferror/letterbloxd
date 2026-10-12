@@ -2468,12 +2468,15 @@
         const todo = Object.keys(st.lists).filter((k) => !st.lists[k].ids);
         let since = 0;
         await Promise.all(todo.map((key) => (async () => {
+          // Three pages at a time (big lists like Drama run to hundreds of pages).
           const ids = [];
-          for (let p = 1; p <= 2000; p++) {
-            const list = await catPage(key, p);
-            const hits = list.map((f) => index.get(f.slug)).filter((i) => i != null);
-            ids.push(...hits);
-            if (!hits.length || list.length < PER_PAGE) break;
+          outer: for (let p = 1; p <= 2000; p += 3) {
+            const pages = await Promise.all([p, p + 1, p + 2].map((n) => catPage(key, n)));
+            for (const list of pages) {
+              const hits = list.map((f) => index.get(f.slug)).filter((i) => i != null);
+              ids.push(...hits);
+              if (!hits.length || list.length < PER_PAGE) break outer;
+            }
           }
           st.lists[key].ids = [...new Set(ids)].sort((a, b) => a - b);
           if (++since % 10 === 0) await catSave();
