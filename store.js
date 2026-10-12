@@ -2333,8 +2333,12 @@
     ctx.lineWidth = 3;
     ctx.beginPath(); ctx.ellipse(cxR - 2.2, cy, rx, ry - 1.5, 0, Math.PI * 0.6, Math.PI * 1.4); ctx.stroke();
     ctx.lineCap = "butt";
-    // the near lid (the next can along rests against it)
+    // the near lid (the next can along rests against it). It faces right,
+    // away from the light (which comes from the left, as on the boxes), so
+    // it sits in shade, like the boxes' cover edges.
     canLid(ctx, cxR, cy, rx, ry, null);
+    ctx.fillStyle = "rgba(12,14,17,0.42)";
+    ctx.beginPath(); ctx.ellipse(cxR, cy, rx, ry, 0, 0, Math.PI * 2); ctx.fill();
   }
   // The film view's can: turned towards you (like the can on the bench), the
   // poster pasted across its lid.
