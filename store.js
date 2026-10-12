@@ -272,6 +272,7 @@
       else if (kind === "franchise" && v.films) next.franchises[target] = v;
       else if (kind === "add-section" && v.parent) next.cats[target] = { genre: v.parent, name: v.name };
       else if (kind === "add-subsection" && v.parent) next.subs[target] = { cat: v.parent, name: v.name };
+      else if (kind === "add-niche" && v.parent && v.cat) next.subs[target] = { cat: v.cat, parent: v.parent, name: v.name };
     }
     shared = next;
   }
@@ -375,7 +376,19 @@
     const cats = new Map();
     const subs = new Map();
     const addCat = (c) => { cats.set(c.id, { subs: [], ...c }); genres.get(c.genre).cats.push(c.id); };
-    const addSub = (s) => { subs.set(s.id, s); cats.get(s.cat).subs.push(s.id); };
+    // A niche is a subcat inside a subcat (level 4): it has a parent and
+    // sits in that subcat's niches rather than its category's subs.
+    const addSub = (s) => {
+      if (s.parent) {
+        const par = subs.get(s.parent);
+        if (!par || par.parent) return;
+        subs.set(s.id, { ...s, cat: par.cat, niches: [] });
+        par.niches.push(s.id);
+        return;
+      }
+      subs.set(s.id, { niches: [], ...s });
+      cats.get(s.cat).subs.push(s.id);
+    };
 
     for (const [id, name] of GENRES) genres.set(id, { id, name, cats: [] });
     // Every genre has "Everything Else", and every category has "General".
@@ -393,9 +406,16 @@
     for (const [id, c] of Object.entries(shared.cats)) if (genres.has(c.genre) && !cats.has(id)) addCat({ id, genre: c.genre, name: c.name, order: 1 });
     for (const [id, c] of Object.entries(mine.cats)) if (genres.has(c.genre) && !cats.has(id)) addCat({ id, genre: c.genre, name: c.name, own: true, order: 1 });
     for (const c of cats.values()) addSub({ id: `${c.id}/general`, cat: c.id, name: "General", order: 99 });
-    for (const [id, s] of Object.entries(H.subs)) if (cats.has(s.cat) && !subs.has(id)) addSub({ id, cat: s.cat, name: s.name, house: true, order: 50 });
-    for (const [id, s] of Object.entries(shared.subs)) if (cats.has(s.cat) && !subs.has(id)) addSub({ id, cat: s.cat, name: s.name, order: 50 });
-    for (const [id, s] of Object.entries(mine.subs)) if (cats.has(s.cat) && !subs.has(id)) addSub({ id, cat: s.cat, name: s.name, own: true, order: 50 });
+    // Subcats first, then niches (whose parent subcat must exist by then).
+    for (const pass of [0, 1]) {
+      for (const [src, extra] of [[H.subs, { house: true }], [shared.subs, {}], [mine.subs, { own: true }]]) {
+        for (const [id, sc] of Object.entries(src)) {
+          if (!!sc.parent !== !!pass || subs.has(id)) continue;
+          if (!pass && !cats.has(sc.cat)) continue;
+          addSub({ id, cat: sc.cat, parent: sc.parent, name: sc.name, order: 50, ...extra });
+        }
+      }
+    }
     // Deleted folders (never a genre, "Everything Else" or "General").
     for (const id of H.hidden) {
       if (genres.has(id) || /\/(rest|general)$/.test(id)) continue;
@@ -408,8 +428,9 @@
       } else if (subs.has(id)) {
         const sc = subs.get(id);
         subs.delete(id);
-        const c = cats.get(sc.cat);
-        if (c) c.subs = c.subs.filter((x) => x !== id);
+        for (const nid of sc.niches || []) subs.delete(nid);
+        if (sc.parent) { const par = subs.get(sc.parent); if (par) par.niches = par.niches.filter((x) => x !== id); }
+        else { const c = cats.get(sc.cat); if (c) c.subs = c.subs.filter((x) => x !== id); }
       }
     }
     for (const [id, n] of Object.entries(H.names)) { const o = genres.get(id) || cats.get(id) || subs.get(id); if (o && n) o.name = n; }
@@ -441,6 +462,9 @@
     // General, or to the genre's Everything Else.
     const home = (sub) => {
       if (subs.has(sub)) return sub;
+      // A deleted niche's films go back to its subcat.
+      const up = String(sub).split("/").slice(0, -1).join("/");
+      if (up.split("/").length >= 3 && subs.has(up)) return up;
       const parts = String(sub).split("/");
       const cat = parts.slice(0, 2).join("/");
       return cats.has(cat) ? `${cat}/general` : `${parts[0]}/rest/general`;
@@ -457,7 +481,8 @@
     for (const [id, list] of inSub) {
       const s = subs.get(id);
       const c = cats.get(s.cat);
-      count.set(id, list.length);
+      count.set(id, (count.get(id) || 0) + list.length);
+      if (s.parent) count.set(s.parent, (count.get(s.parent) || 0) + list.length);
       count.set(c.id, (count.get(c.id) || 0) + list.length);
       count.set(c.genre, (count.get(c.genre) || 0) + list.length);
     }
@@ -477,6 +502,7 @@
       const o = H.subOrder[c.id];
       const k = (id) => { const i = o ? o.indexOf(id) : -1; return i < 0 ? 1e6 : i; };
       c.subs.sort((a, b) => k(a) - k(b) || byName(subs)(a, b));
+      for (const sid of c.subs) { const o2 = H.subOrder[sid]; const k2 = (id) => { const i = o2 ? o2.indexOf(id) : -1; return i < 0 ? 1e6 : i; }; subs.get(sid).niches.sort((a, b) => k2(a) - k2(b) || byName(subs)(a, b)); }
     }
     const rank = (lib && lib.rank) || new Map(stock.films.map(([slug], i) => [slug, i]));
     lib = { genres, cats, subs, place, names, inSub, count, rank };
@@ -488,27 +514,33 @@
     if (!id) return {};
     if (lib.genres.has(id)) return { genre: id };
     if (lib.cats.has(id)) return { genre: lib.cats.get(id).genre, cat: id };
-    if (lib.subs.has(id)) { const s = lib.subs.get(id); return { genre: lib.cats.get(s.cat).genre, cat: s.cat, sub: id }; }
+    if (lib.subs.has(id)) {
+      const s = lib.subs.get(id);
+      return s.parent ? { genre: lib.cats.get(s.cat).genre, cat: s.cat, sub: s.parent, niche: id } : { genre: lib.cats.get(s.cat).genre, cat: s.cat, sub: id };
+    }
     return {};
   }
   const nameOf = (id) => (lib.genres.get(id) || lib.cats.get(id) || lib.subs.get(id) || {}).name || "";
   function pathOf(id) {
     const p = partsOf(id);
-    return [p.genre, p.cat, p.sub].filter(Boolean).map(nameOf);
+    return [p.genre, p.cat, p.sub, p.niche].filter(Boolean).map(nameOf);
   }
   // A drop on a genre files under its Everything Else; on a category, under General.
   function landingSub(id) {
     const p = partsOf(id);
+    if (p.niche) return p.niche;
     if (p.sub) return p.sub;
     if (p.cat) return `${p.cat}/general`;
     if (p.genre) return `${p.genre}/rest/general`;
     return null;
   }
-  // Films inside any folder, A-Z.
+  // Films inside any folder (and the folders in it), A-Z.
+  const withNiches = (sid) => [sid, ...((lib.subs.get(sid) || {}).niches || [])];
   function filmsIn(id) {
     const p = partsOf(id);
-    if (p.sub) return lib.inSub.get(p.sub) || [];
-    const subsOf = p.cat ? lib.cats.get(p.cat).subs : (lib.genres.get(p.genre)?.cats || []).flatMap((c) => lib.cats.get(c).subs);
+    if (p.niche) return lib.inSub.get(p.niche) || [];
+    if (p.sub) return withNiches(p.sub).flatMap((x) => lib.inSub.get(x) || []).sort(byTitle);
+    const subsOf = (p.cat ? lib.cats.get(p.cat).subs : (lib.genres.get(p.genre)?.cats || []).flatMap((c) => lib.cats.get(c).subs)).flatMap(withNiches);
     return subsOf.flatMap((s) => lib.inSub.get(s) || []).sort(byTitle);
   }
 
@@ -590,8 +622,8 @@
   const ICON_RIGHT = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
   const ICON_UP = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 15l7-7 7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
   const ICON_FOLDER = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4.2l2 2h8.8A1.5 1.5 0 0 1 21 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z" fill="currentColor"/></svg>`;
-  // The store's logo (icons/bloxbuster-logo.svg, inlined: this script runs in the page).
-  const LOGO_SVG = `<svg class="lbs-logo-svg" role="img" aria-label="BLOXBUSTER" viewBox="0 0 593.91 356.35" xmlns="http://www.w3.org/2000/svg"> <g> <path d="m46.016 349.35s-13.519-75.276-13.519-80.1c0-8.2895 19.754-11.137 25.012-21.434 15.319-23.277 1.7079-52.738-20.374-60.266-10.092-3.0776-18.912-1.1085-21.998-16.128-4.8356-26.595-14.953-75.329-15.045-79.688s3.7142-4.9794 3.7142-4.9794 336.45-58.235 498.89-86.45c7.842-1.3621 13.784 7.2542 14.29 19.131 3.2896 10.262 10.206 18.314 17.261 26.664 7.1608 9.233 8.7986 20.722 8.5403 32.056 3.7082 9.8561 2.1019 22.14 9.7018 29.54 2.5521 10.693 1.678 21.223-4.5438 31.136 1.6631 11.017 1.9311 22.024 2.1505 33.555 0.86124 15.359-1.9905 31.286 2.5732 46.19 6.2737 10.603 7.1403 22.836 10.502 34.274-2.8896 8.3731-3.6606 13.41-15.203 15.734-78.012 14.741-234.52 41.51-234.52 41.51s-263.12 46.253-265.62 46.253c-0.49894 0-1.8016-6.997-1.8016-6.997z" fill="#0e3fa9"/> <path d="m124.14 201.95-3.16-17.098-10.009-6.571-26.145 4.833 11.989 64.865 26.145-4.832 8.122-11.231-3.21-17.37-9.511-4.885zm-15.978-10.519 2.542 13.751-6.152 1.137-2.542-13.751zm4.799 25.964 2.676 14.475-6.152 1.137-2.676-14.475zm30.004-45.027-14.927 2.759 11.989 64.865 28.407-5.25-2.257-12.213-13.48 2.491zm54.902-0.418-11.961-7.519-16.013 2.96-8.122 11.231 8.511 46.048 11.6 7.586 16.646-3.077 7.851-11.181zm-14.408 5.564 7.474 40.439-6.242 1.154-7.475-40.439zm56.716-13.383-11.6-7.586-16.284 3.009-8.032 11.215 8.511 46.048 12.415 7.435 15.379-2.842 8.122-11.231-3.378-18.275-14.565 2.692 2.859 15.47-6.423 1.187-7.474-40.439 6.423-1.187 2.341 12.666 14.565-2.692zm19.127-13.266-14.927 2.759 11.989 64.865 14.927-2.759-5.116-27.683 0.181-0.033 15.973 25.676 16.193-2.993-21.314-31.799 7.335-32.698-15.289 2.826-4.654 29.489-0.181 0.033zm69.137 13.324-3.16-17.098-10.009-6.57-26.145 4.832 11.989 64.865 26.145-4.832 8.122-11.231-3.21-17.37-9.51-4.885zm-15.978-10.519 2.542 13.751-6.152 1.137-2.541-13.751zm4.799 25.964 2.676 14.475-6.152 1.137-2.675-14.475zm51.083-48.923-14.927 2.759 9.732 52.652-6.514 1.204-9.732-52.652-14.927 2.759 10.25 55.457 11.691 7.569 16.736-3.094 7.941-11.197zm15.8-2.92-8.031 11.214 3.595 19.451 12.143 7.485 10.826-1.159 2.508 13.571-6.152 1.137-1.589-8.595-14.927 2.759 2.107 11.399 11.419 7.62 16.556-3.06 8.031-11.215-3.645-19.722-11.962-7.519-11.023 1.102-2.441-13.208 6.151-1.138 1.606 8.685 14.927-2.759-2.124-11.489-12.233-7.469zm60.673-11.215-31.754 5.87 2.257 12.213 8.413-1.555 9.732 52.652 14.927-2.759-9.731-52.652 8.413-1.556zm31.089-5.746-27.502 5.083 11.989 64.866 27.864-5.151-2.257-12.213-12.937 2.392-2.96-16.013 10.585-1.957-2.257-12.213-10.585 1.957-2.258-12.214 12.575-2.324zm42.599 1.857-11.781-7.553-25.602 4.732 11.989 64.865 14.927-2.759-4.782-25.873 6.242-1.154 4.782 25.874 14.475-2.676-4.782-25.874-8.68-4.944 6.355-7.631zm-13.957 5.479 2.693 14.566-6.243 1.153-2.692-14.565z" fill="#ffa903"/> <path d="m517.47 22.703-460.66 80.497 37.729 219.1 464.54-81.442" fill="none" stroke="#ffa903" stroke-width="5"/> <path d="m582.41 245.9a9.505 9.505 0 0 0-9.5059 9.5059 9.505 9.505 0 0 0 9.5059 9.5039 9.505 9.505 0 0 0 9.5059-9.5039 9.505 9.505 0 0 0-9.5059-9.5059zm0 1.5742a7.931 7.931 0 0 1 7.9316 7.9316 7.931 7.931 0 0 1-7.9316 7.9316 7.931 7.931 0 0 1-7.9316-7.9316 7.931 7.931 0 0 1 7.9316-7.9316zm-4.1641 2.9609v10.23h1.6504v-4.3476h0.96875c0.58 0 1.0222 0.11851 1.3242 0.35351 0.437 0.319 1.0106 1.1129 1.7246 2.3809l0.9082 1.6133h2.0156l-1.2461-2.0039c-0.596-0.949-1.1017-1.6244-1.5137-2.0274-0.218-0.21-0.50814-0.39001-0.86914-0.54101 0.882-0.068 1.589-0.3786 2.123-0.9336 0.533-0.554 0.80078-1.2061 0.80078-1.9531 0-0.53-0.15952-1.029-0.47852-1.5-0.319-0.47-0.74815-0.79928-1.2852-0.98828-0.538-0.189-1.4064-0.28321-2.6074-0.28321h-3.5156zm1.6504 1.3867h1.877c0.806 0 1.3582 0.05878 1.6562 0.17578 0.298 0.118 0.53122 0.29516 0.69922 0.53516 0.168 0.239 0.25196 0.5105 0.25196 0.8125 0 0.47-0.17349 0.84877-0.52149 1.1348-0.349 0.286-1.002 0.42773-1.959 0.42773h-2.0039v-3.0859z" fill="black" fill-rule="evenodd"/> </g> </svg>`;
+  // The store's logo, an original mark (icons/bloxbuster-logo.svg, inlined: this script runs in the page).
+  const LOGO_SVG = `<svg class="lbs-logo-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 300" role="img" aria-label="BLOXBUSTER"> <rect x="6" y="6" width="588" height="288" rx="26" fill="#17191c" stroke="#3a3f46" stroke-width="4"/> <circle cx="34" cy="34" r="7" fill="#2c3036"/><circle cx="566" cy="34" r="7" fill="#2c3036"/> <circle cx="34" cy="266" r="7" fill="#2c3036"/><circle cx="566" cy="266" r="7" fill="#2c3036"/> <rect x="58" y="34" width="484" height="146" rx="10" fill="#e23b2e"/> <rect x="58" y="34" width="484" height="16" rx="8" fill="#f0e6cf"/> <rect x="58" y="164" width="484" height="16" rx="8" fill="#f0e6cf"/> <text x="300" y="139" text-anchor="middle" font-family="Impact, 'Haettenschweiler', 'Arial Narrow Bold', 'Arial Black', sans-serif" font-weight="900" font-size="92" letter-spacing="2" fill="#fff4dc" textLength="440" lengthAdjust="spacingAndGlyphs">BLOXBUSTER</text> <rect x="160" y="198" width="280" height="76" rx="38" fill="#0b0c0e" stroke="#3a3f46" stroke-width="4"/> <g fill="#f2efe6"> <circle cx="228" cy="236" r="27"/><circle cx="372" cy="236" r="27"/> </g> <g fill="#17191c"> <circle cx="228" cy="236" r="12"/><circle cx="372" cy="236" r="12"/> </g> <g fill="#f2efe6"> <rect x="225" y="222" width="6" height="8"/><rect x="225" y="242" width="6" height="8"/><rect x="214" y="233" width="8" height="6"/><rect x="234" y="233" width="8" height="6"/> <rect x="369" y="222" width="6" height="8"/><rect x="369" y="242" width="6" height="8"/><rect x="358" y="233" width="8" height="6"/><rect x="378" y="233" width="8" height="6"/> </g> <rect x="270" y="226" width="60" height="20" rx="3" fill="#2c3036"/> </svg>`;
   const ICON_GEAR = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><circle cx="16" cy="7" r="2.4" fill="none" stroke="currentColor" stroke-width="2.2"/><circle cx="8" cy="17" r="2.4" fill="none" stroke="currentColor" stroke-width="2.2"/></svg>`;
   const ICON_SEARCH = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="M16 16l4.5 4.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>`;
 
@@ -616,10 +648,12 @@
         if (e.button !== 0) return;
         const pc = edit.on && e.target.closest(".lbs-tray .lbs-piece");
         if (pc) { e.preventDefault(); return grabDown({ kind: "piece", cid: pc.dataset.cid, from: "tray" }, e); }
-        const dv = e.target.closest(".lbs-tray .lbs-dvd, .lbs-pk, .lbs-sp-chip");
-        if (dv && !e.target.closest("button")) { e.preventDefault(); grabDown({ kind: "dvd", slug: dv.dataset.slug, name: dv.dataset.name, from: dv.classList.contains("lbs-sp-chip") ? "card" : "tray" }, e); }
+        const dv = e.target.closest(".lbs-tray .lbs-dvd, .lbs-pk, .lbs-sp-chip, .lbs-lib-film");
+        if (dv && !e.target.closest("button")) { e.preventDefault(); grabDown({ kind: "dvd", slug: dv.dataset.slug, name: dv.dataset.name, from: dv.classList.contains("lbs-lib-film") ? "lib" : dv.classList.contains("lbs-sp-chip") ? "card" : "tray" }, e); }
       });
       root.addEventListener("dblclick", (e) => {
+        const lf = e.target.closest(".lbs-lib-film");
+        if (lf) return openFilm(lf.dataset.slug, lf.dataset.name);
         const row = edit.on && e.target.closest(".lbs-folder");
         if (!row || isFixed(row.dataset.id)) return;
         edit.renaming = row.dataset.id;
@@ -650,11 +684,12 @@
   function render() {
     stock = stock || loadStock();
     const total = stock ? stock.films.length : COLLECTIONS[0].count;
+    root.classList.toggle("lbs-nodates", !!mine.noDates);
     root.innerHTML =
       `<header class="lbs-top">` +
-      `<div class="lbs-brand">LetterBloxd <span>video store</span></div>` +
+      (DESK_ONLY ? "" : `<div class="lbs-brand">LetterBloxd <span>video store</span></div>`) +
       (DESK_ONLY
-        ? `<div class="lbs-logo">${LOGO_SVG}</div>`
+        ? `<div class="lbs-logo">${LOGO_SVG}</div><button type="button" class="lbs-lib-btn" data-act="lib" aria-label="Library: every folder and film">${ICON_FOLDER}<span>Library</span></button>`
         : `<div class="lbs-wing-sign"><b>Horror</b><span>wing</span></div>`) +
       `<nav class="lbs-collections" aria-label="Collections"${DESK_ONLY ? " hidden" : ""}>` +
       COLLECTIONS.map((c) =>
@@ -950,7 +985,7 @@
       `</section>` +
       `<div class="lbs-pocket" hidden></div>` +
       `<div class="lbs-filmview" hidden></div>` +
-      `<div class="lbs-sortpanel" hidden></div>` +
+      `<aside class="lbs-library" aria-label="Library" hidden></aside>` +
       `<div class="lbs-ask" hidden></div>` +
       `<div class="lbs-deskbar">` +
       `<button type="button" class="lbs-pocket-tab" data-act="pocket">${ICON_UP}<span>Inventory</span><em></em></button>` +
@@ -1151,7 +1186,7 @@
     renderEditBar();
     renderTray();
     renderPocket();
-    if (ui.sortFilm) renderSortPanel();
+    renderLibrary();
     if (desk.open && desk.mode === "list") renderFilms();
   }
 
@@ -1176,6 +1211,7 @@
       desk.adding = null;
       houseEdit(`Added “${name}”.`, (H) => {
         if (level === "cat") { H.cats[hid] = { genre: parent, name }; if (parent === STOCKED) H.order = [...lib.genres.get(STOCKED).cats.filter((c) => !/\/rest$/.test(c)), hid, `${STOCKED}/rest`]; }
+        else if (level === "niche") H.subs[hid] = { cat: lib.subs.get(parent).cat, parent, name };
         else H.subs[hid] = { cat: parent, name };
       });
       desk.folder = hid;
@@ -1183,9 +1219,10 @@
       return renderDesk();
     }
     if (level === "cat") mine.cats[id] = { genre: parent, name };
+    else if (level === "niche") mine.subs[id] = { cat: lib.subs.get(parent).cat, parent, name };
     else mine.subs[id] = { cat: parent, name };
     saveMine();
-    shareEdit(level === "cat" ? "add-section" : "add-subsection", id, { name, parent });
+    shareEdit(level === "cat" ? "add-section" : level === "niche" ? "add-niche" : "add-subsection", id, level === "niche" ? { name, parent, cat: lib.subs.get(parent).cat } : { name, parent });
     buildLibrary();
     desk.adding = null;
     desk.folder = id;
@@ -1223,8 +1260,10 @@
   const reduceMotion = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   const wall = { level: "aisles", lay: null, cam: { x: 0, y: 0, z: 0.05 }, hover: null, pin: null, lite: false, slow: 0, imgs: new Map(), logos: new Map(), frame: 0 };
-  const spineW = (y) => (y && y < 1990 ? 20 : y && y < 2010 ? 12 : 10);
-  const spineH = (y) => (y && y < 1990 ? 168 : y && y < 2010 ? 158 : 148);
+  // 1969 and earlier: round steel film cans, standing on edge. Then VHS, DVD, Blu-ray.
+  const isCan = (y) => !!y && y < 1970;
+  const spineW = (y) => (isCan(y) ? 16 : y && y < 1990 ? 20 : y && y < 2010 ? 12 : 10);
+  const spineH = (y) => (isCan(y) ? 176 : y && y < 1990 ? 168 : y && y < 2010 ? 158 : 148);
   const hash = (s) => { let x = 2166136261; for (let i = 0; i < s.length; i++) x = Math.imul(x ^ s.charCodeAt(i), 16777619); return x >>> 0; };
 
   /* The wall is built from "pieces". Each section's films, A-Z, are cut into
@@ -1267,7 +1306,7 @@
       if (!o) { out.push(f); continue; }
       if (done.has(o[0])) continue;
       done.add(o[0]);
-      for (const [s] of frs[o[0]].films) if (bySlug.has(s)) out.push({ ...bySlug.get(s), fr: o[0] });
+      for (const [s] of frs[o[0]].films) if (bySlug.has(s)) out.push({ ...bySlug.get(s), fr: o[0], blk: f.blk });
     }
     return out;
   }
@@ -1287,24 +1326,28 @@
     const held = new Set(H.held.map(([slug]) => slug));
     const homes = franchiseHomes();
     const list = [];
-    for (const sid of lib.cats.get(cid).subs) for (const [slug, name] of lib.inSub.get(sid) || []) if (!held.has(slug) && !homes.has(slug)) list.push({ slug, name, sub: sid });
+    // Every folder in the category is a block on the shelf: each subcat's
+    // niches first, then the subcat itself (whatever its niches didn't take).
+    const blocks = blocksOf(cid);
+    for (const bid of blocks) for (const [slug, name] of lib.inSub.get(bid) || []) if (!held.has(slug) && !homes.has(slug)) list.push({ slug, name, sub: bid, blk: bid });
+    // Films pulled in by a franchise from another category join #1's block.
     for (const [slug, to] of homes) {
       if (to !== cid || held.has(slug)) continue;
       const sid = lib.place.get(slug);
       const hit = (lib.inSub.get(sid) || []).find(([s]) => s === slug);
-      if (hit) list.push({ slug, name: hit[1], sub: sid });
+      if (hit) list.push({ slug, name: hit[1], sub: sid, blk: sid });
     }
     const az = (a, b) => byTitle([a.slug, a.name], [b.slug, b.name]);
     const mode = sortOf(cid);
-    // Subsections sit together on the shelf, each with its own tag, in folder
+    // Blocks sit together on the shelf, each with its own tag, in folder
     // order ("General" last); A-Z or by year inside each.
-    const subAt = new Map(lib.cats.get(cid).subs.map((sid, i) => [sid, /\/general$/.test(sid) ? 1e6 : i]));
-    const bySub = (a, b) => (subAt.get(a.sub) ?? 1e7) - (subAt.get(b.sub) ?? 1e7);
+    const subAt = new Map(blocks.map((bid, i) => [bid, i]));
+    const bySub = (a, b) => (subAt.get(a.blk) ?? 1e7) - (subAt.get(b.blk) ?? 1e7);
     if (mode === "year") return list.sort((a, b) => bySub(a, b) || (yearOf(a.name) || 9999) - (yearOf(b.name) || 9999) || az(a, b));
     if (mode !== "index") return list.sort((a, b) => bySub(a, b) || az(a, b));
     list.sort(az);
     const index = mode === "index" && H.index[cid];
-    if (!index) return list;
+    if (!index) return list.sort(bySub);
     // Hand order; films it doesn't know yet slot in where A-Z would put them.
     const pos = new Map(index.map((slug, i) => [slug, i]));
     const known = list.filter((f) => pos.has(f.slug)).sort((a, b) => pos.get(a.slug) - pos.get(b.slug));
@@ -1316,22 +1359,65 @@
       out.push(f);
     }
     while (k < known.length) out.push(known[k++]);
-    return out;
+    return out.sort(bySub); // hand order, inside each block
+  }
+  // A category's blocks in shelf order: each subcat's niches, then the subcat ("General" last).
+  function blocksOf(cid) {
+    const c = lib.cats.get(cid);
+    if (!c) return [];
+    const subsIn = [...c.subs.filter((x) => !/\/general$/.test(x)), ...c.subs.filter((x) => /\/general$/.test(x))];
+    return subsIn.flatMap((sid) => [...(lib.subs.get(sid).niches || []), sid]);
   }
 
-  // Every stocked section: its films in shelf order and how much shelf they need.
+  // Every block on the wall (a subcat, or a niche), category by category:
+  // its films in shelf order and how much shelf they need.
   function sectionStock() {
     const out = new Map();
     lib.genres.get(STOCKED).cats.forEach((cid, n) => {
-      const items = sectionOrder(cid).map(({ slug, name, sub, fr }) => {
-        const y = yearOf(name);
-        return { slug, name, year: y, w: spineW(y), h: spineH(y), sub, fr, rank: lib.rank.get(slug) ?? 1e9 };
-      });
-      out.set(cid, { id: cid, n, items, total: footprint(items) });
+      for (const bid of blocksOf(cid)) out.set(bid, { id: bid, cat: cid, n, items: [], total: 0 });
+      for (const f of sectionOrder(cid)) {
+        const y = yearOf(f.name);
+        const B = out.get(f.blk) || out.get(blocksOf(cid).slice(-1)[0]);
+        B.items.push({ slug: f.slug, name: f.name, year: y, w: spineW(y), h: spineH(y), sub: f.sub, fr: f.fr, rank: lib.rank.get(f.slug) ?? 1e9 });
+      }
+      for (const bid of blocksOf(cid)) { const B = out.get(bid); B.total = footprint(B.items); if (!B.items.length) out.delete(bid); }
     });
     return out;
   }
+  // Old plans placed whole categories; turn each category piece into the
+  // blocks it held, in order, so the wall looks exactly as it did.
+  function migratePlan(shelves, blocks) {
+    const isCat = (c) => lib.cats.has(c);
+    if (!Object.values(shelves || {}).flat().some((pc) => pc && isCat(pc.c))) return shelves;
+    const perRow = (house().wall && house().wall.perRow) || 1;
+    const refs = [];
+    for (const [key, list] of Object.entries(shelves)) list.forEach((pc, slot) => { const [bay, shelf] = key.split(":").map(Number); refs.push({ key, slot, bay, shelf, pc }); });
+    refs.sort((a, b) => Math.floor(a.bay / perRow) - Math.floor(b.bay / perRow) || a.bay % perRow - (b.bay % perRow) || a.shelf - b.shelf || a.slot - b.slot);
+    const queue = new Map(); // category -> its blocks' films, in order, with their block
+    for (const B of blocks.values()) { const q = queue.get(B.cat) || queue.set(B.cat, []).get(B.cat); for (const it of B.items) q.push([B.id, it.w + 1]); }
+    const pos = new Map();
+    const out = {};
+    for (const r of refs) {
+      const list = out[r.key] || (out[r.key] = []);
+      if (!isCat(r.pc.c)) { list.push(r.pc); continue; }
+      const q = queue.get(r.pc.c) || [];
+      let k = pos.get(r.pc.c) || 0, used = 0, cur = null;
+      const parts = [];
+      while (k < q.length && (!parts.length || used + q[k][1] <= r.pc.u)) {
+        const [bid, w] = q[k++];
+        if (!cur || cur.c !== bid) parts.push((cur = { c: bid, u: 0 }));
+        cur.u += w; used += w;
+      }
+      pos.set(r.pc.c, k);
+      if (!parts.length) continue;
+      parts[parts.length - 1].u += Math.max(0, r.pc.u - used); // keep the piece's size
+      list.push(...parts);
+    }
+    for (const k of Object.keys(out)) if (!out[k].length) delete out[k];
+    return out;
+  }
   const MIN_PIECE = 30; // the smallest space worth putting a section into
+  const SQUEEZE_MAX = CAP * 0.12; // films over a block's space that may squeeze onto its shelf
 
   // The default arrangement: sections one after another, each starting
   // right where the last one ended, down each bay and then across.
@@ -1372,7 +1458,9 @@
     // No plan yet: viewers get the automatic layout; a moderator starts with
     // an empty wall and every section in the workspace.
     const valid = (x) => x && typeof x === "object" && sections.has(x.c) && x.u > 0;
-    const saved = H.wall && H.wall.shelves && Object.values(H.wall.shelves).flat().every(valid) ? H.wall : null;
+    // A plan from before blocks is converted; pieces of folders that no
+    // longer exist are simply left out.
+    const saved = H.wall && H.wall.shelves && Object.keys(H.wall.shelves).length ? { ...H.wall, shelves: migratePlan(H.wall.shelves, sections) } : null;
     const plan = saved || (edit.on ? { perRow, shelves: {} } : autoArrange(sections, perRow));
     wall.plan = { perRow, shelves: plan.shelves };
     const origin = (b) => ({ x: (b % perRow) * (WU.bayW + WU.gap), y: Math.floor(b / perRow) * ROW_H });
@@ -1410,11 +1498,29 @@
         while (k < P.items.length && (!list.length || acc + P.items[k].w + 1 <= u)) { acc += P.items[k].w + 1; list.push(P.items[k++]); }
         content.set(ref, list);
       }
-      if (k < P.items.length) leftovers.set(P.id, P.items.slice(k));
+      if (k < P.items.length) {
+        // A few films over: squeeze them onto the block's last piece. More than
+        // that: they wait in the inventory (viewers: after the last bay).
+        const over = P.items.slice(k);
+        if (refs.length && footprint(over) <= SQUEEZE_MAX) content.get(refs[refs.length - 1]).push(...over);
+        else leftovers.set(P.id, over);
+      }
+    }
+    // Viewers: a new block with no shelf of its own sits with its siblings
+    // (on the last piece of its category, squeezed in) until a moderator places it.
+    if (!edit.on) {
+      for (const [bid, items] of [...leftovers]) {
+        if (footprint(items) > SQUEEZE_MAX) continue;
+        const cat = sections.get(bid).cat;
+        const sib = [...refCid].filter(([, c]) => sections.has(c) && sections.get(c).cat === cat).map(([r]) => r).sort((a, b) => cmp(where.get(a), where.get(b)));
+        if (!sib.length) continue;
+        content.get(sib[sib.length - 1]).push(...items);
+        leftovers.delete(bid);
+      }
     }
     const bucket = [];
     if (edit.on) {
-      for (const [cid, list] of leftovers) bucket.push({ sec: cid, n: sections.get(cid).n, size: footprint(list), count: list.length, whole: list.length === sections.get(cid).items.length });
+      for (const [bid, list] of leftovers) bucket.push({ sec: bid, cat: sections.get(bid).cat, n: sections.get(bid).n, size: footprint(list), count: list.length, whole: list.length === sections.get(bid).items.length });
     } else if (leftovers.size) {
       const rest = autoArrange(new Map([...leftovers].map(([cid, items]) => [cid, { id: cid, items }])), perRow).shelves;
       const start = 1 + Math.max(-1, ...[...where.values()].map((w) => w.bay));
@@ -1438,14 +1544,15 @@
         shelfList.set(nk, keep);
       }
     }
-    const parseRef = (ref) => [refCid.get(ref)];
+    const parseRef = (ref) => [sections.get(refCid.get(ref)).cat, refCid.get(ref)];
     wall.refs = { refCid, refU };
     wall.leftovers = leftovers;
 
     const films = [], chunks = new Map(), secs = [], secIndex = new Map(), runs = [], bookends = [], idx = new Map();
     for (const P of sections.values()) {
-      secIndex.set(P.id, secs.length);
-      secs.push({ id: P.id, name: lib.cats.get(P.id).name, hue: secHue(P.n), films: [], subs: [] });
+      if (secIndex.has(P.cat)) continue;
+      secIndex.set(P.cat, secs.length);
+      secs.push({ id: P.cat, name: lib.cats.get(P.cat).name, hue: secHue(P.n), films: [], subs: [] });
     }
     let maxBay = 0;
     for (const [key, refs] of shelfList) {
@@ -1502,7 +1609,7 @@
           if (last && last.sub === f.sub) last.x1 = f.x + f.w;
           else parts.push({ sub: f.sub, x0: f.x, x1: f.x + f.w });
         }
-        runs.push({ ref, sec: si, bay, shelf, x0: start, x1: Math.max(start + 8, x), by: o.y, parts });
+        runs.push({ ref, sec: si, blk: parseRef(ref)[1], bay, shelf, x0: start, x1: Math.max(start + 8, x), by: o.y, parts });
         if (ri < refs.length - 1) {
           const next = secIndex.get(parseRef(refs[ri + 1])[0]);
           bookends.push({ x: x + 3, y, bay, change: next !== si, next, hue: secs[next].hue });
@@ -1639,7 +1746,7 @@
     const p = partsOf(id);
     if (p.genre !== STOCKED || !p.cat) return fit();
     const L = wall.lay;
-    const i = p.sub ? L.films.findIndex((f) => f.sub === p.sub) : L.secs.find((s) => s.id === p.cat)?.films[0];
+    const i = p.niche ? L.films.findIndex((f) => f.sub === p.niche) : p.sub ? L.films.findIndex((f) => f.sub === p.sub || (lib.subs.get(f.sub) || {}).parent === p.sub) : L.secs.find((s) => s.id === p.cat)?.films[0];
     if (i == null || i < 0) return;
     const f = L.films[i];
     flyTo(f.x + 300, f.y - 120, p.sub ? 0.9 : 0.25);
@@ -2040,6 +2147,44 @@
     return null;
   }
 
+  /* A film can on its edge, seen side-on: the rim of a short steel cylinder
+   * (its flat lid faces right, like a case's front cover), a rolled lip at
+   * each edge, and a strip of coloured tape round the rim carrying the title.
+   * The lid shows as a thin slanted sliver on the right. */
+  function drawCan(ctx, f, top, tape) {
+    const X0 = f.x, X1 = f.x + f.w, H = f.h;
+    // the lid, at a slant
+    ctx.fillStyle = "#4e545b";
+    ctx.beginPath();
+    ctx.ellipse(X1 - 0.5, top + H / 2 - DEPTH_Y / 2, DEPTH_X + 0.5, H / 2, 0, -Math.PI / 2, Math.PI / 2);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255,255,255,0.18)";
+    ctx.lineWidth = 0.6;
+    ctx.beginPath();
+    ctx.ellipse(X1 - 0.5, top + H / 2 - DEPTH_Y / 2, DEPTH_X * 0.55, H * 0.36, 0, -Math.PI / 2, Math.PI / 2);
+    ctx.stroke();
+    // the rim: brushed steel
+    const g = ctx.createLinearGradient(X0, 0, X1, 0);
+    g.addColorStop(0, "#9aa1a8");
+    g.addColorStop(0.5, "#c9ced3");
+    g.addColorStop(1, "#8a9198");
+    ctx.fillStyle = g;
+    if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(X0, top, f.w, H, 1.2); ctx.fill(); } else ctx.fillRect(X0, top, f.w, H);
+    // rolled lips where the lid and the base meet the rim
+    for (const x of [X0, X1 - 1.6]) {
+      ctx.fillStyle = "rgba(255,255,255,0.35)";
+      ctx.fillRect(x, top, 1.6, H);
+      ctx.fillStyle = "rgba(0,0,0,0.35)";
+      ctx.fillRect(x === X0 ? X0 + 1.6 : X1 - 2, top, 0.4, H);
+    }
+    // the tape, round the rim
+    ctx.fillStyle = tape;
+    ctx.fillRect(X0 + 2.2, top + PAPER_IN, f.w - 4.4, H - 2 * PAPER_IN);
+    ctx.fillStyle = "rgba(255,255,255,0.12)";
+    ctx.fillRect(X0 + 2.2, top + PAPER_IN, f.w - 4.4, 0.8);
+    ctx.fillRect(X0 + 2.2, f.y - PAPER_IN - 0.8, f.w - 4.4, 0.8);
+  }
+
   function draw() {
     const c = wall.canvas, L = wall.lay;
     if (!c || !L || wall.level !== "wall" || !c.isConnected) return;
@@ -2149,7 +2294,8 @@
             // A whisper of depth: we stand a little above and to the right,
             // so each box shows a sliver of its top and of its right-hand
             // face (the cover edge). Neighbours drawn after cover most of it.
-            if (near && !wall.lite) {
+            const can = isCan(f.year);
+            if (near && !wall.lite && !can) {
               // The case as a solid: its rounded outline swept back from the
               // back face to the front, so every corner stays rounded.
               const r = Math.min(CORNER, f.w / 2);
@@ -2184,8 +2330,8 @@
               side(f.y - CASE_END - LAMINATE, f.y - CASE_END, "rgba(255,255,255,0.14)");
               side(top + PAPER_TOP, f.y - PAPER_TOP, body);
               side(top + r, f.y - r, "rgba(0,0,0,0.4)");
-              // the seam on top, where the two halves of the case meet
-              ctx.strokeStyle = "rgba(0,0,0,0.55)";
+              // the seam on top, where the two halves of the case meet (fainter on Blu-ray blue)
+              ctx.strokeStyle = f.year >= 2010 ? "rgba(0,0,0,0.3)" : "rgba(0,0,0,0.55)";
               ctx.lineWidth = Math.max(px, 0.6);
               ctx.beginPath();
               ctx.moveTo(f.x + f.w * 0.5, top);
@@ -2194,7 +2340,10 @@
             }
             // The case: plastic all round, the printed paper wrap inside it,
             // stopping short of each end under a strip of clear laminate.
-            if (near && !wall.lite) {
+            if (can) {
+              if (near && !wall.lite) drawCan(ctx, f, top, body);
+              else { ctx.fillStyle = "#8f979f"; ctx.fillRect(f.x, top, f.w, f.h); ctx.fillStyle = body; ctx.fillRect(f.x + 2, top + PAPER_IN, f.w - 4, f.h - 2 * PAPER_IN); }
+            } else if (near && !wall.lite) {
               ctx.fillStyle = caseTop(f.year);
               if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(f.x, top, f.w, f.h, Math.min(CORNER, f.w / 2)); ctx.fill(); }
               else ctx.fillRect(f.x, top, f.w, f.h);
@@ -2212,10 +2361,13 @@
             // Spine print reads top to bottom (as on real spines): coordinates
             // below run down from the top of the case. Year at the bottom,
             // title or logo centred on the whole spine, clear of the year.
-            const edge = PAPER_IN + YEAR_ZONE;
+            // Title or logo: centred between the top of the paper and the year
+            // (or the bottom of the paper, with dates turned off).
+            const dates = !mine.noDates;
             const yearAt = f.h - PAPER_IN - YEAR_ZONE / 2;
-            const mid = f.h / 2;
-            const span = f.h - 2 * edge - 2;
+            const printTop = PAPER_IN + 2, printEnd = f.h - PAPER_IN - (dates ? YEAR_ZONE : 2);
+            const mid = (printTop + printEnd) / 2;
+            const span = printEnd - printTop;
             const size = z >= 3.4 ? "w500" : z >= 1.6 ? "w300" : "w185";
             const lg = z >= LOGO_Z ? logoImg(f.slug, size) || (size !== "w185" ? logoImg(f.slug, "w185") : null) : null;
             const fs = Math.min(f.w * 0.76, 11);
@@ -2257,18 +2409,30 @@
                   // Too long: shrink to fit, starting from the top of the spine.
                   ctx.font = `700 ${Math.max(2.5, (fs * span) / tw)}px "Helvetica Neue", Arial, sans-serif`;
                   ctx.textAlign = "left";
-                  ctx.fillText(t, edge + 1, 0, span);
+                  ctx.fillText(t, printTop, 0, span);
                   ctx.textAlign = "center";
                 }
               }
-              if (text) {
+              if (text && dates) {
                 ctx.font = `600 ${YEAR_FS}px Arial, sans-serif`;
                 ctx.fillStyle = yearInk(own);
                 ctx.fillText(String(f.year || ""), yearAt, 0);
               }
               ctx.restore();
             }
-            {
+            if (can) {
+              // The rim curves away from us top and bottom: bright across the
+              // middle, dark at the ends (over the label too).
+              const g = ctx.createLinearGradient(0, top, 0, f.y);
+              g.addColorStop(0, "rgba(0,0,0,0.55)");
+              g.addColorStop(0.18, "rgba(0,0,0,0.12)");
+              g.addColorStop(0.45, "rgba(255,255,255,0.10)");
+              g.addColorStop(0.55, "rgba(255,255,255,0.10)");
+              g.addColorStop(0.82, "rgba(0,0,0,0.12)");
+              g.addColorStop(1, "rgba(0,0,0,0.6)");
+              ctx.fillStyle = g;
+              ctx.fillRect(f.x, top, f.w, f.h);
+            } else {
             // Light from the left, over the print too (it's on the plastic): a soft highlight down the left edge (three
             // stacked strips make a cheap gradient) and a thin shadow on the right.
             const e = f.w * 0.05;
@@ -2364,8 +2528,8 @@
         ctx.strokeStyle = `hsl(${sec.hue} 70% 65%)`;
         ctx.lineWidth = 2 * px;
         ctx.strokeRect(r.x0, top, r.x1 - r.x0, h);
-        // The name, as big as fits.
-        const label = sec.name.toUpperCase();
+        // The name, as big as fits (in edit mode, the block's own name).
+        const label = (edit.on && r.blk && r.blk !== sec.id ? nameOf(r.blk) : sec.name).toUpperCase();
         ctx.font = `800 100px Arial, sans-serif`;
         const tw = ctx.measureText(label).width;
         const size = Math.min(h * 0.42, ((r.x1 - r.x0) * 0.86 * 100) / tw);
@@ -2457,14 +2621,16 @@
       if (ax + AISLE_W < x0 || ax > x1 || ay > y1 || ay + ah < y0) continue;
       ctx.fillStyle = "rgba(0,0,0,0.5)";
       ctx.fillRect(ax + 14, ay + 18, AISLE_W, ah);
-      ctx.fillStyle = "#0e3fa9";
+      // in the store's colours: black frame, red panel, cream lettering
+      ctx.fillStyle = "#17191c";
       ctx.fillRect(ax, ay, AISLE_W, ah);
-      ctx.strokeStyle = "#ffa903";
-      ctx.lineWidth = 14;
-      ctx.strokeRect(ax + 34, ay + 34, AISLE_W - 68, ah - 68);
+      ctx.fillStyle = "#e23b2e";
+      ctx.fillRect(ax + 30, ay + 30, AISLE_W - 60, ah - 60);
+      ctx.fillStyle = "#f0e6cf";
+      ctx.fillRect(ax + 30, ay + 170, AISLE_W - 60, 12);
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillStyle = "#ffa903";
+      ctx.fillStyle = "#f0e6cf";
       ctx.font = `800 64px "Helvetica Neue", Arial, sans-serif`;
       ctx.fillText(`AISLE ${a.row + 1}`, ax + AISLE_W / 2, ay + 120);
       const n = a.secs.length, top = ay + 200, room = ah - 200 - 80;
@@ -2472,7 +2638,7 @@
       ctx.font = `800 ${fs}px "Helvetica Neue", Arial, sans-serif`;
       a.secs.forEach((si, i) => {
         const sec = L.secs[si], cy = top + (room / n) * (i + 0.5);
-        ctx.fillStyle = "#fff";
+        ctx.fillStyle = "#fff4dc";
         ctx.fillText(sec.name.toUpperCase(), ax + AISLE_W / 2, cy, AISLE_W - 140);
         ctx.fillStyle = `hsl(${sec.hue} 60% 55%)`;
         ctx.fillRect(ax + AISLE_W / 2 - 120, cy + fs * 0.55, 240, Math.max(6, fs * 0.08));
@@ -2765,7 +2931,6 @@
       const i = filmAt(e.offsetX, e.offsetY);
       if (i != null) {
         showTip(null);
-        if (ui.sortFilm) { ui.sortFilm = null; renderSortPanel(); }
         openFilm(wall.lay.films[i].slug, wall.lay.films[i].name);
         return;
       }
@@ -2833,7 +2998,7 @@
     ui.details.set(slug, p);
     return p;
   }
-  const caseName = (y) => (y && y < 1990 ? "VHS" : y && y < 2010 ? "DVD" : "Blu-ray");
+  const caseName = (y) => (isCan(y) ? "Film can" : y && y < 1990 ? "VHS" : y && y < 2010 ? "DVD" : "Blu-ray");
   const whereIs = (slug) => { const sub = lib.place.get(slug); return sub && lib.subs.has(sub) ? pathOf(sub) : null; };
   const filmActs = (slug, name, extra = "") => {
     const a = (act, label, cls = "") => `<button type="button" class="lbs-fact ${cls}" data-act="${act}" data-slug="${esc(slug)}" data-name="${esc(name)}">${label}</button>`;
@@ -2847,6 +3012,16 @@
   // The box itself: front cover facing you, spine and top in perspective.
   function boxHTML(slug, name, big) {
     const y = yearOf(name), own = colorOf(slug);
+    // A film can, lid facing you: the poster pasted across the lid corner to
+    // corner, the steel showing round it, and the rim curving away on the left.
+    if (isCan(y)) {
+      const D = big ? 330 : 170;
+      return (
+        `<div class="lbs-can" style="--D:${D}px;--tape:${own ? `#${own.slice(0, 6)}` : "#c9b58a"}">` +
+        `<div class="lbs-can-rim"></div><div class="lbs-can-lid"><i></i><img data-poster="${esc(slug)}" alt=""></div>` +
+        `</div>`
+      );
+    }
     const spine = own ? `#${own.slice(0, 6)}` : "#2c3440";
     // The cover art (2:3) fills the paper area exactly; the case is as wide as that.
     const h = big ? 330 : 170, inset = big ? 7 : 4, w = Math.round(((h - 2 * inset) * 2) / 3), d = Math.round((y && y < 1990 ? 0.2 : y && y < 2010 ? 0.12 : 0.1) * w * 1.4);
@@ -3052,7 +3227,7 @@
   // Click anywhere else and the inventory tucks itself away (unless you'd rather it didn't).
   function maybeCollapsePocket(e) {
     if (!ui.pocket || mine.autoCollapse === false || (grab && grab.live)) return;
-    if (e.target.closest && e.target.closest(".lbs-pocket, .lbs-pocket-tab, .lbs-ask, .lbs-filmview")) return;
+    if (e.target.closest && e.target.closest(".lbs-pocket, .lbs-pocket-tab, .lbs-ask, .lbs-filmview, .lbs-library")) return;
     ui.pocket = false;
     renderPocket();
   }
@@ -3067,6 +3242,7 @@
       `<h6>Shelves</h6>` +
       `<div class="lbs-menu-seg" role="group" aria-label="Whose shelves"><button type="button" data-view="community" class="${mine.view !== "mine" ? "-on" : ""}">Community</button><button type="button" data-view="mine" class="${mine.view === "mine" ? "-on" : ""}">Mine${n ? ` <em>${fmt(n)}</em>` : ""}</button></div>` +
       chk("hideBlocked", !!mine.hideBlocked, "Hide blocked films", "Their spot on the shelf stays empty") +
+      chk("noDates", !mine.noDates, "Years on spines", "The release year at the foot of every box") +
       chk("overlay", !!mine.overlay, "Section colours from afar", "Colour and name each section when zoomed out") +
       `<h6>Inventory</h6>` +
       chk("autoCollapse", mine.autoCollapse !== false, "Auto collapse", "Closes when you click somewhere else") +
@@ -3132,59 +3308,121 @@
     });
   }
 
-  /* Sort: where a film lives. Two columns, sections on the left and the
-   * chosen section's subsections on the right; pick a subsection and Move,
-   * or drag the film's tag onto one. Films only ever live in subsections. */
-  function openSort(slug, name) {
-    ui.sortFilm = [slug, name];
-    const sub = lib.place.get(slug);
-    const p = sub && lib.subs.has(sub) ? partsOf(sub) : { genre: STOCKED };
-    ui.sortGenre = p.genre || STOCKED;
-    ui.sortCat = p.cat || null;
-    ui.sortSub = null;
-    ui.sortAdding = null;
-    renderSortPanel();
+  /* ---------------- the Library ----------------
+   * Every folder and film in the store, in columns like a Finder window:
+   * the folder you're in on the right, the one above it on the left, and a
+   * back arrow to go up. Genre › Category › Subcat › Niche. Subcats list
+   * their niches first, then their own films; niches list their films.
+   * It stays open beside the wall (everything else shifts left). Select a
+   * film, open the folder it should live in, and Move here, or drag it onto
+   * a folder. Drag films into your inventory. "Sort" on any film just opens
+   * the Library on that film. */
+  const libUI = { open: !!mine.libOpen, path: [STOCKED], sel: null, adding: null };
+  function kidsOf(id) {
+    if (!id) return { folders: [...lib.genres.keys()], films: [] };
+    const p = partsOf(id);
+    if (p.niche) return { folders: [], films: lib.inSub.get(id) || [] };
+    if (p.sub) return { folders: (lib.subs.get(id).niches || []).slice(), films: lib.inSub.get(id) || [] };
+    if (p.cat) return { folders: lib.cats.get(id).subs.slice(), films: [] };
+    if (p.genre) return { folders: lib.genres.get(id).cats.slice(), films: [] };
+    return { folders: [], films: [] };
   }
-  function renderSortPanel() {
-    const sp = $(".lbs-sortpanel", root);
-    if (!sp) return;
-    if (!ui.sortFilm) { sp.hidden = true; return; }
-    const [slug, name] = ui.sortFilm;
-    const here = lib.place.get(slug);
-    const herePath = here && lib.subs.has(here) ? pathOf(here) : null;
-    const g = lib.genres.get(ui.sortGenre) || lib.genres.get(STOCKED);
-    if (ui.sortCat && !lib.cats.has(ui.sortCat)) ui.sortCat = null;
-    const cats = g.cats;
-    const hue = (cid) => { const sec = wall.lay && wall.lay.secs.find((x) => x.id === cid); return sec ? `hsl(${sec.hue} 60% 50%)` : "#567"; };
-    const catRow = (cid) =>
-      `<li class="lbs-sp-row${ui.sortCat === cid ? " -sel" : ""}" data-act="sp-cat" data-id="${esc(cid)}"><i style="background:${hue(cid)}"></i><span>${esc(nameOf(cid))}</span>${here && here.startsWith(cid + "/") ? '<em>here</em>' : ""}<small>${fmt(lib.count.get(cid) || 0)}</small></li>`;
-    const subRow = (sid) =>
-      `<li class="lbs-sp-row lbs-folder${ui.sortSub === sid ? " -sel" : ""}${here === sid ? " -here" : ""}" data-act="sp-sub" data-id="${esc(sid)}" data-drop="${esc(sid)}"><span>${esc(nameOf(sid))}</span>${here === sid ? '<em>here</em>' : ""}<small>${fmt(lib.count.get(sid) || 0)}</small></li>`;
-    const adding = (lvl) =>
-      ui.sortAdding === lvl
-        ? `<li class="lbs-sp-new-row"><input type="text" class="lbs-sp-new" data-level="${lvl}" maxlength="40" placeholder="${lvl === "cat" ? "Name the new section" : "Name the new subsection"}"></li>`
-        : `<li class="lbs-sp-add"><button type="button" data-act="sp-add" data-level="${lvl}">+ New ${lvl === "cat" ? "section" : "subsection"}</button></li>`;
-    const target = ui.sortSub && ui.sortSub !== here ? ui.sortSub : null;
-    const fr = franchiseOf(slug);
-    sp.innerHTML =
-      `<div class="lbs-sp-head">` +
-      `<div class="lbs-sp-film"><img data-poster="${esc(slug)}" alt=""><div class="lbs-sp-chip" data-slug="${esc(slug)}" data-name="${esc(name)}" title="Drag onto a subsection"><b>${esc(titleOf(name))}</b> <span>${yearOf(name) || ""}</span><small>${herePath ? `Now in ${esc(herePath.slice(1).join(" › "))}` : "Not on the shelves yet"}</small></div></div>` +
-      `<button type="button" class="lbs-sp-x" data-act="sp-close" aria-label="Close">${ICON_CLOSE}</button></div>` +
-      `<div class="lbs-sp-genre"><label>Genre <select class="lbs-sp-genre-pick">${[...lib.genres.values()].map((x) => `<option value="${esc(x.id)}"${x.id === g.id ? " selected" : ""}>${esc(x.name)}</option>`).join("")}</select></label></div>` +
-      `<div class="lbs-sp-cols">` +
-      `<div class="lbs-sp-col"><h5>Sections</h5><ul>${cats.map(catRow).join("")}${adding("cat")}</ul></div>` +
-      `<div class="lbs-sp-col"><h5>${ui.sortCat ? esc(nameOf(ui.sortCat)) : "Subsections"}</h5><ul>${ui.sortCat ? lib.cats.get(ui.sortCat).subs.map(subRow).join("") + adding("sub") : '<li class="lbs-sp-hint">Pick a section</li>'}</ul></div>` +
-      `</div>` +
-      `<div class="lbs-sp-foot">` +
-      `<button type="button" class="lbs-sp-move" data-act="sp-move"${target ? "" : " disabled"}>Move</button>` +
-      `<button type="button" class="lbs-sp-ghost" data-act="fr-open">${fr ? `Franchise: ${esc(fr.name)}` : "Add to franchise"}</button>` +
-      `<button type="button" class="lbs-sp-link" data-act="req-remove-film">Request removal</button>` +
+  const childLevel = (id) => { if (!id) return null; const p = partsOf(id); return p.niche ? null : p.sub ? "niche" : p.cat ? "sub" : p.genre ? "cat" : null; };
+  const LEVEL_WORD = { cat: "category", sub: "subcat", niche: "niche" };
+  let libIo = null;
+
+  function setLibrary(open) {
+    libUI.open = open;
+    mine.libOpen = open;
+    saveMine();
+    renderLibrary();
+  }
+  // Open the Library on a film: its folder open, the film highlighted.
+  function openLibraryAt(slug, name) {
+    const p = partsOf(lib.place.get(slug));
+    libUI.path = [p.genre, p.cat, p.sub, p.niche].filter(Boolean);
+    if (!libUI.path.length) libUI.path = [STOCKED];
+    libUI.sel = [slug, name || lib.names.get(slug) || slug];
+    setLibrary(true);
+    requestAnimationFrame(() => root.querySelector(`.lbs-library [data-film="${CSS.escape(slug)}"]`)?.scrollIntoView({ block: "center" }));
+  }
+  function renderLibrary() {
+    const box = root && $(".lbs-library", root);
+    if (!box || !lib) return;
+    root.classList.toggle("lbs-lib-open", libUI.open);
+    $(".lbs-lib-btn", root)?.classList.toggle("-on", libUI.open);
+    box.hidden = !libUI.open;
+    if (!libUI.open) return;
+    libUI.path = libUI.path.filter((id) => lib.genres.has(id) || lib.cats.has(id) || lib.subs.has(id));
+    const path = libUI.path;
+    const right = path.length ? path[path.length - 1] : null;
+    const left = path.length >= 2 ? path[path.length - 2] : null;
+    const held = new Set((mine.held || []).map(([x]) => x));
+    const sel = libUI.sel;
+    const selAt = sel ? lib.place.get(sel[0]) : null;
+    const selPath = selAt ? (() => { const p = partsOf(selAt); return [p.genre, p.cat, p.sub, p.niche].filter(Boolean); })() : [];
+    const hue = (id) => { const c = lib.cats.has(id) ? id : lib.subs.has(id) ? lib.subs.get(id).cat : null; return c && lib.cats.get(c).genre === STOCKED ? `hsl(${hueOfBlock(c)} 60% 50%)` : "#567"; };
+    const folderRow = (id, side) =>
+      `<li class="lbs-lib-row lbs-folder${path.includes(id) ? " -on" : ""}" data-act="lib-open" data-side="${side}" data-id="${esc(id)}" data-drop="${esc(id)}">` +
+      `<i class="lbs-lib-dot" style="background:${hue(id)}"></i>${ICON_FOLDER}<span>${esc(nameOf(id))}</span>` +
+      (selPath.includes(id) ? `<em>here</em>` : "") +
+      `<small>${fmt(lib.count.get(id) || 0)}</small><b>›</b></li>`;
+    const filmRow = ([slug, name]) =>
+      `<li class="lbs-lib-row lbs-lib-film${sel && sel[0] === slug ? " -sel" : ""}" data-act="lib-film" data-film="${esc(slug)}" data-slug="${esc(slug)}" data-name="${esc(name)}" title="Drag onto a folder, the wall or your inventory">` +
+      `<img data-lp="${esc(slug)}" src="${posterCache.has(slug) ? esc(posterCache.get(slug)[0]) : EMPTY}" alt="" draggable="false"><span>${esc(titleOf(name))}</span><small>${yearOf(name) || ""}</small>` +
+      (held.has(slug) ? `<em class="-inv">In inventory</em>` : "") + `</li>`;
+    const column = (id, side) => {
+      const k = kidsOf(id);
+      const lvl = side === "right" ? childLevel(id) : null;
+      const adding = lvl && libUI.adding === id;
+      return (
+        `<div class="lbs-lib-col -${side}"><h5>${id ? esc(nameOf(id)) : "Genres"}${id ? `<small>${fmt(lib.count.get(id) || 0)} films</small>` : ""}</h5><ul>` +
+        k.folders.map((f) => folderRow(f, side)).join("") +
+        (lvl ? (adding ? `<li class="lbs-lib-new"><input type="text" class="lbs-lib-new-name" data-level="${lvl}" maxlength="40" placeholder="Name the new ${LEVEL_WORD[lvl]}"></li>` : `<li class="lbs-lib-add"><button type="button" data-act="lib-new">+ New ${LEVEL_WORD[lvl]}</button></li>`) : "") +
+        (k.films.length ? (k.folders.length || lvl ? `<li class="lbs-lib-sep">${fmt(k.films.length)} film${k.films.length === 1 ? "" : "s"}</li>` : "") + k.films.map(filmRow).join("") : "") +
+        (!k.folders.length && !k.films.length && !lvl ? `<li class="lbs-lib-empty">Empty</li>` : "") +
+        `</ul></div>`
+      );
+    };
+    const target = right && !lib.genres.has(right) ? landingSub(right) : null;
+    const canMove = sel && target && target !== selAt;
+    box.innerHTML =
+      `<div class="lbs-lib-head">` +
+      `<div class="lbs-lib-crumbs"><button type="button" data-act="lib-root">Library</button>${path.map((id, i) => `<i>›</i><button type="button" data-act="lib-to" data-i="${i}" data-drop="${esc(id)}" class="lbs-crumb">${esc(nameOf(id))}</button>`).join("")}</div>` +
+      `<button type="button" class="lbs-lib-up" data-act="lib-up" aria-label="Up a level" title="Up a level"${path.length ? "" : " disabled"}>${ICON_LEFT}</button>` +
+      `<button type="button" class="lbs-lib-x" data-act="lib" aria-label="Close the Library">${ICON_CLOSE}</button></div>` +
+      `<div class="lbs-lib-cols">${column(left, "left")}${path.length ? column(right, "right") : `<div class="lbs-lib-col -right"><p class="lbs-lib-hint">Pick a genre</p></div>`}</div>` +
+      `<div class="lbs-lib-foot">` +
+      (sel
+        ? `<div class="lbs-lib-sel"><img data-poster="${esc(sel[0])}" alt=""><div><b>${esc(titleOf(sel[1]))}</b> <span>${yearOf(sel[1]) || ""}</span><small>${selAt ? `In ${esc(pathOf(selAt).slice(1).join(" › "))}` : "Not in the store yet"}</small></div>` +
+          `<button type="button" class="lbs-lib-x -small" data-act="lib-unsel" aria-label="Deselect">${ICON_CLOSE}</button></div>` +
+          `<div class="lbs-lib-acts">` +
+          `<button type="button" class="-go" data-act="lib-move"${canMove ? "" : " disabled"} title="${target ? `Move to ${esc(pathOf(target).slice(1).join(" › "))}` : "Open a folder to move it into"}">Move here</button>` +
+          `<button type="button" data-act="f-open" data-slug="${esc(sel[0])}" data-name="${esc(sel[1])}">Details</button>` +
+          `<button type="button" data-act="lib-fr">${franchiseOf(sel[0]) ? "Franchise" : "Add to franchise"}</button>` +
+          `<button type="button" class="-link" data-act="lib-remove">Request removal</button></div>`
+        : `<p class="lbs-lib-tip">Click a film to select it, then open the folder it belongs in and Move here. Or drag it onto a folder, the wall, or your inventory.</p>`) +
+      `<button type="button" class="lbs-lib-jump" data-act="lib-jump"${sel || (right && partsOf(right).genre === STOCKED && right !== STOCKED) ? "" : " disabled"}>Jump to section</button>` +
       `</div>`;
-    sp.hidden = false;
-    fillPosters(sp, false);
-    const inp = $(".lbs-sp-new", sp);
+    fillPosters($(".lbs-lib-foot", box), false);
+    // Posters in the lists load as they scroll into view.
+    if (libIo) libIo.disconnect();
+    libIo = "IntersectionObserver" in window ? new IntersectionObserver((entries, obs) => {
+      for (const e of entries) {
+        if (!e.isIntersecting) continue;
+        obs.unobserve(e.target);
+        const im = e.target;
+        if (posterCache.has(im.dataset.lp)) continue;
+        posterFor(im.dataset.lp).then(([u]) => (im.src = u)).catch(() => {});
+      }
+    }, { root: null, rootMargin: "200px" }) : null;
+    box.querySelectorAll("img[data-lp]").forEach((im) => libIo && libIo.observe(im));
+    const inp = $(".lbs-lib-new-name", box);
     if (inp) inp.focus();
   }
+  // Old name, same tool now: "Sort" opens the Library on the film.
+  const openSort = (slug, name) => openLibraryAt(slug, name);
+  const renderSortPanel = () => renderLibrary();
 
   /* Franchises: films that belong together on the shelf, in a set order.
    * They all sit where the first one would, as one block, with a sticker
@@ -3456,14 +3694,15 @@
       (placing
         ? `<div class="lbs-tray-tools"><span class="lbs-grabtype">Grab <button type="button" data-act="grab" data-v="one" class="${edit.grab === "one" ? "-on" : ""}">Individual</button><button type="button" data-act="grab" data-v="group" class="${edit.grab === "group" ? "-on" : ""}">Group</button></span>` +
           `<span><button type="button" data-act="w-auto">Auto-arrange</button><button type="button" data-act="w-clear">Everything down</button></span></div>` +
-          `<h4>Sections to place</h4>` +
+          `<h4>Blocks to place <select class="lbs-tray-filter" aria-label="Show blocks from"><option value="">All categories</option>${[...new Set(list.map((pc) => pc.cat))].map((c) => `<option value="${esc(c)}"${edit.filter === c ? " selected" : ""}>${esc(nameOf(c))}</option>`).join("")}</select></h4>` +
           `<div class="lbs-tray-list">` +
           (list.length
-            ? list.map((pc) => {
+            ? list.filter((pc) => !edit.filter || pc.cat === edit.filter).map((pc) => {
                 const n = pc.size / CAP;
-                return `<div class="lbs-piece -sec" data-cid="${esc(pc.sec)}" style="width:${Math.round(40 + Math.min(1, n) * 200)}px;height:${Math.round(26 + Math.min(5, Math.max(0, Math.ceil(n) - 1)) * 9)}px;--h:${secHue(pc.n)}" title="${esc(nameOf(pc.sec))}: ${pc.count} films still to place"><b>${esc(nameOf(pc.sec))}</b><span>${n < 0.95 ? `${Math.round(n * 100)}% shelf` : `${n.toFixed(1)} shelves`}</span></div>`;
+                const label = pc.sec === pc.cat ? nameOf(pc.sec) : nameOf(pc.sec);
+                return `<div class="lbs-piece -sec" data-cid="${esc(pc.sec)}" style="width:${Math.round(40 + Math.min(1, n) * 200)}px;height:${Math.round(26 + Math.min(5, Math.max(0, Math.ceil(n) - 1)) * 9)}px;--h:${secHue(pc.n)}" title="${esc(pathOf(pc.sec).slice(1).join(" › "))}: ${pc.count} films still to place"><b>${esc(label)}</b><small>${esc(nameOf(pc.cat))}</small><span>${n < 0.95 ? `${Math.round(n * 100)}% shelf` : `${n.toFixed(1)} shelves`}</span></div>`;
               }).join("")
-            : `<p class="lbs-tray-empty">Everything is on the wall. Drop a section on a shelf and it fills the free space there; the rest waits here.</p>`) +
+            : `<p class="lbs-tray-empty">Everything is on the wall. Drop a block on a shelf and it fills the free space there; the rest waits here.</p>`) +
           `</div><h4>Films</h4>`
         : "") +
       `<div class="lbs-tray-list -films">` +
@@ -3478,11 +3717,13 @@
     saveMine();
     renderTray();
     renderPocket();
+    renderLibrary();
   }
   function releaseFilm(slug) {
     if (edit.on) return; // house moves clear it themselves
     mine.held = mine.held.filter(([x]) => x !== slug);
     saveMine();
+    renderLibrary();
   }
 
   // A drag is either a section from the workspace (cid) or a piece on the wall (ref "bay:shelf/slot").
@@ -3665,16 +3906,16 @@
       if (d.kind === "piece" && !d.ref && edit.grab === "group") {
         d.pour = true;
         d.ghost = h("div", "lbs-piece lbs-piece-ghost", `<b>${esc(nameOf(d.cid))}</b><span>all</span>`);
-        d.ghost.style.setProperty("--h", secHue(lib.genres.get(STOCKED).cats.indexOf(d.cid)));
+        d.ghost.style.setProperty("--h", hueOfBlock(d.cid));
       } else if (d.kind === "piece" && d.ref && edit.grab === "group") {
         const cid = grabCid(d), n = groupRefs(cid).length;
         d.group = true;
         d.ghost = h("div", "lbs-piece lbs-piece-ghost", `<b>${esc(nameOf(cid))}</b><span>all ${n}</span>`);
-        d.ghost.style.setProperty("--h", secHue(lib.genres.get(STOCKED).cats.indexOf(cid)));
+        d.ghost.style.setProperty("--h", hueOfBlock(cid));
       } else if (d.kind === "piece") {
         const cid = grabCid(d);
         d.ghost = h("div", "lbs-piece lbs-piece-ghost", `<b>${esc(nameOf(cid))}</b>`);
-        d.ghost.style.setProperty("--h", secHue(lib.genres.get(STOCKED).cats.indexOf(cid)));
+        d.ghost.style.setProperty("--h", hueOfBlock(cid));
         d.ghost.style.width = `${Math.max(30, Math.min(CAP, grabSize(d)) * wall.cam.z)}px`;
       } else {
         // The box itself, cover facing you, follows the pointer.
@@ -3702,7 +3943,7 @@
     if (folder && folder.dataset.drop && (lib.genres.has(folder.dataset.drop) || lib.cats.has(folder.dataset.drop))) {
       if (d.spring !== folder.dataset.drop) {
         d.spring = folder.dataset.drop;
-        const inSort = !!folder.closest(".lbs-sortpanel");
+        const inSort = !!folder.closest(".lbs-library");
         clearTimeout(d.springT);
         d.springT = setTimeout(() => { if (grab !== d || inSort) return; openFolder(d.spring); }, 600);
       }
@@ -3741,7 +3982,7 @@
       return drawSoon();
     }
     // A DVD
-    if (toTray) { if (d.from === "wall") holdFilms([[d.slug, d.name]]); return drawSoon(); }
+    if (toTray) { if (d.from === "wall" || d.from === "lib") holdFilms([[d.slug, d.name]]); return drawSoon(); }
     const folder = el && el.closest && el.closest(".lbs-folder[data-drop], .lbs-crumb[data-drop]");
     if (folder && folder.dataset.drop) {
       if (d.from === "tray") releaseFilm(d.slug);
@@ -3785,7 +4026,11 @@
     toast(`${nameOf(cid)}: sorted ${label} (just for you).`);
   }
 
+  // A block's (or category's) colour: its category's.
+  const catOfBlock = (id) => (lib.cats.has(id) ? id : lib.subs.has(id) ? lib.subs.get(id).cat : id);
+  const hueOfBlock = (id) => secHue(Math.max(0, lib.genres.get(STOCKED).cats.indexOf(catOfBlock(id))));
   function selectSection(id) {
+    id = catOfBlock(id);
     edit.sel = id;
     desk.folder = id;
     renderFolders();
@@ -4149,6 +4394,39 @@
         holdFilms([[fs, fn]]); ui.pocket = true; renderPocket(); return toast(`‘${titleOf(fn)}’ is in your inventory.`);
       }
       if (act === "settings") return toggleMenu(".lbs-settings");
+      if (act === "lib") return setLibrary(!libUI.open);
+      if (act === "lib-up") { libUI.path.pop(); libUI.adding = null; return renderLibrary(); }
+      if (act === "lib-root") { libUI.path = []; libUI.adding = null; return renderLibrary(); }
+      if (act === "lib-to") { libUI.path = libUI.path.slice(0, +btn.dataset.i + 1); libUI.adding = null; return renderLibrary(); }
+      if (act === "lib-open") {
+        if (wall.dragged) return;
+        const fid = btn.dataset.id;
+        libUI.adding = null;
+        if (btn.dataset.side === "left") libUI.path = libUI.path.length >= 2 ? [...libUI.path.slice(0, -1), fid] : [fid];
+        else libUI.path = [...libUI.path, fid];
+        return renderLibrary();
+      }
+      if (act === "lib-film") {
+        if (wall.dragged) return;
+        libUI.sel = libUI.sel && libUI.sel[0] === fs ? null : [fs, fn];
+        return renderLibrary();
+      }
+      if (act === "lib-unsel") { libUI.sel = null; return renderLibrary(); }
+      if (act === "lib-new") { libUI.adding = libUI.path[libUI.path.length - 1]; return renderLibrary(); }
+      if (act === "lib-move") {
+        const right = libUI.path[libUI.path.length - 1];
+        if (!libUI.sel || !right) return;
+        moveFilms([libUI.sel], right);
+        return renderLibrary();
+      }
+      if (act === "lib-fr") return libUI.sel && openFranchise(libUI.sel[0], libUI.sel[1]);
+      if (act === "lib-remove") return libUI.sel && requestRemoval("film", libUI.sel[0], titleOf(libUI.sel[1]));
+      if (act === "lib-jump") {
+        if (libUI.sel) return jumpTo(libUI.sel[0], libUI.sel[1]);
+        const right = libUI.path[libUI.path.length - 1];
+        if (wall.level !== "wall") { wall.level = "wall"; showStage(); }
+        return requestAnimationFrame(() => flyToFolder(right));
+      }
       if (act === "find-type") return toggleMenu(".lbs-find-types");
       if (act === "find-as") { toggleMenu(".lbs-find-types", false); return $(".lbs-find-q", root)?.focus(); }
       if (act === "req-send") return sendAddition(btn);
@@ -4296,12 +4574,14 @@
   }
 
   function onInput(e) {
+    if (e.target.classList.contains("lbs-tray-filter")) { edit.filter = e.target.value || null; return renderTray(); }
     if (e.target.dataset && e.target.dataset.set) {
       const key = e.target.dataset.set;
       mine[key] = !!e.target.checked;
       saveMine();
       root.querySelectorAll(`input[data-set="${key}"]`).forEach((x) => (x.checked = mine[key]));
-      if (key === "hideBlocked" || key === "overlay") drawSoon();
+      if (key === "noDates") { mine.noDates = !e.target.checked; saveMine(); root.classList.toggle("lbs-nodates", mine.noDates); root.querySelectorAll('input[data-set="noDates"]').forEach((x) => (x.checked = !mine.noDates)); }
+      if (key === "hideBlocked" || key === "overlay" || key === "noDates") drawSoon();
       return;
     }
     if (e.target.classList.contains("lbs-restore-file")) { const f = e.target.files && e.target.files[0]; e.target.value = ""; if (f) restoreMine(f); return; }
@@ -4360,6 +4640,16 @@
         const li = items[at >= 0 ? at : 0];
         if (li) { e.preventDefault(); showCard(li.dataset.slug, li.dataset.name); }
       } else if (e.key === "Escape") { $(".lbs-find-list", root).hidden = true; $(".lbs-card", root).hidden = true; }
+      return;
+    }
+    if (e.target.classList.contains("lbs-lib-new-name")) {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        const parent = libUI.adding, level = e.target.dataset.level, name = e.target.value;
+        libUI.adding = null;
+        if (parent && name.trim()) addFolder(level, parent, name);
+        renderLibrary();
+      } else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); libUI.adding = null; renderLibrary(); }
       return;
     }
     if (e.target.classList.contains("lbs-sp-new")) {
@@ -4433,7 +4723,7 @@
     strip.innerHTML =
       `<a class="lbs-home-door${DESK_ONLY ? " -logo" : ""}" href="#store">` +
       (DESK_ONLY ? `<span class="lbs-home-logo">${LOGO_SVG}</span>` : "") +
-      `<span class="lbs-home-kicker">LetterBloxd video store</span>` +
+      (DESK_ONLY ? "" : `<span class="lbs-home-kicker">LetterBloxd video store</span>`) +
       (DESK_ONLY
         ? `<span class="lbs-home-title">BLOXBUSTER is open</span><span class="lbs-home-sub">Browse the Horror wall, carry films around, sort the shelves your way. Walk in →</span>`
         : `<span class="lbs-home-title">The Horror wing is open</span><span class="lbs-home-sub">${AISLES.length + 1} aisles, every film on one shelf, A to Z. Walk in →</span>`) +
