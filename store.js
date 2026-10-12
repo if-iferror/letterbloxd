@@ -1262,7 +1262,7 @@
   const wall = { level: "aisles", lay: null, cam: { x: 0, y: 0, z: 0.05 }, hover: null, pin: null, lite: false, slow: 0, imgs: new Map(), logos: new Map(), frame: 0 };
   // 1969 and earlier: round steel film cans, standing on edge. Then VHS, DVD, Blu-ray.
   const isCan = (y) => !!y && y < 1970;
-  const spineW = (y) => (isCan(y) ? 16 : y && y < 1990 ? 20 : y && y < 2010 ? 12 : 10);
+  const spineW = (y) => (isCan(y) ? 22 : y && y < 1990 ? 20 : y && y < 2010 ? 12 : 10);
   const spineH = (y) => (isCan(y) ? 176 : y && y < 1990 ? 168 : y && y < 2010 ? 158 : 148);
   const hash = (s) => { let x = 2166136261; for (let i = 0; i < s.length; i++) x = Math.imul(x ^ s.charCodeAt(i), 16777619); return x >>> 0; };
 
@@ -2147,42 +2147,195 @@
     return null;
   }
 
-  /* A film can on its edge, seen side-on: the rim of a short steel cylinder
-   * (its flat lid faces right, like a case's front cover), a rolled lip at
-   * each edge, and a strip of coloured tape round the rim carrying the title.
-   * The lid shows as a thin slanted sliver on the right. */
-  function drawCan(ctx, f, top, tape) {
-    const X0 = f.x, X1 = f.x + f.w, H = f.h;
-    // the lid, at a slant
-    ctx.fillStyle = "#4e545b";
-    ctx.beginPath();
-    ctx.ellipse(X1 - 0.5, top + H / 2 - DEPTH_Y / 2, DEPTH_X + 0.5, H / 2, 0, -Math.PI / 2, Math.PI / 2);
-    ctx.fill();
-    ctx.strokeStyle = "rgba(255,255,255,0.18)";
-    ctx.lineWidth = 0.6;
-    ctx.beginPath();
-    ctx.ellipse(X1 - 0.5, top + H / 2 - DEPTH_Y / 2, DEPTH_X * 0.55, H * 0.36, 0, -Math.PI / 2, Math.PI / 2);
-    ctx.stroke();
-    // the rim: brushed steel
-    const g = ctx.createLinearGradient(X0, 0, X1, 0);
-    g.addColorStop(0, "#9aa1a8");
-    g.addColorStop(0.5, "#c9ced3");
-    g.addColorStop(1, "#8a9198");
+  /* Film cans (1969 and earlier), standing on edge with the lid facing
+   * right, seen a little from the side, like a can on an archive shelf: the
+   * rim is a band with rounded ends (the edges of the two lids are tall thin
+   * ellipses), the near lid shows as an ellipse with pressed rings and four
+   * triangular windows onto the reel, and the title tape wraps round the rim,
+   * so its art bends away at the top and bottom. Lit from the front left. */
+  const CAN_RX = 5; // half-width of the lid ellipse on the shelf
+  // The four windows, in a unit circle (+y down): top, right, bottom, left.
+  // With a poster on the lid they sit in the four gaps round it (short at
+  // top and bottom, deeper at the sides).
+  function canHoles(ctx, poster) {
+    const tri = (pts) => { ctx.moveTo(pts[0][0], pts[0][1]); for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]); ctx.closePath(); };
+    const shapes = poster
+      ? [[[-0.3, -0.76], [0.3, -0.76], [0.08, -0.93], [-0.08, -0.93]], [[0.52, -0.34], [0.52, 0.34], [0.92, 0.07], [0.92, -0.07]], [[-0.3, 0.76], [0.3, 0.76], [0.08, 0.93], [-0.08, 0.93]], [[-0.52, -0.34], [-0.52, 0.34], [-0.92, 0.07], [-0.92, -0.07]]]
+      : [0, 1, 2, 3].map((r) => { const c = Math.cos((r * Math.PI) / 2), sn = Math.sin((r * Math.PI) / 2); return [[-0.24, -0.46], [0.24, -0.46], [0.05, -0.84], [-0.05, -0.84]].map(([x, y]) => [x * c - y * sn, x * sn + y * c]); });
+    for (const P of shapes) tri(P);
+  }
+  // The lid: an ellipse centred (cx, cy), radii (rx, ry), optionally with a poster pasted on.
+  function canLid(ctx, cx, cy, rx, ry, poster) {
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.scale(rx, ry);
+    const g = ctx.createLinearGradient(-1, -1, 1, 1);
+    g.addColorStop(0, "#d4d8db");
+    g.addColorStop(0.45, "#a9afb4");
+    g.addColorStop(1, "#6f767c");
     ctx.fillStyle = g;
-    if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(X0, top, f.w, H, 1.2); ctx.fill(); } else ctx.fillRect(X0, top, f.w, H);
-    // rolled lips where the lid and the base meet the rim
-    for (const x of [X0, X1 - 1.6]) {
-      ctx.fillStyle = "rgba(255,255,255,0.35)";
-      ctx.fillRect(x, top, 1.6, H);
-      ctx.fillStyle = "rgba(0,0,0,0.35)";
-      ctx.fillRect(x === X0 ? X0 + 1.6 : X1 - 2, top, 0.4, H);
+    ctx.beginPath(); ctx.arc(0, 0, 1, 0, Math.PI * 2); ctx.fill();
+    // the windows onto the reel (dark film inside)
+    ctx.fillStyle = "#16181b";
+    ctx.beginPath(); canHoles(ctx, !!poster); ctx.fill();
+    // pressed rings and the rolled edge (line widths in screen units)
+    const lw = (w) => w / Math.max(rx, ry);
+    ctx.strokeStyle = "rgba(0,0,0,0.35)";
+    ctx.lineWidth = lw(Math.max(0.5, ry * 0.012));
+    for (const r of [0.93, 0.36]) { ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.stroke(); }
+    ctx.strokeStyle = "rgba(255,255,255,0.45)";
+    for (const r of [0.9, 0.33]) { ctx.beginPath(); ctx.arc(0, 0, r, Math.PI * 0.75, Math.PI * 1.6); ctx.stroke(); }
+    if (poster) {
+      // pasted on, corner to corner (a 2:3 poster whose corners touch the rim's inner ring)
+      const hw = 0.5547 * 0.86, hh = 0.8321 * 0.86;
+      ctx.drawImage(poster, -hw, -hh, hw * 2, hh * 2);
+      ctx.strokeStyle = "rgba(0,0,0,0.3)";
+      ctx.lineWidth = lw(1);
+      ctx.strokeRect(-hw, -hh, hw * 2, hh * 2);
+    } else {
+      ctx.fillStyle = "#3a3f45";
+      ctx.beginPath(); ctx.arc(0, 0, 0.12, 0, Math.PI * 2); ctx.fill();
     }
-    // the tape, round the rim
-    ctx.fillStyle = tape;
-    ctx.fillRect(X0 + 2.2, top + PAPER_IN, f.w - 4.4, H - 2 * PAPER_IN);
-    ctx.fillStyle = "rgba(255,255,255,0.12)";
-    ctx.fillRect(X0 + 2.2, top + PAPER_IN, f.w - 4.4, 0.8);
-    ctx.fillRect(X0 + 2.2, f.y - PAPER_IN - 0.8, f.w - 4.4, 0.8);
+    // the rolled edge
+    ctx.strokeStyle = "rgba(20,22,25,0.55)";
+    ctx.lineWidth = lw(Math.max(0.8, ry * 0.02));
+    ctx.beginPath(); ctx.arc(0, 0, 0.995, 0, Math.PI * 2); ctx.stroke();
+    ctx.restore();
+  }
+  // The rim between the two lid edges (left edge at cxL, near lid at cxR).
+  function canRimPath(ctx, cxL, cxR, cy, rx, ry) {
+    ctx.beginPath();
+    ctx.ellipse(cxL, cy, rx, ry, 0, -Math.PI / 2, Math.PI / 2, true);
+    ctx.lineTo(cxR, cy + ry);
+    ctx.ellipse(cxR, cy, rx, ry, 0, Math.PI / 2, -Math.PI / 2, false);
+    ctx.closePath();
+  }
+  const canCurve = (ctx, top, bottom) => {
+    const g = ctx.createLinearGradient(0, top, 0, bottom);
+    g.addColorStop(0, "rgba(10,12,14,0.75)");
+    g.addColorStop(0.16, "rgba(10,12,14,0.25)");
+    g.addColorStop(0.36, "rgba(255,255,255,0.18)");
+    g.addColorStop(0.5, "rgba(255,255,255,0.05)");
+    g.addColorStop(0.8, "rgba(10,12,14,0.3)");
+    g.addColorStop(1, "rgba(10,12,14,0.8)");
+    return g;
+  };
+  // The tape's print (logo or title, and the year), unrolled flat; cached.
+  const canLabels = new Map();
+  function canLabel(f, tape, lg, k, len, wide) {
+    const wash = (mine.wash && mine.wash[f.slug]) || shared.wash[f.slug] || "";
+    const key = `${f.slug}|${k}|${tape}|${wash}|${lg ? 1 : 0}|${mine.noDates ? 0 : 1}`;
+    let cv = canLabels.get(key);
+    if (cv) return cv;
+    if (canLabels.size > 600) [...canLabels.keys()].slice(0, 200).forEach((x) => canLabels.delete(x));
+    cv = document.createElement("canvas");
+    cv.width = Math.max(1, Math.round(wide * k));
+    cv.height = Math.max(1, Math.round(len * k));
+    const x = cv.getContext("2d");
+    x.scale(k, k);
+    const own = colorOf(f.slug);
+    const light = own ? lum(rgbOf(own)) > 0.58 : lum(rgbOf(tape.replace("#", ""))) > 0.58;
+    const yearRoom = mine.noDates ? 0 : len * 0.16;
+    const span = len - yearRoom - len * 0.08;
+    x.translate(wide / 2, 0);
+    x.rotate(Math.PI / 2); // reads top to bottom, like the boxes
+    x.textAlign = "center";
+    x.textBaseline = "middle";
+    const mid = len * 0.04 + span / 2;
+    if (lg) {
+      const iw = lg.img.naturalWidth || 300, ih = lg.img.naturalHeight || 100, a = iw / ih;
+      let L = Math.min(span, (wide - 1.5) * a), T = L / a;
+      if (T > wide - 1.5) { T = wide - 1.5; L = T * a; }
+      x.drawImage(wash ? logoInk(lg, wash) : lg.img, mid - L / 2, -T / 2, L, T);
+    } else {
+      const t = titleOf(f.name).toUpperCase();
+      const fs = Math.min(wide * 0.62, 10);
+      x.font = `700 ${fs}px "Helvetica Neue", Arial, sans-serif`;
+      x.fillStyle = wash || (light ? "rgba(10,12,14,0.9)" : "rgba(255,255,255,0.92)");
+      x.fillText(t, mid, 0, span);
+    }
+    if (!mine.noDates) {
+      x.font = `600 ${YEAR_FS}px Arial, sans-serif`;
+      x.fillStyle = light ? "rgba(10,12,14,0.85)" : "rgba(255,255,255,0.9)";
+      x.fillText(String(f.year || ""), len - yearRoom / 2 - len * 0.02, 0);
+    }
+    canLabels.set(key, cv);
+    return cv;
+  }
+  function drawCan(ctx, f, top, tape, z) {
+    const rx = CAN_RX, ry = f.h / 2, cy = top + ry;
+    const cxL = f.x + rx, cxR = f.x + f.w - rx;
+    // the rim: brushed steel
+    ctx.fillStyle = "#9aa0a6";
+    canRimPath(ctx, cxL, cxR, cy, rx, ry);
+    ctx.fill();
+    // the tape, wrapped round the rim, with its print bent round the curve:
+    // drawn in thin strips, each squeezed to where that bit of the curve lands.
+    const lip = 1.8, wide = cxR - cxL - 2 * lip, A = 1.25, N = 18, len = 2 * A * ry;
+    const size = z >= 3.4 ? "w500" : z >= 1.6 ? "w300" : "w185";
+    const lg = z >= LOGO_Z ? logoImg(f.slug, size) || (size !== "w185" ? logoImg(f.slug, "w185") : null) : null;
+    const k = z >= 2.4 ? 4 : z >= 1.2 ? 2 : 1;
+    const label = z >= TEXT ? canLabel(f, tape, lg, k, len, wide) : null;
+    for (let i = 0; i < N; i++) {
+      const t1 = -A + (2 * A * i) / N, t2 = -A + (2 * A * (i + 1)) / N, tm = (t1 + t2) / 2;
+      const y1 = cy + ry * Math.sin(t1), y2 = cy + ry * Math.sin(t2);
+      const x = cxL - rx * Math.cos(tm) + lip;
+      ctx.fillStyle = tape;
+      ctx.fillRect(x, y1, wide, y2 - y1 + 0.3);
+      if (label) ctx.drawImage(label, 0, (label.height * i) / N, label.width, label.height / N, x, y1, wide, y2 - y1 + 0.2);
+    }
+    // the curve: dark where it turns away top and bottom, a highlight above the middle
+    ctx.save();
+    canRimPath(ctx, cxL, cxR, cy, rx, ry);
+    ctx.clip();
+    ctx.fillStyle = canCurve(ctx, top, f.y);
+    ctx.fillRect(f.x, top, f.w, f.h);
+    ctx.restore();
+    // the far lid's rolled edge
+    ctx.strokeStyle = "rgba(220,225,230,0.5)";
+    ctx.lineWidth = 0.9;
+    ctx.beginPath(); ctx.ellipse(cxL + 0.6, cy, rx, ry - 0.6, 0, Math.PI / 2, (Math.PI * 3) / 2); ctx.stroke();
+    // the near lid
+    canLid(ctx, cxR, cy, rx, ry, null);
+  }
+  // The film view's can: turned towards you (like the can on the bench), the
+  // poster pasted across its lid.
+  function drawCanBig(cv, poster, tape) {
+    const x = cv.getContext("2d");
+    const W = cv.width, H = cv.height;
+    x.clearRect(0, 0, W, H);
+    const ry = H * 0.47, rx = ry * 0.8, T = ry * 0.24, cy = H / 2;
+    const cxR = W - rx - 4, cxL = cxR - T;
+    // shadow on the floor
+    x.fillStyle = "rgba(0,0,0,0.35)";
+    x.beginPath(); x.ellipse(cxR - T / 2, cy + ry * 0.98, rx * 1.05, ry * 0.05, 0, 0, Math.PI * 2); x.fill();
+    x.fillStyle = "#9aa0a6";
+    canRimPath(x, cxL, cxR, cy, rx, ry);
+    x.fill();
+    // the tape round the rim
+    x.save();
+    canRimPath(x, cxL, cxR, cy, rx, ry);
+    x.clip();
+    x.fillStyle = tape;
+    const band = T * 0.62;
+    x.beginPath();
+    x.ellipse(cxL + (T - band) / 2 + band, cy, rx, ry * 0.97, 0, -Math.PI / 2, Math.PI / 2, true);
+    x.ellipse(cxL + (T - band) / 2, cy, rx, ry * 0.97, 0, Math.PI / 2, -Math.PI / 2, false);
+    x.fill();
+    x.fillStyle = canCurve(x, cy - ry, cy + ry);
+    x.fillRect(0, 0, W, H);
+    x.restore();
+    canLid(x, cxR, cy, rx, ry, poster);
+    // the light catching the lid's top left
+    x.save();
+    x.translate(cxR, cy);
+    x.scale(rx, ry);
+    const g = x.createLinearGradient(-1, -1, 0.4, 0.4);
+    g.addColorStop(0, "rgba(255,255,255,0.22)");
+    g.addColorStop(1, "rgba(255,255,255,0)");
+    x.fillStyle = g;
+    x.beginPath(); x.arc(0, 0, 1, 0, Math.PI * 2); x.fill();
+    x.restore();
   }
 
   function draw() {
@@ -2341,7 +2494,7 @@
             // The case: plastic all round, the printed paper wrap inside it,
             // stopping short of each end under a strip of clear laminate.
             if (can) {
-              if (near && !wall.lite) drawCan(ctx, f, top, body);
+              if (near && !wall.lite) drawCan(ctx, f, top, body, z);
               else { ctx.fillStyle = "#8f979f"; ctx.fillRect(f.x, top, f.w, f.h); ctx.fillStyle = body; ctx.fillRect(f.x + 2, top + PAPER_IN, f.w - 4, f.h - 2 * PAPER_IN); }
             } else if (near && !wall.lite) {
               ctx.fillStyle = caseTop(f.year);
@@ -2371,7 +2524,7 @@
             const size = z >= 3.4 ? "w500" : z >= 1.6 ? "w300" : "w185";
             const lg = z >= LOGO_Z ? logoImg(f.slug, size) || (size !== "w185" ? logoImg(f.slug, "w185") : null) : null;
             const fs = Math.min(f.w * 0.76, 11);
-            if (lg || text) {
+            if (!can && (lg || text)) {
               ctx.save();
               ctx.translate(f.x + f.w / 2, top);
               ctx.rotate(Math.PI / 2);
@@ -2421,17 +2574,7 @@
               ctx.restore();
             }
             if (can) {
-              // The rim curves away from us top and bottom: bright across the
-              // middle, dark at the ends (over the label too).
-              const g = ctx.createLinearGradient(0, top, 0, f.y);
-              g.addColorStop(0, "rgba(0,0,0,0.55)");
-              g.addColorStop(0.18, "rgba(0,0,0,0.12)");
-              g.addColorStop(0.45, "rgba(255,255,255,0.10)");
-              g.addColorStop(0.55, "rgba(255,255,255,0.10)");
-              g.addColorStop(0.82, "rgba(0,0,0,0.12)");
-              g.addColorStop(1, "rgba(0,0,0,0.6)");
-              ctx.fillStyle = g;
-              ctx.fillRect(f.x, top, f.w, f.h);
+              // (the can shades itself in drawCan)
             } else {
             // Light from the left, over the print too (it's on the plastic): a soft highlight down the left edge (three
             // stacked strips make a cheap gradient) and a thin shadow on the right.
@@ -3015,12 +3158,8 @@
     // A film can, lid facing you: the poster pasted across the lid corner to
     // corner, the steel showing round it, and the rim curving away on the left.
     if (isCan(y)) {
-      const D = big ? 330 : 170;
-      return (
-        `<div class="lbs-can" style="--D:${D}px;--tape:${own ? `#${own.slice(0, 6)}` : "#c9b58a"}">` +
-        `<div class="lbs-can-rim"></div><div class="lbs-can-lid"><i></i><img data-poster="${esc(slug)}" alt=""></div>` +
-        `</div>`
-      );
+      const D = big ? 330 : 170, dpr = Math.min(2, window.devicePixelRatio || 1);
+      return `<canvas class="lbs-can-cv" data-can="${esc(slug)}" data-tape="${own ? `#${own.slice(0, 6)}` : "#c9b58a"}" data-big="${big ? 1 : ""}" width="${Math.round(D * 0.95 * dpr)}" height="${Math.round(D * dpr)}" style="width:${Math.round(D * 0.95)}px;height:${D}px"></canvas>`;
     }
     const spine = own ? `#${own.slice(0, 6)}` : "#2c3440";
     // The cover art (2:3) fills the paper area exactly; the case is as wide as that.
@@ -3044,6 +3183,15 @@
   }
   function fillPosters(el, big) {
     el.querySelectorAll("img[data-poster]").forEach((im) => posterFor(im.dataset.poster).then(([a, b]) => (im.src = big ? b || a : a)).catch(() => {}));
+    // Film cans in the film view: draw the can, then again once the poster is in.
+    el.querySelectorAll("canvas.lbs-can-cv").forEach((cv) => {
+      drawCanBig(cv, null, cv.dataset.tape);
+      posterFor(cv.dataset.can).then(([a, b]) => {
+        const im = new Image();
+        im.onload = () => drawCanBig(cv, im, cv.dataset.tape);
+        im.src = cv.dataset.big ? b || a : a;
+      }).catch(() => {});
+    });
     // A spine logo that's taller than it is wide stays upright.
     el.querySelectorAll(".lbs-spine-logo[data-src]").forEach((lg) => {
       const probe = new Image();
