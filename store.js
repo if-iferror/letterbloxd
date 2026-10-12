@@ -1515,7 +1515,37 @@
       if (hg) { hg.x0 = Math.min(hg.x0, r.x0); hg.x1 = Math.max(hg.x1, r.x1); }
       else hangAt.set(k, { bay: r.bay, sec: r.sec, x0: r.x0, x1: r.x1 });
     }
-    const hang = [...hangAt.values()].sort((a, b) => a.bay - b.bay || (a.x0 + a.x1) - (b.x0 + b.x1));
+    const hang = [];
+    {
+      // Each bay's signs share its width in proportion to how much shelf each
+      // section has there, in reading order; then nudged apart so none overlap.
+      const mctx = (buildLayout.m ||= document.createElement("canvas").getContext("2d"));
+      mctx.font = `800 24px "Helvetica Neue", Arial, sans-serif`;
+      const perBay = new Map();
+      for (const hg of hangAt.values()) {
+        hg.amount = runs.filter((r) => r.bay === hg.bay && r.sec === hg.sec).reduce((n, r) => n + (r.x1 - r.x0), 0);
+        hg.first = Math.min(...runs.filter((r) => r.bay === hg.bay && r.sec === hg.sec).map((r) => r.shelf * 1e5 + r.x0));
+        (perBay.get(hg.bay) || perBay.set(hg.bay, []).get(hg.bay)).push(hg);
+      }
+      const GAPS = 14, EDGE = 8;
+      for (const [b, list] of perBay) {
+        list.sort((a, c) => a.first - c.first);
+        const o = origin(b), total = list.reduce((n, hg) => n + hg.amount, 0) || 1;
+        let at = o.x;
+        for (const hg of list) {
+          const seg = (WU.bayW * hg.amount) / total;
+          hg.w = Math.min(WU.bayW - 2 * EDGE, Math.max(150, mctx.measureText(secs[hg.sec].name.toUpperCase()).width + 56));
+          hg.sx = at + seg / 2 - hg.w / 2;
+          at += seg;
+        }
+        // Too wide together? Shrink them all to fit.
+        const need = list.reduce((n, hg) => n + hg.w, 0) + GAPS * (list.length - 1);
+        if (need > WU.bayW - 2 * EDGE) { const k = (WU.bayW - 2 * EDGE - GAPS * (list.length - 1)) / (need - GAPS * (list.length - 1)); list.forEach((hg) => (hg.w *= k)); }
+        for (let i = 0; i < list.length; i++) list[i].sx = Math.max(i ? list[i - 1].sx + list[i - 1].w + GAPS : o.x + EDGE, list[i].sx);
+        for (let i = list.length - 1; i >= 0; i--) list[i].sx = Math.min(i < list.length - 1 ? list[i + 1].sx - GAPS - list[i].w : o.x + WU.bayW - EDGE - list[i].w, list[i].sx);
+        hang.push(...list);
+      }
+    }
     // Franchise stickers: one per unbroken run of a franchise on a shelf.
     const frList = Object.values(allFranchises());
     const frIds = Object.keys(allFranchises());
@@ -2392,21 +2422,13 @@
       ctx.font = `800 24px "Helvetica Neue", Arial, sans-serif`;
       ctx.textBaseline = "middle";
       ctx.textAlign = "center";
-      const laid = new Map(); // bay -> right edge of the last sign
       for (const hg of L.hang) {
         if (!seen.has(hg.bay)) continue;
         const sec = L.secs[hg.sec];
         const label = sec.name.toUpperCase();
         const o = L.origin(hg.bay);
-        let w = Math.min(WU.bayW - 20, Math.max(150, ctx.measureText(label).width + 56));
-        let sx = (hg.x0 + hg.x1) / 2 - w / 2;
-        sx = Math.max(o.x + 8, Math.min(o.x + WU.bayW - 8 - w, sx));
-        const prev = laid.get(hg.bay);
-        if (prev != null && sx < prev + 14) sx = prev + 14;
-        if (sx + w > o.x + WU.bayW - 4) w = o.x + WU.bayW - 4 - sx;
-        if (w < 60) continue;
-        laid.set(hg.bay, sx + w);
-        if (sx + w < x0 || sx > x1) continue;
+        const w = hg.w, sx = hg.sx;
+        if (w < 40 || sx + w < x0 || sx > x1) continue;
         const by = o.y + SY;
         // chains
         ctx.strokeStyle = "rgba(150,150,150,0.7)";
