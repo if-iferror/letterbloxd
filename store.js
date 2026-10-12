@@ -1263,6 +1263,7 @@
   // 1969 and earlier: round steel film cans, standing on edge. Then VHS, DVD, Blu-ray.
   const isCan = (y) => !!y && y < 1970;
   const CAN_RX = 5, CAN_T = 17; // a can's lid ellipse half-width and rim thickness (see drawCan)
+  const CAN_LIP = 2.6, CAN_GAP = 0.7, CAN_TAPE = CAN_T - 2 * (CAN_LIP + CAN_GAP); // its rolled lips, the bare steel beside them, the tape
   const spineW = (y) => (isCan(y) ? CAN_T : y && y < 2000 ? 20 : y && y < 2016 ? 12 : 10);
   const spineH = (y) => (isCan(y) ? WU.shelfH - WU.lip - 1 : y && y < 2000 ? 168 : y && y < 2016 ? 158 : 148);
   const hash = (s) => { let x = 2166136261; for (let i = 0; i < s.length; i++) x = Math.imul(x ^ s.charCodeAt(i), 16777619); return x >>> 0; };
@@ -2272,17 +2273,39 @@
     canLabels.set(key, cv);
     return cv;
   }
+  // Everything on the rim follows one curve: the left half of the lid-edge
+  // ellipse, slid along the rim. A band between two slid copies of it:
+  function canBand(ctx, xa, xb, cy, rx, ry) {
+    ctx.beginPath();
+    ctx.ellipse(xa, cy, rx, ry, 0, -Math.PI / 2, Math.PI / 2, true);
+    ctx.lineTo(xb, cy + ry);
+    ctx.ellipse(xb, cy, rx, ry, 0, Math.PI / 2, -Math.PI / 2, false);
+    ctx.closePath();
+  }
+  // A rolled lip: one narrow band shaded light (left, towards the light) to
+  // dark (right), so it reads as a single rounded ridge.
+  function canLip(ctx, x0, w, cy, rx, ry, tones) {
+    const n = tones.length, step = w / n;
+    for (let i = 0; i < n; i++) {
+      ctx.fillStyle = tones[i];
+      canBand(ctx, x0 + i * step - 0.05, x0 + (i + 1) * step + 0.05, cy, rx, ry);
+      ctx.fill();
+    }
+  }
+  const LIP_TONES = ["#eef1f3", "#cfd4d8", "#a9afb4", "#80878d", "#5d646a"];
   function drawCan(ctx, f, top, tape, z) {
     const rx = CAN_RX, ry = f.h / 2, cy = top + ry;
     const cxL = f.x + rx, cxR = cxL + CAN_T;
-    // the rim: brushed steel
+    // the rim: brushed steel, showing between the lips and the tape
     ctx.fillStyle = "#a3a9ae";
     canRimPath(ctx, cxL, cxR, cy, rx, ry);
     ctx.fill();
-    // the tape, wrapped round the rim. Its edges are true curves (a clip), and
-    // its print is bent round the curve in thin strips: more strips the closer
-    // you are, so each is only a few pixels tall.
-    const lip = 1.8, wide = CAN_T - 2 * lip, A = 1.25, len = 2 * A * ry;
+    // the two rolled lips
+    canLip(ctx, cxL, CAN_LIP, cy, rx, ry, LIP_TONES);
+    canLip(ctx, cxR - CAN_LIP, CAN_LIP, cy, rx, ry, LIP_TONES);
+    // the tape, wrapped round the rim between them, its print bent round the
+    // curve in thin strips (more strips the closer you are)
+    const off = CAN_LIP + CAN_GAP, wide = CAN_TAPE, A = 1.25, len = 2 * A * ry;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
     const N = Math.max(14, Math.min(72, Math.round((2 * ry * z * dpr) / 5)));
     const size = z >= 3.4 ? "w500" : z >= 1.6 ? "w300" : "w185";
@@ -2290,23 +2313,25 @@
     const k = Math.min(8, 2 ** Math.ceil(Math.log2(Math.max(1, z * dpr))));
     const label = z >= TEXT ? canLabel(f, tape, lg, k, len, wide) : null;
     ctx.save();
-    ctx.beginPath();
-    ctx.ellipse(cxL + lip, cy, rx, ry * Math.sin(A), 0, -Math.PI / 2, Math.PI / 2, true);
-    ctx.lineTo(cxR - lip, cy + ry * Math.sin(A));
-    ctx.ellipse(cxR - lip, cy, rx, ry * Math.sin(A), 0, Math.PI / 2, -Math.PI / 2, false);
-    ctx.closePath();
+    canBand(ctx, cxL + off, cxR - off, cy, rx, ry * 0.97);
     ctx.fillStyle = tape;
     ctx.fill();
+    ctx.clip();
     if (label) {
-      ctx.clip();
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = "high";
       for (let i = 0; i < N; i++) {
         const t1 = -A + (2 * A * i) / N, t2 = -A + (2 * A * (i + 1)) / N, tm = (t1 + t2) / 2;
         const y1 = cy + ry * Math.sin(t1), y2 = cy + ry * Math.sin(t2);
-        const x = cxL - rx * Math.cos(tm) + lip;
+        const x = cxL - rx * Math.cos(tm) + off;
         ctx.drawImage(label, 0, (label.height * i) / N, label.width, label.height / N, x - 0.3, y1, wide + 0.6, y2 - y1 + 0.25);
       }
+    }
+    // the channel: the left lip shades the tape's left edge a little (soft, not a line)
+    for (const [d, a] of [[0, 0.22], [0.7, 0.12], [1.4, 0.05]]) {
+      ctx.fillStyle = `rgba(0,0,0,${a})`;
+      canBand(ctx, cxL + off + d, cxL + off + d + 0.7, cy, rx, ry);
+      ctx.fill();
     }
     ctx.restore();
     // the curve: dark where it turns away top and bottom, a highlight above the middle
@@ -2316,32 +2341,14 @@
     ctx.fillStyle = canCurve(ctx, top, f.y);
     ctx.fillRect(f.x - 1, top, CAN_T + 2 * rx + 2, f.h);
     ctx.restore();
-    // Its curved edges, like the boxes' corners: a glint of light down the
-    // left edge, shadow down the right (where it meets its lid or the next
-    // can), so one can reads apart from the next.
-    ctx.lineCap = "round";
-    ctx.strokeStyle = "rgba(255,255,255,0.55)";
-    ctx.lineWidth = 1.1;
-    ctx.beginPath(); ctx.ellipse(cxL + 0.9, cy, rx, ry - 1.2, 0, Math.PI * 0.62, Math.PI * 1.38); ctx.stroke();
-    // Inside the channel between the lips it's the other way round: the left
-    // lip's inner wall faces right (away from the light), so a shadow falls
-    // just inside it; the right lip's inner wall faces the light.
-    ctx.strokeStyle = "rgba(0,0,0,0.3)";
-    ctx.lineWidth = 2.2;
-    ctx.beginPath(); ctx.ellipse(cxL + 2.6, cy, rx, ry - 2, 0, Math.PI * 0.7, Math.PI * 1.3); ctx.stroke();
-    ctx.strokeStyle = "rgba(0,0,0,0.5)";
-    ctx.lineWidth = 1.6;
-    ctx.beginPath(); ctx.ellipse(cxR - 0.8, cy, rx, ry - 0.5, 0, Math.PI / 2, (Math.PI * 3) / 2); ctx.stroke();
-    ctx.strokeStyle = "rgba(255,255,255,0.3)";
-    ctx.lineWidth = 1.4;
-    ctx.beginPath(); ctx.ellipse(cxR - 2.4, cy, rx, ry - 1.5, 0, Math.PI * 0.6, Math.PI * 1.4); ctx.stroke();
-    ctx.lineCap = "butt";
-    // the near lid (the next can along rests against it). It faces right,
-    // away from the light (which comes from the left, as on the boxes), so
-    // it sits in shade, like the boxes' cover edges.
+    // the near lid, in shade (it faces right, away from the light). The next
+    // can along covers it; where it does, one soft crease marks the join.
     canLid(ctx, cxR, cy, rx, ry, null);
     ctx.fillStyle = "rgba(12,14,17,0.42)";
     ctx.beginPath(); ctx.ellipse(cxR, cy, rx, ry, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = "rgba(0,0,0,0.28)";
+    canBand(ctx, cxR - 0.6, cxR + 0.6, cy, rx, ry);
+    ctx.fill();
   }
   // The film view's can: turned towards you (like the can on the bench), the
   // poster pasted across its lid.
@@ -2371,9 +2378,9 @@
     x.fill();
     if (f) {
       // the label is drawn in shelf units, scaled up to this size
-      const unit = wide / (CAN_T - 3.6);
+      const unit = wide / CAN_TAPE;
       const lg = logoImg(f.slug, "w300") || logoImg(f.slug, "w185");
-      const label = canLabel(f, tape, lg, Math.min(8, Math.ceil(unit)), len / unit, CAN_T - 3.6);
+      const label = canLabel(f, tape, lg, Math.min(8, Math.ceil(unit)), len / unit, CAN_TAPE);
       x.clip();
       x.imageSmoothingQuality = "high";
       const N = Math.max(30, Math.round(H / 4));
