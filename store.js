@@ -590,6 +590,7 @@
   const ICON_RIGHT = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
   const ICON_UP = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 15l7-7 7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
   const ICON_FOLDER = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4.2l2 2h8.8A1.5 1.5 0 0 1 21 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z" fill="currentColor"/></svg>`;
+  const ICON_GEAR = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><circle cx="16" cy="7" r="2.4" fill="none" stroke="currentColor" stroke-width="2.2"/><circle cx="8" cy="17" r="2.4" fill="none" stroke="currentColor" stroke-width="2.2"/></svg>`;
   const ICON_SEARCH = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="M16 16l4.5 4.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>`;
 
   function openStore() {
@@ -609,6 +610,7 @@
       root.addEventListener("drop", onDrop);
       root.addEventListener("contextmenu", onContextMenu);
       root.addEventListener("mousedown", (e) => {
+        maybeCollapsePocket(e);
         if (e.button !== 0) return;
         const pc = edit.on && e.target.closest(".lbs-tray .lbs-piece");
         if (pc) { e.preventDefault(); return grabDown({ kind: "piece", cid: pc.dataset.cid, from: "tray" }, e); }
@@ -924,11 +926,15 @@
       `<div class="lbs-moving" hidden></div>` +
       `<div class="lbs-stage" hidden>` +
       `<div class="lbs-stage-top"><div class="lbs-stage-path"></div>` +
-      `<div class="lbs-zoom"><button type="button" data-act="zoom-out" aria-label="Zoom out">−</button><button type="button" data-act="fit">Fit</button><button type="button" data-act="zoom-in" aria-label="Zoom in">+</button></div></div>` +
+      `<div class="lbs-zoom"><button type="button" data-act="zoom-out" aria-label="Zoom out">−</button><button type="button" data-act="zoom-in" aria-label="Zoom in">+</button></div></div>` +
       `<div class="lbs-aisles"></div><canvas class="lbs-canvas" draggable="false" aria-label="Horror wall. Scroll to move, pinch or Ctrl-scroll to zoom, drag a spine to a folder."></canvas>` +
       `<div class="lbs-tip" hidden></div><div class="lbs-sortpick" hidden></div>` +
-      `<div class="lbs-find"><select class="lbs-find-type" aria-label="Search for"><option value="film">Movie</option><option value="actor" disabled>Actor (soon)</option><option value="director" disabled>Director (soon)</option><option value="crew" disabled>Crew (soon)</option></select>` +
-      `<label class="lbs-find-box">${ICON_SEARCH}<input type="search" class="lbs-find-q" placeholder="Find a movie in the store" autocomplete="off" spellcheck="false"></label>` +
+      `<div class="lbs-find">` +
+      `<div class="lbs-find-box">${ICON_SEARCH}<input type="search" class="lbs-find-q" placeholder="Find a movie in the store" autocomplete="off" spellcheck="false">` +
+      `<button type="button" class="lbs-find-type" data-act="find-type" aria-haspopup="menu" aria-label="Search for">Movie<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div>` +
+      `<button type="button" class="lbs-gear" data-act="settings" aria-haspopup="menu" aria-label="Settings" title="Settings">${ICON_GEAR}</button>` +
+      `<ul class="lbs-find-types lbs-menu" role="menu" hidden><li><button type="button" data-act="find-as" data-v="film" class="-on">Movie</button></li><li><button type="button" disabled>Actor <em>soon</em></button></li><li><button type="button" disabled>Director <em>soon</em></button></li><li><button type="button" disabled>Crew <em>soon</em></button></li></ul>` +
+      `<div class="lbs-settings lbs-menu" role="menu" hidden></div>` +
       `<ul class="lbs-find-list" hidden></ul><div class="lbs-card" hidden></div></div>` +
       `<div class="lbs-logopick" hidden></div><div class="lbs-logobuild" hidden></div>` +
       `<p class="lbs-credit" hidden>Title logos from <a href="https://www.themoviedb.org/" target="_blank" rel="noopener">TMDB</a>. This product uses the TMDB API but is not endorsed or certified by TMDB.</p>` +
@@ -1202,7 +1208,7 @@
   const FAR = 0.09, NEAR = 0.45, TEXT = 0.8, ZMIN = 0.02, ZMAX = 6;
   const DEPTH_X = 4, DEPTH_Y = 5; // the sliver of top and side we see
   // Case plastic, as seen on top: VHS clamshells (darkest), DVDs, Blu-rays.
-  const caseTop = (y) => (y && y < 1990 ? "#141517" : y && y < 2008 ? "#25272b" : "#1d5aa6");
+  const caseTop = (y) => (y && y < 1990 ? "#141517" : y && y < 2012 ? "#25272b" : "#1d5aa6");
   const YEAR_ZONE = 18; // the year sits in this much of the bottom of a spine
   const CASE_END = 3, LAMINATE = 5, PAPER_IN = CASE_END + LAMINATE; // paper wrap stops short of the case ends
   const PAPER_TOP = PAPER_IN - 3; // where the paper wrap starts and ends (same at both ends)
@@ -1213,8 +1219,8 @@
   const reduceMotion = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   const wall = { level: "aisles", lay: null, cam: { x: 0, y: 0, z: 0.05 }, hover: null, pin: null, lite: false, slow: 0, imgs: new Map(), logos: new Map(), frame: 0 };
-  const spineW = (y) => (y && y < 1990 ? 20 : y && y < 2008 ? 12 : 10);
-  const spineH = (y) => (y && y < 1990 ? 168 : y && y < 2008 ? 158 : 148);
+  const spineW = (y) => (y && y < 1990 ? 20 : y && y < 2012 ? 12 : 10);
+  const spineH = (y) => (y && y < 1990 ? 168 : y && y < 2012 ? 158 : 148);
   const hash = (s) => { let x = 2166136261; for (let i = 0; i < s.length; i++) x = Math.imul(x ^ s.charCodeAt(i), 16777619); return x >>> 0; };
 
   /* The wall is built from "pieces". Each section's films, A-Z, are cut into
@@ -1261,11 +1267,29 @@
     }
     return out;
   }
+  // A franchise lives in #1's section: films pulled in from other sections
+  // move there, keeping their own subsection.
+  function franchiseHomes() {
+    const home = new Map();
+    for (const fr of Object.values(allFranchises())) {
+      const lead = fr.films[0] && filmSection(fr.films[0][0]);
+      if (!lead) continue;
+      for (const [s] of fr.films) { const at = filmSection(s); if (at && at !== lead) home.set(s, lead); }
+    }
+    return home;
+  }
   function sectionOrderRaw(cid) {
     const H = house();
     const held = new Set(H.held.map(([slug]) => slug));
+    const homes = franchiseHomes();
     const list = [];
-    for (const sid of lib.cats.get(cid).subs) for (const [slug, name] of lib.inSub.get(sid) || []) if (!held.has(slug)) list.push({ slug, name, sub: sid });
+    for (const sid of lib.cats.get(cid).subs) for (const [slug, name] of lib.inSub.get(sid) || []) if (!held.has(slug) && !homes.has(slug)) list.push({ slug, name, sub: sid });
+    for (const [slug, to] of homes) {
+      if (to !== cid || held.has(slug)) continue;
+      const sid = lib.place.get(slug);
+      const hit = (lib.inSub.get(sid) || []).find(([s]) => s === slug);
+      if (hit) list.push({ slug, name: hit[1], sub: sid });
+    }
     const az = (a, b) => byTitle([a.slug, a.name], [b.slug, b.name]);
     const mode = sortOf(cid);
     if (mode === "year") return list.sort((a, b) => (yearOf(a.name) || 9999) - (yearOf(b.name) || 9999) || az(a, b));
@@ -1462,7 +1486,14 @@
           idx.set(f.slug, films.length);
           films.push(f);
         });
-        runs.push({ ref, sec: si, bay, shelf, x0: start, x1: Math.max(start + 8, x), by: o.y });
+        // Where each subsection starts and ends along this piece (for its tags).
+        const parts = [];
+        for (let j = films.length - list.length; j < films.length; j++) {
+          const f = films[j], last = parts[parts.length - 1];
+          if (last && last.sub === f.sub) last.x1 = f.x + f.w;
+          else parts.push({ sub: f.sub, x0: f.x, x1: f.x + f.w });
+        }
+        runs.push({ ref, sec: si, bay, shelf, x0: start, x1: Math.max(start + 8, x), by: o.y, parts });
         if (ri < refs.length - 1) {
           const next = secIndex.get(parseRef(refs[ri + 1])[0]);
           bookends.push({ x: x + 3, y, bay, change: next !== si, next, hue: secs[next].hue });
@@ -1471,6 +1502,15 @@
       });
     }
     for (const sec of secs) sec.highlights = [...sec.films].sort((a, b) => films[a].rank - films[b].rank).slice(0, 3);
+    // The hanging signs: each section's stretch of each bay, left to right.
+    const hangAt = new Map();
+    for (const r of runs) {
+      const k = `${r.bay}:${r.sec}`;
+      const hg = hangAt.get(k);
+      if (hg) { hg.x0 = Math.min(hg.x0, r.x0); hg.x1 = Math.max(hg.x1, r.x1); }
+      else hangAt.set(k, { bay: r.bay, sec: r.sec, x0: r.x0, x1: r.x1 });
+    }
+    const hang = [...hangAt.values()].sort((a, b) => a.bay - b.bay || (a.x0 + a.x1) - (b.x0 + b.x1));
     // Franchise stickers: one per unbroken run of a franchise on a shelf.
     const frList = Object.values(allFranchises());
     const frIds = Object.keys(allFranchises());
@@ -1490,7 +1530,7 @@
     const bays = edit.on ? Math.max(maxBay + 2, Math.ceil(totalShelves / WU.shelves) + 1) : maxBay + 1;
     const width = Math.min(bays, perRow) * (WU.bayW + WU.gap);
     const height = Math.ceil(bays / perRow) * ROW_H;
-    wall.lay = { films, chunks, secs, runs, bookends, stickers, faces: [], idx, bucket, held: H.held, width, height, bays, k: perRow, origin };
+    wall.lay = { films, chunks, secs, runs, bookends, stickers, hang, faces: [], idx, bucket, held: H.held, width, height, bays, k: perRow, origin };
     recolourSections();
     renderTray();
   }
@@ -1970,6 +2010,7 @@
     }
     const seen = new Set(inView);
     const px = 1 / z; // one screen pixel in wall units
+    const blk = blockedSet(); // blocked films, when hidden: their spots stay empty
 
     // Bays: a dark wood back panel, wood shelf boards and uprights. The
     // grain is one small tile drawn once and repeated (a pattern fill).
@@ -2006,7 +2047,7 @@
       const hue = sec.hue + ((hv % 37) - 18);
       if (!f) return `hsl(${sec.hue} 38% 34%)`;
       const vhs = f.year && f.year < 1990;
-      return vhs ? `hsl(${hue} 10% ${10 + (hv % 9)}%)` : `hsl(${hue} ${32 + (hv % 22)}% ${f.year >= 2008 ? 36 + (hv % 14) : 24 + (hv % 14)}%)`;
+      return vhs ? `hsl(${hue} 10% ${10 + (hv % 9)}%)` : `hsl(${hue} ${32 + (hv % 22)}% ${f.year >= 2012 ? 36 + (hv % 14) : 24 + (hv % 14)}%)`;
     };
 
     // Franchise stickers on the back wall: a colour block the width of the
@@ -2015,27 +2056,30 @@
       for (const st of L.stickers) {
         if (!seen.has(st.bay) || st.x1 < x0 || st.x0 > x1) continue;
         const own = st.color || colorOf(st.lead);
-        const top = st.y - (WU.shelfH - WU.lip) + 1;
-        const bottom = st.y - spineH(2020) - 4; // stops just above the shortest (Blu-ray) boxes
+        // From the very top of the gap down to just below DVD height (so it
+        // tucks behind the DVDs), lined up with the backs of the cases: the
+        // left edge starts where the first case's back meets the wall.
+        const top = st.y - (WU.shelfH - WU.lip);
+        const bottom = st.y - spineH(2000) + 3;
+        const sx0 = st.x0 + DEPTH_X, sx1 = st.x1 + 2;
         ctx.fillStyle = own ? `#${own.slice(0, 6)}` : "#5a4a7a";
-        if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(st.x0 - 2, top, st.x1 - st.x0 + 4, bottom - top, [0, 0, 3, 3]); ctx.fill(); }
-        else ctx.fillRect(st.x0 - 2, top, st.x1 - st.x0 + 4, bottom - top);
-        ctx.fillStyle = "rgba(255,255,255,0.12)";
-        ctx.fillRect(st.x0 - 2, top, st.x1 - st.x0 + 4, 3);
-        const band = bottom - 2 - (top + 2);
+        ctx.fillRect(sx0, top, sx1 - sx0, bottom - top);
+        // The art sits at the top, in what shows above the boxes.
+        const band = bottom - 3 - DEPTH_Y - 3 - (top + 3);
         if (band < 6) continue;
         const lg = z >= LOGO_Z ? (st.logo ? logoImgPath(st.logo, "w300") : logoImg(st.lead, "w300")) : null;
-        const bw = st.x1 - st.x0 - 8;
+        const bw = sx1 - sx0 - 8;
         if (lg) {
           const a = (lg.img.naturalWidth || 300) / (lg.img.naturalHeight || 100);
           let w = Math.min(bw, band * a), hh = w / a;
-          ctx.drawImage(lg.img, (st.x0 + st.x1) / 2 - w / 2, top + 2 + (band - hh) / 2, w, hh);
+          ctx.drawImage(lg.img, (sx0 + sx1) / 2 - w / 2, top + 3, w, hh);
         } else if (z >= NEAR) {
-          ctx.font = `800 ${Math.min(band * 0.8, 16)}px Arial, sans-serif`;
+          const fsz = Math.min(band * 0.8, 16);
+          ctx.font = `800 ${fsz}px Arial, sans-serif`;
           ctx.textAlign = "center";
-          ctx.textBaseline = "middle";
+          ctx.textBaseline = "top";
           ctx.fillStyle = own && lum(rgbOf(own)) > 0.6 ? "#14181c" : "#fff";
-          ctx.fillText((st.name || "").toUpperCase(), (st.x0 + st.x1) / 2, top + 2 + band / 2, bw);
+          ctx.fillText((st.name || "").toUpperCase(), (sx0 + sx1) / 2, top + 4, bw);
           ctx.textAlign = "left";
         }
       }
@@ -2050,7 +2094,7 @@
           if (!list) continue;
           for (const i of list) {
             const f = L.films[i];
-            if (f.x + f.w < x0 || f.x - f.h > x1 || f.slug === wall.lifted) continue;
+            if (f.x + f.w < x0 || f.x - f.h > x1 || f.slug === wall.lifted || (blk && blk.has(f.slug))) continue;
             if (f.lean) { ctx.save(); ctx.translate(f.x, f.y); ctx.rotate(-f.lean); ctx.translate(-f.x, -f.y); }
             try {
             const top = f.y - f.h;
@@ -2149,12 +2193,24 @@
               ctx.textAlign = "center";
               if (lg) {
                 const iw = lg.img.naturalWidth || 300, ih = lg.img.naturalHeight || 100;
-                const a = iw / ih, thick = f.w - 1.5;
-                let len = Math.min(span, thick * a), th = len / a;
-                if (th > thick) { th = thick; len = th * a; }
+                const thick = f.w - 1.5;
                 // Logo colour wash: off unless chosen for this film (Edit).
                 const wash = (mine.wash && mine.wash[f.slug]) || shared.wash[f.slug];
-                ctx.drawImage(wash ? logoInk(lg, wash) : lg.img, mid - len / 2, -th / 2, len, th);
+                const src = wash ? logoInk(lg, wash) : lg.img;
+                if (ih > iw) {
+                  // Taller than wide: it already reads along the spine, so it stays upright.
+                  let w = Math.min(thick, (span * iw) / ih), hh = (w * ih) / iw;
+                  ctx.save();
+                  ctx.translate(mid, 0);
+                  ctx.rotate(-Math.PI / 2);
+                  ctx.drawImage(src, -w / 2, -hh / 2, w, hh);
+                  ctx.restore();
+                } else {
+                  const a = iw / ih;
+                  let len = Math.min(span, thick * a), th = len / a;
+                  if (th > thick) { th = thick; len = th * a; }
+                  ctx.drawImage(src, mid - len / 2, -th / 2, len, th);
+                }
               } else {
                 ctx.font = `700 ${fs}px "Helvetica Neue", Arial, sans-serif`;
                 const light = own && lum(rgbOf(own)) > 0.58;
@@ -2224,23 +2280,6 @@
         glint.addColorStop(0.3, "rgba(255,255,255,0)");
         ctx.fillStyle = glint;
         ctx.fillRect(be.x, top, T, be.y - top);
-        // the tab
-        const sec = L.secs[be.next];
-        const label = sec ? sec.name.toUpperCase() : "";
-        ctx.font = "800 11px Arial, sans-serif";
-        const tw = Math.min(150, ctx.measureText(label).width + 14);
-        ctx.fillStyle = `hsl(${be.hue} 60% 46%)`;
-        if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(be.x, top - 4, tw, 18, [4, 4, 0, 0]); ctx.fill(); }
-        else ctx.fillRect(be.x, top - 4, tw, 18);
-        ctx.fillStyle = "rgba(255,255,255,0.22)";
-        ctx.fillRect(be.x, top - 4, tw, 5);
-        ctx.fillStyle = "#fff";
-        ctx.textBaseline = "middle";
-        ctx.textAlign = "left";
-        ctx.save();
-        ctx.beginPath(); ctx.rect(be.x, top - 4, tw - 4, 18); ctx.clip();
-        ctx.fillText(label, be.x + 7, top + 5.5);
-        ctx.restore();
       }
     }
 
@@ -2308,15 +2347,18 @@
       ctx.font = `800 ${fsz}px Arial, sans-serif`;
       ctx.textBaseline = "middle";
       ctx.textAlign = "left";
-      for (const r of L.runs) {
-        if (!seen.has(r.bay) || r.x1 < x0 || r.x0 > x1) continue;
+      // One tag (repeating) per subsection along the shelf; the section's own
+      // name goes up on the hanging sign above the bay.
+      for (const r of L.runs) for (const pt of r.parts && r.parts.length ? r.parts : [{ sub: null, x0: r.x0, x1: r.x1 }]) {
+        if (!seen.has(r.bay) || pt.x1 < x0 || pt.x0 > x1) continue;
         const sec = L.secs[r.sec];
         const mode = sortOf(sec.id);
-        const label = sec.name.toUpperCase() + (mode === "year" ? " · BY YEAR" : mode === "index" ? " · INDEX" : "");
-        const tw = Math.min(r.x1 - r.x0 - 4, ctx.measureText(label).width + 26);
+        const subName = pt.sub && lib.subs.has(pt.sub) && !/\/general$/.test(pt.sub) ? nameOf(pt.sub) : sec.name;
+        const label = subName.toUpperCase() + (mode === "year" ? " · BY YEAR" : mode === "index" ? " · INDEX" : "");
+        const tw = Math.min(pt.x1 - pt.x0 - 4, ctx.measureText(label).width + 26);
         if (tw < 40) continue;
         const ty = r.by + WU.sign + (r.shelf + 1) * WU.shelfH - WU.lip + 2;
-        for (let sx = r.x0 + 4; sx + tw <= r.x1 + 1; sx += Math.max(spacing, tw + 120)) {
+        for (let sx = pt.x0 + 2; sx + tw <= pt.x1 + 1; sx += Math.max(spacing, tw + 120)) {
           if (sx + tw < x0 || sx > x1) continue;
           ctx.fillStyle = "rgba(0,0,0,0.45)";
           ctx.fillRect(sx + 3, ty + 3, tw, th);
@@ -2336,6 +2378,66 @@
           wall.signs.push({ x: sx, y: ty, w: tw, h: th, sec: r.sec });
         }
       }
+    }
+
+    // Hanging from the ceiling over each bay: a wooden sign for every section
+    // on it, centred over that section's stretch of the bay.
+    if (L.hang) {
+      const SH = 46, SY = 18; // board height, and its drop from the ceiling
+      ctx.font = `800 24px "Helvetica Neue", Arial, sans-serif`;
+      ctx.textBaseline = "middle";
+      ctx.textAlign = "center";
+      const laid = new Map(); // bay -> right edge of the last sign
+      for (const hg of L.hang) {
+        if (!seen.has(hg.bay)) continue;
+        const sec = L.secs[hg.sec];
+        const label = sec.name.toUpperCase();
+        const o = L.origin(hg.bay);
+        let w = Math.min(WU.bayW - 20, Math.max(150, ctx.measureText(label).width + 56));
+        let sx = (hg.x0 + hg.x1) / 2 - w / 2;
+        sx = Math.max(o.x + 8, Math.min(o.x + WU.bayW - 8 - w, sx));
+        const prev = laid.get(hg.bay);
+        if (prev != null && sx < prev + 14) sx = prev + 14;
+        if (sx + w > o.x + WU.bayW - 4) w = o.x + WU.bayW - 4 - sx;
+        if (w < 60) continue;
+        laid.set(hg.bay, sx + w);
+        if (sx + w < x0 || sx > x1) continue;
+        const by = o.y + SY;
+        // chains
+        ctx.strokeStyle = "rgba(150,150,150,0.7)";
+        ctx.lineWidth = 1.6;
+        ctx.setLineDash([3, 2]);
+        ctx.beginPath();
+        for (const cx of [sx + 18, sx + w - 18]) { ctx.moveTo(cx, o.y); ctx.lineTo(cx, by + 2); }
+        ctx.stroke();
+        ctx.setLineDash([]);
+        // the board: drop shadow, grain, a warm stain, a bevelled edge
+        ctx.fillStyle = "rgba(0,0,0,0.5)";
+        ctx.fillRect(sx + 4, by + 5, w, SH);
+        ctx.fillStyle = grain;
+        ctx.fillRect(sx, by, w, SH);
+        ctx.fillStyle = "rgba(120,72,30,0.35)";
+        ctx.fillRect(sx, by, w, SH);
+        ctx.fillStyle = "rgba(255,225,180,0.22)";
+        ctx.fillRect(sx, by, w, 2.5);
+        ctx.fillStyle = "rgba(0,0,0,0.35)";
+        ctx.fillRect(sx, by + SH - 3, w, 3);
+        ctx.strokeStyle = "rgba(30,16,6,0.8)";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(sx + 1, by + 1, w - 2, SH - 2);
+        // a little colour of the section's own, as a painted stripe
+        ctx.fillStyle = `hsl(${sec.hue} 55% 45%)`;
+        ctx.fillRect(sx + 8, by + SH - 9, w - 16, 3);
+        // the name, painted on
+        ctx.save();
+        ctx.beginPath(); ctx.rect(sx + 6, by, w - 12, SH); ctx.clip();
+        ctx.fillStyle = "rgba(0,0,0,0.55)";
+        ctx.fillText(label, sx + w / 2 + 1.2, by + SH / 2 - 1.5 + 1.2, w - 24);
+        ctx.fillStyle = "#f6e7c8";
+        ctx.fillText(label, sx + w / 2, by + SH / 2 - 1.5, w - 24);
+        ctx.restore();
+      }
+      ctx.textAlign = "left";
     }
 
     // A film you jumped to blinks.
@@ -2380,8 +2482,10 @@
     const { b, s } = bayAt(p);
     const list = L.chunks.get(`${b}:${s}`);
     if (!list) return null;
+    const blk = blockedSet();
     for (const i of list) {
       const f = L.films[i];
+      if (blk && blk.has(f.slug)) continue;
       if (f.lean) {
         const dx = p.x - f.x, dy = p.y - f.y, c = Math.cos(f.lean), s = Math.sin(f.lean);
         const lx = dx * c - dy * s, ly = dx * s + dy * c;
@@ -2406,15 +2510,12 @@
     const el = $(".lbs-stage-path", root);
     if (!el) return;
     const sec = wall.level === "wall" ? sectionAtCenter() : null;
-    const z = wall.cam.z;
-    const lod = z < FAR ? "far" : z < NEAR ? "middle" : "near";
     el.innerHTML =
       `<button type="button" class="lbs-crumb" data-act="aisles">Store</button>` +
       (wall.level === "wall" ? `<i>›</i><button type="button" class="lbs-crumb" data-act="fit">Horror</button>` : "") +
       (sec ? `<i>›</i><button type="button" class="lbs-crumb" data-act="open" data-id="${esc(sec.id)}" data-drop="${esc(sec.id)}">${esc(sec.name)}</button>` : "") +
-      (wall.level === "wall" ? `<span class="lbs-lod">${lod}</span>` : "") +
       (colorJob.total && colorJob.done < colorJob.total ? `<span class="lbs-hint">colours ${fmt(colorJob.done)} / ${fmt(colorJob.total)}</span>` : "") +
-      (DEV_TOOLS && wall.level === "wall" ? `<button type="button" class="lbs-crumb lbs-logos-btn" data-act="logo-build">${logoJob.running ? `logos ${fmt(logoJob.done)} / ${fmt(logoJob.total)}` : "Logos…"}</button>` : "");
+      (logoJob.running ? `<span class="lbs-hint">logos ${fmt(logoJob.done)} / ${fmt(logoJob.total)}</span>` : "");
     const credit = $(".lbs-credit", root);
     if (credit) credit.hidden = !(wall.level === "wall" && (Object.keys(logoIndex.films).length || (logoShared && Object.keys(logoShared).length)));
   }
@@ -2568,7 +2669,12 @@
       if (wall.dragged) { wall.dragged = false; return; }
       if (edit.on) return;
       const i = filmAt(e.offsetX, e.offsetY);
-      if (i != null) { showTip(null); openFilm(wall.lay.films[i].slug, wall.lay.films[i].name); return; }
+      if (i != null) {
+        showTip(null);
+        if (ui.sortFilm) { ui.sortFilm = null; renderSortPanel(); }
+        openFilm(wall.lay.films[i].slug, wall.lay.films[i].name);
+        return;
+      }
       // A franchise sticker on the back wall: edit its colour and title art.
       const p = toWall(e.offsetX, e.offsetY);
       const st = (wall.lay.stickers || []).find((q) => p.x >= q.x0 - 2 && p.x <= q.x1 + 2 && p.y <= q.y && p.y >= q.y - (WU.shelfH - WU.lip));
@@ -2613,17 +2719,38 @@
           tagline: (d.querySelector(".tagline")?.textContent || "").trim(),
           runtime: ((d.querySelector(".text-footer")?.textContent || "").match(/(\d+)\s*mins?/) || [])[1] || "",
           cast: [...d.querySelectorAll(".cast-list a.text-slug, .cast-list a")].map((a) => a.textContent.trim()).filter(Boolean).slice(0, 6),
+          // Other titles it's known by (Letterboxd's "Alternative Titles", from TMDB).
+          alts: (() => {
+            const hd = [...d.querySelectorAll("h3")].find((x) => /alternative titles?/i.test(x.textContent));
+            const p = hd && hd.nextElementSibling;
+            const seen = new Set();
+            return p ? p.textContent.split(",").map((x) => x.trim()).filter((x) => x && !seen.has(x.toLowerCase()) && seen.add(x.toLowerCase())) : [];
+          })(),
+          original: (d.querySelector(".originalname, h2.originalname, .film-header .originalname")?.textContent || "").trim(),
+          // Letterboxd's ids for this film, for Watched / Like / Watchlist.
+          ...(() => {
+            for (const sel of ["[data-watchable]", "[data-likeable-identifier]", "[data-watchlistable-identifier]", "[data-postered-identifier]"]) {
+              const el = d.querySelector(sel);
+              if (!el) continue;
+              try { const j = JSON.parse(el.getAttribute(sel.slice(1, -1))); if (j && j.lid) return { lid: j.lid, uid: j.uid || "" }; } catch {}
+            }
+            const m = t.match(/"lid":"([A-Za-z0-9]+)"[^}]*?"uid":"(film:\d+)"/);
+            return m ? { lid: m[1], uid: m[2] } : {};
+          })(),
         };
       })
       .catch(() => ({}));
     ui.details.set(slug, p);
     return p;
   }
-  const caseName = (y) => (y && y < 1990 ? "VHS" : y && y < 2008 ? "DVD" : "Blu-ray");
+  const caseName = (y) => (y && y < 1990 ? "VHS" : y && y < 2012 ? "DVD" : "Blu-ray");
   const whereIs = (slug) => { const sub = lib.place.get(slug); return sub && lib.subs.has(sub) ? pathOf(sub) : null; };
   const filmActs = (slug, name, extra = "") => {
     const a = (act, label, cls = "") => `<button type="button" class="lbs-fact ${cls}" data-act="${act}" data-slug="${esc(slug)}" data-name="${esc(name)}">${label}</button>`;
-    if (!lib.place.has(slug)) return `<div class="lbs-facts">${extra}${a("req-add", "Request addition", "-go")}${a("f-hold", "Add to inventory")}</div>`;
+    if (!lib.place.has(slug)) {
+      const done = mine.requested && mine.requested[slug];
+      return `<div class="lbs-facts">${extra}${done ? `<span class="lbs-fact -done">Addition requested ✓</span>` : a("req-add", "Request addition", "-go")}</div>`;
+    }
     return `<div class="lbs-facts">${extra}${a("f-hold", "Add to inventory")}${a("f-jump", "Jump to section")}${a("f-edit", "Edit")}${a("f-sort", "Sort")}</div>`;
   };
 
@@ -2632,14 +2759,14 @@
     const y = yearOf(name), own = colorOf(slug);
     const spine = own ? `#${own.slice(0, 6)}` : "#2c3440";
     // The cover art (2:3) fills the paper area exactly; the case is as wide as that.
-    const h = big ? 330 : 170, inset = big ? 7 : 4, w = Math.round(((h - 2 * inset) * 2) / 3), d = Math.round((y && y < 1990 ? 0.2 : y && y < 2008 ? 0.12 : 0.1) * w * 1.4);
+    const h = big ? 330 : 170, inset = big ? 7 : 4, w = Math.round(((h - 2 * inset) * 2) / 3), d = Math.round((y && y < 1990 ? 0.2 : y && y < 2012 ? 0.12 : 0.1) * w * 1.4);
     const ink = own && lum(rgbOf(own)) > 0.62 ? "#14181c" : "#fff";
     const lp = logoPath(slug);
     const wash = (mine.wash && mine.wash[slug]) || shared.wash[slug];
     const logoEl = lp
       ? wash
-        ? `<span class="lbs-spine-logo -wash" style="--logo:url(${TMDB_IMG}w300/${esc(lp)});background:${esc(wash)}"></span>`
-        : `<img class="lbs-spine-logo" src="${TMDB_IMG}w300/${esc(lp)}" alt="" crossorigin="anonymous">`
+        ? `<span class="lbs-spine-logo -wash" data-src="${TMDB_IMG}w300/${esc(lp)}" style="--logo:url(${TMDB_IMG}w300/${esc(lp)});background:${esc(wash)}"></span>`
+        : `<img class="lbs-spine-logo" data-src="${TMDB_IMG}w300/${esc(lp)}" src="${TMDB_IMG}w300/${esc(lp)}" alt="" crossorigin="anonymous">`
       : `<b${wash ? ` style="color:${esc(wash)}"` : ""}>${esc(titleOf(name))}</b>`;
     return (
       `<div class="lbs-box" style="--w:${w}px;--h:${h}px;--d:${d}px;--in:${inset}px;--spine:${spine};--top:${caseTop(y)};--ink:${ink}">` +
@@ -2652,11 +2779,18 @@
   }
   function fillPosters(el, big) {
     el.querySelectorAll("img[data-poster]").forEach((im) => posterFor(im.dataset.poster).then(([a, b]) => (im.src = big ? b || a : a)).catch(() => {}));
+    // A spine logo that's taller than it is wide stays upright.
+    el.querySelectorAll(".lbs-spine-logo[data-src]").forEach((lg) => {
+      const probe = new Image();
+      probe.onload = () => lg.classList.toggle("-upright", probe.naturalHeight > probe.naturalWidth);
+      probe.src = lg.dataset.src;
+    });
   }
 
   async function openFilm(slug, name) {
     ui.film = { slug, name };
     ui.pane = null;
+    ui.altAll = false;
     renderFilm();
     const det = await filmDetails(slug);
     if (ui.film && ui.film.slug === slug) renderFilm(det);
@@ -2702,16 +2836,116 @@
       (det.tagline ? `<p class="lbs-ftag">${esc(det.tagline)}</p>` : "") +
       (det.synopsis ? `<p class="lbs-fsyn">${esc(det.synopsis)}</p>` : !ui.film.det ? `<p class="lbs-fsyn -wait">Loading details…</p>` : "") +
       (det.cast && det.cast.length ? `<p class="lbs-fcast">With ${det.cast.map(esc).join(", ")}</p>` : "") +
+      altTitlesHTML(det, name) +
       `<p class="lbs-fwhere">${path ? `On the shelf in <b>${path.map(esc).join(" › ")}</b>` : "Not in the store yet"}</p>` +
+      lbRowHTML(slug, name, det) +
       filmActs(slug, name) +
       pane +
-      `<a class="lbs-flink" href="/film/${esc(slug)}/" target="_blank" rel="noopener">Open on Letterboxd ↗</a>` +
       `</div></div>`;
     v.hidden = false;
     fillPosters(v, true);
+    if (det.lid && !ui.film.me && !ui.film.meAsked) lbState(slug, det.lid);
+  }
+
+  // Also known as: the other titles a film goes by (handy for J-horror).
+  function altTitlesHTML(det, name) {
+    const own = titleOf(name).toLowerCase();
+    const list = (det.original && det.original.toLowerCase() !== own ? [det.original] : []).concat((det.alts || []).filter((x) => x.toLowerCase() !== own && x !== det.original));
+    if (!list.length) return "";
+    const MAX = 8, all = ui.altAll || list.length <= MAX + 2;
+    return `<p class="lbs-falt"><span>Also known as</span> ${(all ? list : list.slice(0, MAX)).map(esc).join(" · ")}${all ? "" : ` <button type="button" data-act="alt-all">+${fmt(list.length - MAX)} more</button>`}</p>`;
+  }
+
+  /* Letterboxd's own buttons, for the film you're looking at: Watched, Like,
+   * Watchlist, Block (our "Not interested" list), and more on Letterboxd. */
+  const signedIn = () => !document.body.classList.contains("logged-out") && !!(window.person && window.person.username || document.querySelector(".nav-account"));
+  const LB_ICONS = {
+    watch: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="3.2" fill="currentColor"/></svg>`,
+    like: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20.5s-7.5-4.6-9.2-9.4C1.7 7.8 4 4.5 7.4 4.5c2 0 3.4 1.1 4.6 2.7 1.2-1.6 2.6-2.7 4.6-2.7 3.4 0 5.7 3.3 4.6 6.6-1.7 4.8-9.2 9.4-9.2 9.4z" fill="currentColor"/></svg>`,
+    wl: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 7.5V12l3 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`,
+    block: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="M6 6l12 12" stroke="currentColor" stroke-width="2.2"/></svg>`,
+    more: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5.5" cy="12" r="2" fill="currentColor"/><circle cx="12" cy="12" r="2" fill="currentColor"/><circle cx="18.5" cy="12" r="2" fill="currentColor"/></svg>`,
+  };
+  function lbRowHTML(slug, name, det) {
+    const me = (ui.film && ui.film.slug === slug && ui.film.me) || {};
+    const ni = window.lbNotInterested;
+    const blocked = ni && ni.isBlocked ? ni.isBlocked({ lid: det.lid, slug }) : false;
+    const ok = signedIn() && det.lid;
+    const b = (act, icon, label, on, cls) => `<button type="button" class="lbs-lb ${cls}${on ? " -on" : ""}" data-act="${act}" data-slug="${esc(slug)}" data-name="${esc(name)}" aria-pressed="${!!on}"${ok ? "" : " disabled"} title="${label}">${LB_ICONS[icon]}<span>${label}</span></button>`;
+    return (
+      `<div class="lbs-lbrow">` +
+      b("lb-watch", "watch", me.watched ? "Watched" : "Watch", me.watched, "-watch") +
+      b("lb-like", "like", me.liked ? "Liked" : "Like", me.liked, "-like") +
+      b("lb-wl", "wl", "Watchlist", me.inWatchlist, "-wl") +
+      (ni && ni.toggle ? b("lb-block", "block", blocked ? "Blocked" : "Block", blocked, "-block") : "") +
+      `<span class="lbs-lb-wrap"><button type="button" class="lbs-lb -more" data-act="lb-more" aria-haspopup="menu" title="More">${LB_ICONS.more}<span>More</span></button>` +
+      `<div class="lbs-lb-menu lbs-menu" role="menu" hidden>` +
+      `<a href="/film/${esc(slug)}/" target="_blank" rel="noopener">Rate, review or log ↗</a>` +
+      `<a href="/film/${esc(slug)}/" target="_blank" rel="noopener">Add to lists ↗</a>` +
+      `<a href="/film/${esc(slug)}/" target="_blank" rel="noopener">Open on Letterboxd ↗</a>` +
+      (lib.place.has(slug) ? `<button type="button" data-act="req-remove-this" data-slug="${esc(slug)}" data-name="${esc(name)}">Request removal from the store</button>` : "") +
+      `</div></span>` +
+      `</div>` +
+      (ok || !det.lid ? "" : `<p class="lbs-lbnote">Sign in to Letterboxd to use these.</p>`)
+    );
+  }
+  const lbCsrf = () => window.supermodelCSRF || document.querySelector("input[name='__csrf']")?.value || "";
+  async function lbState(slug, lid) {
+    ui.film.meAsked = true;
+    try {
+      const r = await fetch(`/api/v0/production/${encodeURIComponent(lid)}/me`, { credentials: "include", headers: { Accept: "application/json" } });
+      const d = r.ok ? await r.json() : null;
+      if (d && ui.film && ui.film.slug === slug) {
+        ui.film.me = { watched: !!d.watched, liked: !!d.liked, inWatchlist: !!d.inWatchlist };
+        renderFilm();
+      }
+    } catch {}
+  }
+  async function lbAction(act, btn) {
+    if (!ui.film || btn.disabled) return;
+    const { slug, name } = ui.film, det = ui.film.det || {};
+    if (!det.lid) return;
+    const me = (ui.film.me = ui.film.me || {});
+    const was = { ...me };
+    const form = (path, field, v) => {
+      const body = new URLSearchParams();
+      body.append(field, String(v));
+      body.append("__csrf", lbCsrf());
+      return fetch(path, { method: "POST", credentials: "include", body, headers: { "Content-Type": "application/x-www-form-urlencoded", "X-CSRF-TOKEN": lbCsrf() } });
+    };
+    try {
+      let r;
+      if (act === "lb-block") {
+        btn.disabled = true;
+        await window.lbNotInterested.toggle({ lid: det.lid, slug, name: titleOf(name) });
+        drawSoon();
+        return renderFilm();
+      }
+      if (act === "lb-watch") {
+        me.watched = !was.watched;
+        if (!me.watched) me.liked = false;
+        renderFilm();
+        r = await form(`/s/${det.uid}/watch/`, "watched", me.watched);
+      } else if (act === "lb-like") {
+        me.liked = !was.liked;
+        if (me.liked) me.watched = true;
+        renderFilm();
+        r = await form(`/s/${det.uid}/like/`, "liked", me.liked);
+      } else if (act === "lb-wl") {
+        me.inWatchlist = !was.inWatchlist;
+        renderFilm();
+        r = await fetch(`/api/v0/me/watchlist/${encodeURIComponent(det.lid)}`, { method: "PATCH", credentials: "include", headers: { Accept: "application/json", "Content-Type": "application/json; charset=UTF-8", "X-CSRF-TOKEN": lbCsrf() }, body: JSON.stringify({ inWatchlist: me.inWatchlist }) });
+      }
+      if (r && !r.ok) throw new Error(`HTTP ${r.status}`);
+    } catch (err) {
+      ui.film.me = was;
+      renderFilm();
+      toast(`Letterboxd didn't take that (${err.message || "error"}). Try it on the film's page.`);
+    }
   }
 
   // Inventory (browsing): a drawer that slides up from the tab at the bottom.
+  // Each film: drag its cover anywhere (a shelf, a folder), or Put Back / Details.
   function renderPocket() {
     const pk = root && $(".lbs-pocket", root);
     const tab = root && $(".lbs-pocket-tab", root);
@@ -2721,22 +2955,55 @@
     tab.classList.toggle("-open", ui.pocket);
     pk.hidden = !ui.pocket || edit.on;
     if (pk.hidden) return;
+    const b = (act, label, slug, name, cls = "") => `<button type="button" class="${cls}" data-act="${act}" data-slug="${esc(slug)}" data-name="${esc(name)}">${label}</button>`;
     pk.innerHTML =
-      `<div class="lbs-pocket-top"><b>Inventory</b><span>${held.length ? "Drag a film onto a shelf or a folder, or hover it for options." : "Drag films off the shelves to carry them around. It doesn't change the store."}</span>` +
-      `<button type="button" data-act="mine-save" title="Download your shelves, picks and inventory as a file">Back up my store</button>` +
-      `<label class="lbs-restore" title="Load a backup file">Restore<input type="file" accept="application/json,.json" class="lbs-restore-file" hidden></label>` +
+      `<div class="lbs-pocket-top"><b>Inventory</b><span>${held.length ? "Drag a cover onto any shelf to put it there." : "Drag films off the shelves to carry them around. It doesn't change the store."}</span>` +
+      `<label class="lbs-pocket-auto" title="Close the inventory when you click somewhere else"><input type="checkbox" data-set="autoCollapse"${mine.autoCollapse !== false ? " checked" : ""}> Auto collapse</label>` +
       `<button type="button" data-act="pocket">Close</button></div>` +
       `<div class="lbs-pocket-list lbs-tray-drop">` +
       held.map(([slug, name]) =>
-        `<div class="lbs-pk" data-slug="${esc(slug)}" data-name="${esc(name)}">` +
+        `<div class="lbs-pk" data-slug="${esc(slug)}" data-name="${esc(name)}" title="Drag onto a shelf">` +
         `<img data-poster="${esc(slug)}" alt="" draggable="false"><b>${esc(titleOf(name))}</b>` +
-        `<div class="lbs-pk-over"><button type="button" class="lbs-pk-return" data-act="f-return" data-slug="${esc(slug)}" data-name="${esc(name)}">Return to shelf</button>` +
-        `<button type="button" data-act="f-open" data-slug="${esc(slug)}" data-name="${esc(name)}">Details</button><button type="button" data-act="f-jump" data-slug="${esc(slug)}" data-name="${esc(name)}">Jump to section</button>` +
-        `<button type="button" data-act="f-edit" data-slug="${esc(slug)}" data-name="${esc(name)}">Edit</button><button type="button" data-act="f-sort" data-slug="${esc(slug)}" data-name="${esc(name)}">Sort</button></div>` +
+        `<div class="lbs-pk-acts">${b("f-return", "Put Back", slug, name, "-back")}${b("f-open", "Details", slug, name)}</div>` +
         `</div>`).join("") +
       `</div>`;
     fillPosters(pk, false);
   }
+  // Click anywhere else and the inventory tucks itself away (unless you'd rather it didn't).
+  function maybeCollapsePocket(e) {
+    if (!ui.pocket || mine.autoCollapse === false || (grab && grab.live)) return;
+    if (e.target.closest && e.target.closest(".lbs-pocket, .lbs-pocket-tab, .lbs-ask, .lbs-filmview")) return;
+    ui.pocket = false;
+    renderPocket();
+  }
+
+  // The settings menu (top right).
+  function renderSettings() {
+    const box = root && $(".lbs-settings", root);
+    if (!box || box.hidden) return;
+    const chk = (key, on, label, sub) => `<label class="lbs-menu-row"><input type="checkbox" data-set="${key}"${on ? " checked" : ""}><span>${label}${sub ? `<small>${sub}</small>` : ""}</span></label>`;
+    const n = Object.keys(mine.place).length;
+    box.innerHTML =
+      `<h6>Shelves</h6>` +
+      `<div class="lbs-menu-seg" role="group" aria-label="Whose shelves"><button type="button" data-view="community" class="${mine.view !== "mine" ? "-on" : ""}">Community</button><button type="button" data-view="mine" class="${mine.view === "mine" ? "-on" : ""}">Mine${n ? ` <em>${fmt(n)}</em>` : ""}</button></div>` +
+      chk("hideBlocked", !!mine.hideBlocked, "Hide blocked films", "Their spot on the shelf stays empty") +
+      `<h6>Inventory</h6>` +
+      chk("autoCollapse", mine.autoCollapse !== false, "Auto collapse", "Closes when you click somewhere else") +
+      `<h6>Your store</h6>` +
+      `<p class="lbs-menu-note">Your shelves, picks and inventory live in this browser. Back them up before clearing your browser's data.</p>` +
+      `<div class="lbs-menu-btns"><button type="button" data-act="mine-save">Back up</button><label class="lbs-restore">Restore<input type="file" accept="application/json,.json" class="lbs-restore-file" hidden></label></div>` +
+      (DEV_TOOLS ? `<h6>Developer</h6><div class="lbs-menu-btns"><button type="button" data-act="logo-build">${logoJob.running ? `Logos ${fmt(logoJob.done)} / ${fmt(logoJob.total)}` : "Logo builder…"}</button></div>` : "");
+  }
+  function toggleMenu(sel, open) {
+    root.querySelectorAll(".lbs-menu").forEach((m) => { if (!m.matches(sel)) m.hidden = true; });
+    const m = $(sel, root);
+    if (!m) return;
+    m.hidden = open == null ? !m.hidden : !open;
+    if (!m.hidden) { $(".lbs-find-list", root).hidden = true; $(".lbs-card", root).hidden = true; }
+    if (sel === ".lbs-settings") renderSettings();
+  }
+  // Films you've blocked (the "Not interested" list), when they're hidden.
+  const blockedSet = () => (mine.hideBlocked && window.lbNotInterested && window.lbNotInterested.blocked ? window.lbNotInterested.blocked() : null);
 
   // Your own store (shelves you moved things to, picks, franchises,
   // inventory) lives in this browser. A backup file keeps it safe.
@@ -2857,9 +3124,12 @@
       `<div class="lbs-fr-top"><input type="text" class="lbs-fr-name" value="${esc(fr.name)}" maxlength="60" aria-label="Franchise name"><button type="button" class="lbs-sp-x" data-act="fr-close" aria-label="Close">${ICON_CLOSE}</button></div>` +
       `<p>Drag to set the order. They'll sit together on the shelf where #1 would go.</p>` +
       `<ol class="lbs-fr-list">` +
-      fr.films.map(([s, n], i) => `<li draggable="true" data-i="${i}"><img data-poster="${esc(s)}" alt="" draggable="false"><b>${i + 1}</b><span>${esc(titleOf(n))}</span><button type="button" data-act="fr-drop" data-i="${i}" aria-label="Remove">${ICON_CLOSE}</button></li>`).join("") +
+      fr.films.map(([s, n], i) => {
+        const sec = filmSection(s), home = filmSection(fr.films[0][0]);
+        return `<li draggable="true" data-i="${i}"${i && sec && sec !== home ? ' class="-other"' : ""}><img data-poster="${esc(s)}" alt="" draggable="false"><b>${i + 1}</b><span>${esc(titleOf(n))}<small>${sec ? esc(nameOf(sec)) : ""}${i && sec && sec !== home ? ` · moves to ${esc(nameOf(home))}` : ""}</small></span><button type="button" data-act="fr-drop" data-i="${i}" aria-label="Remove">${ICON_CLOSE}</button></li>`;
+      }).join("") +
       `</ol>` +
-      `<label class="lbs-fr-find">${ICON_SEARCH}<input type="search" class="lbs-fr-q" placeholder="Add another film…" autocomplete="off"></label><ul class="lbs-fr-results" hidden></ul>` +
+      `<label class="lbs-fr-find">${ICON_SEARCH}<input type="search" class="lbs-fr-q" placeholder="Add a film from anywhere in the store…" autocomplete="off"></label><ul class="lbs-fr-results" hidden></ul>` +
       stickerHTML(fr) +
       `<div class="lbs-fr-foot">${fr.id ? '<button type="button" class="lbs-sp-link" data-act="fr-delete">Undo franchise</button>' : "<span></span>"}<button type="button" class="lbs-sp-move" data-act="fr-save"${fr.films.length > 1 ? "" : " disabled"}>Save franchise</button></div>` +
       `</div>`;
@@ -2886,14 +3156,22 @@
     const list = $(".lbs-fr-results", root);
     q = q.trim().toLowerCase();
     if (!q) { list.hidden = true; return; }
+    // The whole store, every section: this section's films first.
     const have = new Set(ui.fr.films.map(([s]) => s));
+    const home = ui.fr.films[0] && filmSection(ui.fr.films[0][0]);
     const hits = [];
     for (const [slug, name] of stock.films) {
-      if (have.has(slug)) continue;
-      if (titleOf(name).toLowerCase().includes(q)) hits.push([slug, name]);
-      if (hits.length >= 8) break;
+      if (have.has(slug) || !lib.place.has(slug)) continue;
+      const t = titleOf(name).toLowerCase();
+      if (!t.includes(q)) continue;
+      const sec = filmSection(slug);
+      hits.push([(sec === home ? 0 : 2) + (t.startsWith(q) ? 0 : 1), slug, name, sec]);
+      if (hits.length >= 60) break;
     }
-    list.innerHTML = hits.length ? hits.map(([s, n]) => `<li data-act="fr-add" data-slug="${esc(s)}" data-name="${esc(n)}"><b>${esc(titleOf(n))}</b> <span>${yearOf(n) || ""}</span></li>`).join("") : `<li class="-none">No store films match.</li>`;
+    hits.sort((a, b) => a[0] - b[0]);
+    list.innerHTML = hits.length
+      ? hits.slice(0, 10).map(([, s, n, sec]) => `<li data-act="fr-add" data-slug="${esc(s)}" data-name="${esc(n)}"${sec && sec !== home ? ' class="-other"' : ""}><b>${esc(titleOf(n))}</b> <span>${yearOf(n) || ""}</span><small>${sec ? esc(nameOf(sec)) : ""}${sec && sec !== home ? " · other section" : ""}</small></li>`).join("")
+      : `<li class="-none">No store films match.</li>`;
     list.hidden = false;
   }
   function saveFranchise() {
@@ -2926,9 +3204,35 @@
       toast("Thanks. A moderator will take a look.");
     }, "Yes, ask");
   }
-  function requestAddition(slug, name) {
-    shareEdit("add-film", slug, name);
-    toast(`Thanks. ‘${titleOf(name)}’ is on the list to add.`);
+  // Asking for a film to be added: say why, then Submit.
+  function requestAddition(slug, name, btn) {
+    const host = btn && btn.closest(".lbs-facts, li");
+    if (btn && btn.closest(".lbs-find-list")) return showCard(slug, name, true);
+    if (!host) return;
+    let form = host.parentElement.querySelector(`.lbs-req[data-slug="${CSS.escape(slug)}"]`);
+    if (!form) {
+      form = h("div", "lbs-req", `<textarea maxlength="600" rows="3" placeholder="Why would you like this added to the store?"></textarea><div><button type="button" data-act="req-cancel">Cancel</button><button type="button" class="-go" data-act="req-send" data-slug="${esc(slug)}" data-name="${esc(name)}" disabled>Submit</button></div>`);
+      form.dataset.slug = slug;
+      host.after(form);
+      const ta = form.querySelector("textarea"), go = form.querySelector("[data-act=req-send]");
+      ta.addEventListener("input", () => (go.disabled = !ta.value.trim()));
+      form.querySelector("[data-act=req-cancel]").addEventListener("click", () => form.remove());
+    }
+    btn.hidden = true;
+    form.querySelector("textarea").focus();
+  }
+  function sendAddition(btn) {
+    const form = btn.closest(".lbs-req");
+    const why = form.querySelector("textarea").value.trim();
+    if (!why) return;
+    const { slug, name } = btn.dataset;
+    shareEdit("add-film", slug, { name, why });
+    (mine.requested || (mine.requested = {}))[slug] = Date.now();
+    saveMine();
+    const facts = form.previousElementSibling;
+    form.remove();
+    if (facts && facts.classList.contains("lbs-facts")) facts.outerHTML = filmActs(slug, name);
+    toast(`Thanks. ‘${titleOf(name)}’ is on the list for a moderator to look at.`);
   }
 
   // Talk to the extension's background page (fetches, shared edits) through bridge.js.
@@ -2949,11 +3253,12 @@
   }
 
   // A small yes/no question over the store.
-  function ask(text, yes, yesLabel) {
+  function ask(text, yes, yesLabel, no) {
     const box = $(".lbs-ask", root);
     box.innerHTML = `<div class="lbs-ask-card"><p>${text}</p><div><button type="button" data-act="ask-no">No</button><button type="button" data-act="ask-yes" class="-go">${yesLabel || "Yes, change it"}</button></div></div>`;
     box.hidden = false;
     box._yes = yes;
+    box._no = no || null;
   }
 
   // A film from your inventory dropped on the wall.
@@ -3006,7 +3311,7 @@
       fillPosters(list, false);
     }, 200);
   }
-  function showCard(slug, name) {
+  function showCard(slug, name, openReq) {
     const card = $(".lbs-card", root);
     $(".lbs-find-list", root).hidden = true;
     const path = whereIs(slug);
@@ -3019,6 +3324,8 @@
       filmActs(slug, name);
     card.hidden = false;
     fillPosters(card, true);
+    const rq = openReq && card.querySelector("[data-act=req-add]");
+    if (rq) requestAddition(slug, name, rq);
   }
 
   /* ---------------- editing the store (moderators) ---------------- */
@@ -3304,8 +3611,8 @@
     wall.dropHint = over ? (d.kind === "piece" ? (d.pour ? pourTarget(d, e.clientX - r.left, e.clientY - r.top) : d.group ? groupTarget(d, e.clientX - r.left, e.clientY - r.top) : dropTarget(d, e.clientX - r.left, e.clientY - r.top)) : dvdTarget(d.slug, e.clientX - r.left, e.clientY - r.top)) : null;
     root.querySelectorAll(".lbs-folder.-over").forEach((el) => el.classList.remove("-over"));
     const under = document.elementFromPoint(e.clientX, e.clientY);
-    // Over the inventory tab: open the drawer to drop into.
-    if (d.kind === "dvd" && !ui.pocket && under && under.closest && under.closest(".lbs-pocket-tab")) { ui.pocket = true; renderPocket(); }
+    // Pulling a box down off the shelf (or over the tab) opens the inventory to drop it in.
+    if (d.kind === "dvd" && !ui.pocket && !edit.on && ((d.from === "wall" && e.clientY - d.y > 8) || (under && under.closest && under.closest(".lbs-pocket-tab")))) { ui.pocket = true; renderPocket(); }
     root.querySelectorAll(".lbs-pocket.-over, .lbs-pocket-tab.-over").forEach((el) => el.classList.remove("-over"));
     const pocketOver = d.kind === "dvd" && under && under.closest && under.closest(".lbs-pocket, .lbs-pocket-tab");
     if (pocketOver) { pocketOver.classList.add("-over"); wall.dropHint = null; }
@@ -3713,6 +4020,10 @@
     if (pick && !pick.hidden && !e.target.closest(".lbs-logopick")) pick.hidden = true;
     const sp = $(".lbs-sortpick", root);
     if (sp && !sp.hidden && !e.target.closest(".lbs-sortpick") && e.target !== wall.canvas) sp.hidden = true;
+    // Menus close when you click anywhere else.
+    root.querySelectorAll(".lbs-menu:not([hidden])").forEach((m) => {
+      if (!e.target.closest(".lbs-menu, [data-act=settings], [data-act=find-type], [data-act=lb-more]")) m.hidden = true;
+    });
     const row = e.target.closest(".lbs-row");
     if (row && !e.target.closest("a, button")) return selectRow(row, e);
     const btn = e.target.closest("[data-act], [data-coll], [data-scope], [data-view], [data-mode]");
@@ -3736,7 +4047,8 @@
     if (btn.dataset.view) {
       mine.view = btn.dataset.view;
       saveMine();
-      return refresh();
+      refresh();
+      return renderSettings();
     }
     const act = btn.dataset.act;
     const id = btn.dataset.id;
@@ -3751,7 +4063,17 @@
       const fs = btn.dataset.slug, fn = btn.dataset.name || (ui.film && ui.film.name) || fs;
       if (act === "f-close") return closeFilm();
       if (act === "f-open") return openFilm(fs, fn);
-      if (act === "f-hold") { holdFilms([[fs, fn]]); ui.pocket = true; renderPocket(); return toast(`‘${titleOf(fn)}’ is in your inventory.`); }
+      if (act === "f-hold") {
+        if (!lib.place.has(fs)) return toast(`‘${titleOf(fn)}’ isn't in the store yet, so it can't go in your inventory.`);
+        holdFilms([[fs, fn]]); ui.pocket = true; renderPocket(); return toast(`‘${titleOf(fn)}’ is in your inventory.`);
+      }
+      if (act === "settings") return toggleMenu(".lbs-settings");
+      if (act === "find-type") return toggleMenu(".lbs-find-types");
+      if (act === "find-as") { toggleMenu(".lbs-find-types", false); return $(".lbs-find-q", root)?.focus(); }
+      if (act === "req-send") return sendAddition(btn);
+      if (act === "lb-watch" || act === "lb-like" || act === "lb-wl" || act === "lb-block") return lbAction(act, btn);
+      if (act === "lb-more") { const m = btn.parentElement.querySelector(".lbs-lb-menu"); if (m) { const was = m.hidden; root.querySelectorAll(".lbs-menu").forEach((x) => (x.hidden = true)); m.hidden = !was; } return; }
+      if (act === "alt-all") { ui.altAll = true; return renderFilm(); }
       if (act === "f-jump") return jumpTo(fs, fn);
       if (act === "f-edit") { if (!ui.film || ui.film.slug !== fs) { ui.film = { slug: fs, name: fn }; filmDetails(fs).then((d) => ui.film && ui.film.slug === fs && renderFilm(d)); } ui.pane = ui.pane === "edit" ? null : "edit"; return renderFilm(); }
       if (act === "f-sort") { closeFilm(); $(".lbs-card", root).hidden = true; return openSort(fs, fn); }
@@ -3769,14 +4091,26 @@
       if (act === "fr-open") return openFranchise(ui.sortFilm[0], ui.sortFilm[1]);
       if (act === "fr-close") { ui.fr = null; return renderFranchise(); }
       if (act === "fr-drop") { ui.fr.films.splice(+btn.dataset.i, 1); return renderFranchise(); }
-      if (act === "fr-add") { ui.fr.films.push([fs, fn]); ui.fr.name = $(".lbs-fr-name", root)?.value || ui.fr.name; renderFranchise(); return $(".lbs-fr-q", root)?.focus(); }
+      if (act === "fr-add") {
+        ui.fr.name = $(".lbs-fr-name", root)?.value || ui.fr.name;
+        const add = () => { ui.fr.films.push([fs, fn]); renderFranchise(); $(".lbs-fr-q", root)?.focus(); };
+        const home = ui.fr.films[0] && filmSection(ui.fr.films[0][0]), there = filmSection(fs);
+        if (home && there && home !== there) {
+          // Keep the franchise builder's state; the question box is shared with it.
+          const keep = ui.fr;
+          ui.fr = null;
+          return ask(`‘${esc(titleOf(fn))}’ is in <b>${esc(nameOf(there))}</b>, not <b>${esc(nameOf(home))}</b>. Pull it into this franchise? It'll sit with the others in ${esc(nameOf(home))}.`, () => { ui.fr = keep; add(); }, "Yes, pull it in", () => { ui.fr = keep; renderFranchise(); });
+        }
+        return add();
+      }
       if (act === "fr-save") return saveFranchise();
       if (act === "fr-logo") { ui.fr.logo = btn.dataset.path; return renderFranchise(); }
       if (act === "fr-delete") { delete franchises()[ui.fr.id]; saveMine(); shareEdit("franchise", ui.fr.id, null); ui.fr = null; renderFranchise(); refresh(); return toast("Franchise undone."); }
       if (act === "req-remove-film") return requestRemoval("film", ui.sortFilm[0], titleOf(ui.sortFilm[1]));
+      if (act === "req-remove-this") return requestRemoval("film", fs, titleOf(fn));
       if (act === "req-remove") { $(".lbs-sortpick", root).hidden = true; return requestRemoval("section", id, nameOf(id)); }
-      if (act === "req-add") { e.stopPropagation(); return requestAddition(fs, fn); }
-      if (act === "ask-no" || act === "ask-yes") { const box = $(".lbs-ask", root); box.hidden = true; const y = box._yes; box._yes = null; if (act === "ask-yes" && y) y(); return; }
+      if (act === "req-add") { e.stopPropagation(); return requestAddition(fs, fn, btn); }
+      if (act === "ask-no" || act === "ask-yes") { const box = $(".lbs-ask", root); box.hidden = true; const y = box._yes, n = box._no; box._yes = box._no = null; if (act === "ask-yes" && y) y(); else if (act === "ask-no" && n) n(); return; }
     }
     if (act === "sort") return setSort(id, btn.dataset.v);
     if (act === "grab") { edit.grab = btn.dataset.v; return renderTray(); }
@@ -3882,6 +4216,14 @@
   }
 
   function onInput(e) {
+    if (e.target.dataset && e.target.dataset.set) {
+      const key = e.target.dataset.set;
+      mine[key] = !!e.target.checked;
+      saveMine();
+      root.querySelectorAll(`input[data-set="${key}"]`).forEach((x) => (x.checked = mine[key]));
+      if (key === "hideBlocked") drawSoon();
+      return;
+    }
     if (e.target.classList.contains("lbs-restore-file")) { const f = e.target.files && e.target.files[0]; e.target.value = ""; if (f) restoreMine(f); return; }
     if (e.target.classList.contains("lbs-f-wash") || e.target.classList.contains("lbs-f-washc")) {
       const ws = e.target.dataset.slug, pane = e.target.closest(".lbs-fpane");

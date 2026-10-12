@@ -3033,3 +3033,425 @@ html.lbs-open {
   color: #def;
   cursor: pointer;
 }
+
+/* A spine logo that's taller than wide keeps its orientation. */
+.lbs-spine-logo.-upright {
+  transform: none;
+  width: calc(var(--d) - 6px);
+  height: auto;
+  max-height: calc(var(--h) * 0.62);
+}
+.lbs-spine-logo.-wash.-upright {
+  height: calc(var(--h) * 0.62);
+}
+
+/* ---- Find bar: the type picker lives inside the search box; settings beside it ---- */
+.lbs-browsing .lbs-find .lbs-find-box {
+  padding: 0 4px 0 14px;
+}
+.lbs-find-box .lbs-find-type {
+  all: unset;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 30px;
+  padding: 0 8px 0 11px;
+  border-radius: 15px;
+  background: #e3ded0;
+  color: #34404c;
+  font: 700 11.5px Arial, sans-serif;
+  cursor: pointer;
+}
+.lbs-find-box .lbs-find-type:hover {
+  background: #d6d0bf;
+}
+.lbs-find-box .lbs-find-type svg {
+  width: 12px;
+  height: 12px;
+}
+.lbs-gear {
+  all: unset;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  background: #2c3440;
+  color: #def;
+  cursor: pointer;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+}
+.lbs-gear:hover,
+.lbs-gear[aria-expanded="true"] {
+  background: #40bcf4;
+  color: #0b1014;
+}
+.lbs-gear svg {
+  width: 18px;
+  height: 18px;
+}
+.lbs-menu {
+  position: absolute;
+  z-index: 30;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  border-radius: 8px;
+  background: #1e252c;
+  box-shadow: 0 0 0 1px #384350, 0 16px 40px rgba(0, 0, 0, 0.6);
+  box-sizing: border-box;
+  color: #cde;
+  font: 12.5px Arial, sans-serif;
+}
+.lbs-menu[hidden] {
+  display: none !important;
+}
+.lbs-find-types {
+  top: 44px;
+  right: 50px;
+  width: 150px;
+}
+.lbs-find-types button {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.lbs-find-types button:hover:not(:disabled),
+.lbs-find-types button.-on {
+  background: #2c3440;
+  color: #fff;
+}
+.lbs-find-types button:disabled {
+  color: #678;
+  cursor: default;
+}
+.lbs-find-types em {
+  font-style: normal;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.lbs-settings {
+  top: 44px;
+  right: 0;
+  width: 270px;
+  padding: 10px 12px 12px;
+}
+.lbs-settings h6 {
+  margin: 10px 0 6px;
+  color: #789;
+  font: 700 10.5px Arial, sans-serif;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.lbs-settings h6:first-child {
+  margin-top: 0;
+}
+.lbs-menu-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 6px 4px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.lbs-menu-row:hover {
+  background: #2c3440;
+}
+.lbs-menu-row input {
+  margin: 2px 0 0;
+  accent-color: #40bcf4;
+}
+.lbs-menu-row span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: #fff;
+}
+.lbs-menu-row small {
+  color: #789;
+  font-size: 11px;
+}
+.lbs-menu-seg {
+  display: flex;
+  padding: 2px;
+  margin-bottom: 4px;
+  border-radius: 5px;
+  background: #14181c;
+}
+.lbs-menu-seg button {
+  all: unset;
+  flex: 1;
+  padding: 5px 0;
+  border-radius: 4px;
+  color: #9ab;
+  font-weight: 700;
+  text-align: center;
+  cursor: pointer;
+}
+.lbs-menu-seg button.-on {
+  background: #40bcf4;
+  color: #0b1014;
+}
+.lbs-menu-seg em {
+  font-style: normal;
+  opacity: 0.75;
+}
+.lbs-menu-note {
+  margin: 0 0 8px;
+  color: #89a;
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+.lbs-menu-btns {
+  display: flex;
+  gap: 6px;
+}
+.lbs-menu-btns button,
+.lbs-menu-btns .lbs-restore {
+  border: 0;
+  border-radius: 4px;
+  padding: 6px 12px;
+  background: #2c3440;
+  color: #def;
+  font: 600 12px Arial, sans-serif;
+  cursor: pointer;
+}
+.lbs-menu-btns button:hover,
+.lbs-menu-btns .lbs-restore:hover {
+  background: #456;
+  color: #fff;
+}
+/* Whose shelves now lives in settings */
+.lbs-browsing .lbs-deskbar .lbs-view {
+  display: none;
+}
+
+/* ---- Inventory: taller, wraps into rows; covers drag, two buttons under each ---- */
+.lbs-pocket {
+  height: min(58vh, 560px);
+}
+.lbs-pocket-list {
+  flex-wrap: wrap;
+  align-content: flex-start;
+  gap: 14px 12px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 2px 2px 8px;
+}
+.lbs-pk img {
+  cursor: grab;
+}
+.lbs-pk-acts {
+  display: flex;
+  gap: 4px;
+  margin-top: 5px;
+}
+.lbs-pk-acts button {
+  flex: 1;
+  border: 0;
+  border-radius: 3px;
+  padding: 5px 0;
+  background: #2c3440;
+  color: #def;
+  font: 700 10.5px Arial, sans-serif;
+  cursor: pointer;
+}
+.lbs-pk-acts button:hover {
+  background: #456;
+  color: #fff;
+}
+.lbs-pk-acts button.-back {
+  background: #00b020;
+  color: #fff;
+}
+.lbs-pk-acts button.-back:hover {
+  background: #00c824;
+}
+.lbs-pocket-auto {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #9ab;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.lbs-pocket-auto input {
+  margin: 0;
+  accent-color: #40bcf4;
+}
+
+/* ---- Request addition: why, then Submit ---- */
+.lbs-req {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+.lbs-req textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid #384350;
+  border-radius: 5px;
+  background: #14181c;
+  color: #fff;
+  font: 13px/1.4 Arial, sans-serif;
+  resize: vertical;
+}
+.lbs-req textarea::placeholder {
+  color: #678;
+}
+.lbs-req textarea:focus {
+  outline: none;
+  border-color: #40bcf4;
+}
+.lbs-req > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.lbs-req button {
+  border: 0;
+  border-radius: 4px;
+  padding: 6px 14px;
+  background: #2c3440;
+  color: #def;
+  font: 700 12px Arial, sans-serif;
+  cursor: pointer;
+}
+.lbs-req button.-go {
+  background: #00b020;
+  color: #fff;
+}
+.lbs-req button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.lbs-fact.-done {
+  background: transparent;
+  color: #00c030;
+  cursor: default;
+  padding-left: 0;
+}
+.lbs-card .lbs-req {
+  padding: 0 4px 4px;
+}
+
+/* ---- Letterboxd's buttons in the film view ---- */
+.lbs-lbrow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 2px 0 12px;
+}
+.lbs-lb {
+  all: unset;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  min-width: 58px;
+  padding: 7px 6px 6px;
+  border-radius: 6px;
+  background: #1e252c;
+  color: #9ab;
+  font: 600 10.5px Arial, sans-serif;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+.lbs-lb svg {
+  width: 20px;
+  height: 20px;
+}
+.lbs-lb:hover:not(:disabled) {
+  background: #2c3440;
+  color: #fff;
+}
+.lbs-lb:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.lbs-lb.-watch.-on {
+  color: #00c030;
+}
+.lbs-lb.-like.-on {
+  color: #ff8000;
+}
+.lbs-lb.-wl.-on {
+  color: #40bcf4;
+}
+.lbs-lb.-block.-on {
+  color: #ff5a5a;
+}
+.lbs-lb-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.lbs-lb-menu {
+  top: calc(100% + 4px);
+  left: 0;
+  width: 220px;
+  display: flex;
+  flex-direction: column;
+}
+.lbs-lb-menu a,
+.lbs-lb-menu button {
+  all: unset;
+  padding: 7px 10px;
+  border-radius: 4px;
+  color: #def;
+  cursor: pointer;
+}
+.lbs-lb-menu a:hover,
+.lbs-lb-menu button:hover {
+  background: #2c3440;
+  color: #fff;
+}
+.lbs-lbnote {
+  margin: -6px 0 10px;
+  color: #789;
+  font-size: 11.5px;
+}
+.lbs-falt {
+  margin: 0 0 10px;
+  color: #9ab;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.lbs-falt span {
+  display: block;
+  color: #678;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.lbs-falt button {
+  all: unset;
+  color: #40bcf4;
+  cursor: pointer;
+}
+
+/* ---- Franchise builder: where each film lives ---- */
+.lbs-fr-results small,
+.lbs-fr-list span small {
+  display: block;
+  color: #789;
+  font-size: 11px;
+}
+.lbs-fr-results li.-other small,
+.lbs-fr-list li.-other span small {
+  color: #ffb84a;
+}
+.lbs-fr-list li.-other img {
+  box-shadow: 0 0 0 2px #ffb84a;
+}
