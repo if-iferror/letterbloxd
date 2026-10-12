@@ -2171,6 +2171,7 @@
     g.addColorStop(1, "#7c838a");
     ctx.fillStyle = g;
     ctx.beginPath(); ctx.arc(0, 0, 1, 0, Math.PI * 2); ctx.fill();
+    ctx.clip(); // nothing pressed into the lid may stray past its edge
     const unit = 1 / Math.max(1, Math.min(rx, ry));
     const lw = (w) => w / Math.max(rx, ry);
     // a pressed ridge: light on its upper-left side, shadow on its lower-right
