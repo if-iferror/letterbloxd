@@ -2323,15 +2323,18 @@
     ctx.strokeStyle = "rgba(255,255,255,0.55)";
     ctx.lineWidth = 1.1;
     ctx.beginPath(); ctx.ellipse(cxL + 0.9, cy, rx, ry - 1.2, 0, Math.PI * 0.62, Math.PI * 1.38); ctx.stroke();
-    ctx.strokeStyle = "rgba(255,255,255,0.22)";
-    ctx.lineWidth = 2.4;
-    ctx.beginPath(); ctx.ellipse(cxL + 2, cy, rx, ry - 2, 0, Math.PI * 0.7, Math.PI * 1.3); ctx.stroke();
+    // Inside the channel between the lips it's the other way round: the left
+    // lip's inner wall faces right (away from the light), so a shadow falls
+    // just inside it; the right lip's inner wall faces the light.
+    ctx.strokeStyle = "rgba(0,0,0,0.3)";
+    ctx.lineWidth = 2.2;
+    ctx.beginPath(); ctx.ellipse(cxL + 2.6, cy, rx, ry - 2, 0, Math.PI * 0.7, Math.PI * 1.3); ctx.stroke();
     ctx.strokeStyle = "rgba(0,0,0,0.5)";
     ctx.lineWidth = 1.6;
     ctx.beginPath(); ctx.ellipse(cxR - 0.8, cy, rx, ry - 0.5, 0, Math.PI / 2, (Math.PI * 3) / 2); ctx.stroke();
-    ctx.strokeStyle = "rgba(0,0,0,0.22)";
-    ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.ellipse(cxR - 2.2, cy, rx, ry - 1.5, 0, Math.PI * 0.6, Math.PI * 1.4); ctx.stroke();
+    ctx.strokeStyle = "rgba(255,255,255,0.3)";
+    ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.ellipse(cxR - 2.4, cy, rx, ry - 1.5, 0, Math.PI * 0.6, Math.PI * 1.4); ctx.stroke();
     ctx.lineCap = "butt";
     // the near lid (the next can along rests against it). It faces right,
     // away from the light (which comes from the left, as on the boxes), so
