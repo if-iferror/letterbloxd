@@ -1417,6 +1417,7 @@
     return out;
   }
   const MIN_PIECE = 30; // the smallest space worth putting a section into
+  const SQUEEZE_MAX = CAP * 0.12; // films over a block's space that may squeeze onto its shelf
 
   // The default arrangement: sections one after another, each starting
   // right where the last one ended, down each bay and then across.
@@ -1498,14 +1499,18 @@
         content.set(ref, list);
       }
       if (k < P.items.length) {
-        if (refs.length) content.get(refs[refs.length - 1]).push(...P.items.slice(k)); // squeezes in
-        else leftovers.set(P.id, P.items.slice(k));
+        // A few films over: squeeze them onto the block's last piece. More than
+        // that: they wait in the inventory (viewers: after the last bay).
+        const over = P.items.slice(k);
+        if (refs.length && footprint(over) <= SQUEEZE_MAX) content.get(refs[refs.length - 1]).push(...over);
+        else leftovers.set(P.id, over);
       }
     }
     // Viewers: a new block with no shelf of its own sits with its siblings
     // (on the last piece of its category, squeezed in) until a moderator places it.
     if (!edit.on) {
       for (const [bid, items] of [...leftovers]) {
+        if (footprint(items) > SQUEEZE_MAX) continue;
         const cat = sections.get(bid).cat;
         const sib = [...refCid].filter(([, c]) => sections.has(c) && sections.get(c).cat === cat).map(([r]) => r).sort((a, b) => cmp(where.get(a), where.get(b)));
         if (!sib.length) continue;
