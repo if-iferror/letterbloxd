@@ -244,7 +244,13 @@
     ["horror", "Horror"], ["music", "Music"], ["mystery", "Mystery"], ["romance", "Romance"], ["science-fiction", "Science Fiction"],
     ["thriller", "Thriller"], ["tv-movie", "TV Movie"], ["war", "War"], ["western", "Western"],
   ];
-  const STOCKED = "horror";
+  const STOCKED = "horror"; // the genre with hand-made aisles (its own placement rules)
+  // The room: every genre that has films, in genre order, each in its own run
+  // of aisles. (For now only Horror is stocked; the others join as the
+  // catalogue grows.)
+  const roomGenres = () => (lib ? GENRES.map(([id]) => id).filter((g) => lib.genres.has(g) && (lib.count.get(g) || 0) > 0) : [STOCKED]);
+  const inRoom = (genreId) => roomGenres().includes(genreId);
+  const roomCats = () => roomGenres().flatMap((g) => lib.genres.get(g).cats);
   // For now the Store opens straight into the Sorting Desk; the walkable
   // aisles are switched off (set false to bring them back).
   const DESK_ONLY = true;
@@ -296,7 +302,7 @@
   // index: a section's hand-made order (slugs); sort: each section's default
   // order ("title" | "year" | "index"); held: films taken off the wall into
   // the moderator's workspace.
-  const blankHouse = () => ({ v: 1, names: {}, hidden: [], cats: {}, subs: {}, place: {}, order: [], subOrder: {}, index: {}, sort: {}, held: [], wall: null });
+  const blankHouse = () => ({ v: 1, names: {}, hidden: [], cats: {}, subs: {}, place: {}, order: [], subOrder: {}, index: {}, sort: {}, held: [], wall: null, walls: {} });
   const fullHouse = (x) => ({ ...blankHouse(), ...(x || {}) });
   let houseShared = null;
   let houseLocal = readJSON(HOUSE_KEY, null);
@@ -1304,7 +1310,9 @@
     return lo;
   }
   // One colour per section, spread round the wheel so neighbours never match.
-  const secHue = (i) => { const n = Math.max(1, lib.genres.get(STOCKED).cats.length), step = n % 5 ? 5 : 3; return (((i * step) % n) * 360) / n + 10; };
+  // One colour per category, spread round the wheel across the whole room.
+  let roomCatCount = 1;
+  const secHue = (i) => { const n = Math.max(1, roomCatCount), step = n % 5 ? 5 : 3; return (((i * step) % n) * 360) / n + 10; };
 
   // Every section's films (shelf order) and its pieces' lengths.
   // How a section is ordered: your own choice, else the house's, else A-Z.
@@ -1393,8 +1401,11 @@
   // its films in shelf order and how much shelf they need.
   function sectionStock() {
     const out = new Map();
-    lib.genres.get(STOCKED).cats.forEach((cid, n) => {
-      for (const bid of blocksOf(cid)) out.set(bid, { id: bid, cat: cid, n, items: [], total: 0 });
+    const cats = roomCats();
+    roomCatCount = cats.length;
+    cats.forEach((cid, n) => {
+      const genre = lib.cats.get(cid).genre;
+      for (const bid of blocksOf(cid)) out.set(bid, { id: bid, cat: cid, genre, n, items: [], total: 0 });
       for (const f of sectionOrder(cid)) {
         const y = yearOf(f.name);
         const B = out.get(f.blk) || out.get(blocksOf(cid).slice(-1)[0]);
@@ -1403,6 +1414,30 @@
       for (const bid of blocksOf(cid)) { const B = out.get(bid); B.total = footprint(B.items); if (!B.items.length) out.delete(bid); }
     });
     return out;
+  }
+  // A genre's plan (bays counted from the start of its region). Horror's plan
+  // from before the room had genres lives in house.wall.
+  function planOf(H, g) {
+    const w = H.walls && H.walls[g];
+    if (w && w.shelves) return w.shelves;
+    if (g === STOCKED && H.wall && H.wall.shelves && Object.keys(H.wall.shelves).length) return H.wall.shelves;
+    return null;
+  }
+  // Save a whole-room arrangement (in room bays, as the wall shows it) back
+  // as one plan per genre region. Only the genres given are touched.
+  function setPlan(H, shelves, only) {
+    const perRow = wall.plan.perRow;
+    H.walls = { ...(H.walls || {}) };
+    const out = {};
+    for (const R of wall.regions) if (!only || only.includes(R.genre)) out[R.genre] = {};
+    for (const [k, list] of Object.entries(shelves)) {
+      const [b, sh] = k.split(":").map(Number);
+      const R = wall.regions.find((x) => b >= x.start && b < x.start + x.rows * perRow) || wall.regions[wall.regions.length - 1];
+      if (!out[R.genre]) continue;
+      out[R.genre][`${b - R.start}:${sh}`] = list;
+    }
+    for (const [g, sh] of Object.entries(out)) H.walls[g] = { shelves: sh };
+    H.wall = { perRow }; // (the old single plan now lives in walls.horror)
   }
   // Old plans placed whole categories; turn each category piece into the
   // blocks it held, in order, so the wall looks exactly as it did.
@@ -1445,7 +1480,11 @@
     const shelves = {};
     let b = 0, s = 0, used = 0;
     const next = () => { used = 0; if (++s >= WU.shelves) { s = 0; b++; } };
+    let genre = null;
     for (const P of stock_.values()) {
+      // Each genre starts its own run of aisles (a fresh row of bays).
+      if (genre && P.genre && P.genre !== genre && (b > 0 || s > 0 || used > 0)) { b = Math.ceil((b + (s || used ? 1 : 0)) / perRow) * perRow; s = 0; used = 0; }
+      if (P.genre) genre = P.genre;
       let k = 0;
       while (k < P.items.length) {
         let free = CAP - used - (used ? BOOKEND : 0);
@@ -1475,14 +1514,32 @@
         if (d < best) { best = d; perRow = t; }
       }
     }
-    // No plan yet: viewers get the automatic layout; a moderator starts with
-    // an empty wall and every section in the workspace.
+    // The room is one region per genre, in genre order, each its own run of
+    // whole rows of bays with its own plan (house.walls[genre], in bays
+    // counted from the start of that region). A genre without a plan: viewers
+    // get it arranged automatically; a moderator gets it empty, with its
+    // blocks in the inventory. Pieces of folders that no longer exist are
+    // left out, and plans from before blocks are converted.
     const valid = (x) => x && typeof x === "object" && sections.has(x.c) && x.u > 0;
-    // A plan from before blocks is converted; pieces of folders that no
-    // longer exist are simply left out.
-    const saved = H.wall && H.wall.shelves && Object.keys(H.wall.shelves).length ? { ...H.wall, shelves: migratePlan(H.wall.shelves, sections) } : null;
-    const plan = saved || (edit.on ? { perRow, shelves: {} } : autoArrange(sections, perRow));
+    const genres = roomGenres();
+    const regions = [];
+    const shelvesAll = {};
+    let rowAt = 0;
+    for (const g of genres) {
+      const own = new Map([...sections].filter(([, P]) => P.genre === g));
+      let local = planOf(H, g);
+      local = local ? migratePlan(local, sections) : edit.on ? {} : autoArrange(own, perRow).shelves;
+      const extent = 1 + Math.max(-1, ...Object.keys(local).map((k) => +k.split(":")[0]));
+      const rows = Math.max(1, Math.ceil((extent + (edit.on ? 1 : 0)) / perRow));
+      regions.push({ genre: g, start: rowAt * perRow, rows, extent });
+      for (const [k, list] of Object.entries(local)) { const [b, sh] = k.split(":").map(Number); shelvesAll[`${b + rowAt * perRow}:${sh}`] = list; }
+      rowAt += rows;
+    }
+    const plan = { perRow, shelves: shelvesAll };
     wall.plan = { perRow, shelves: plan.shelves };
+    wall.regions = regions;
+    // Where each bay ends up once every genre's overflow has been given room.
+    const regionAt = (b) => regions.find((r) => b >= r.start && b < r.start + r.rows * perRow) || regions[regions.length - 1];
     const origin = (b) => ({ x: (b % perRow) * (WU.bayW + WU.gap), y: Math.floor(b / perRow) * ROW_H });
 
     // Each placed piece: a section and an amount of shelf. ref = "bay:shelf/slot".
@@ -1542,16 +1599,36 @@
     if (edit.on) {
       for (const [bid, list] of leftovers) bucket.push({ sec: bid, cat: sections.get(bid).cat, n: sections.get(bid).n, size: footprint(list), count: list.length, whole: list.length === sections.get(bid).items.length });
     } else if (leftovers.size) {
-      const rest = autoArrange(new Map([...leftovers].map(([cid, items]) => [cid, { id: cid, items }])), perRow).shelves;
-      const start = 1 + Math.max(-1, ...[...where.values()].map((w) => w.bay));
+      // Each genre's overflow carries on after its own plan, inside its own
+      // region; regions after it move down to make room.
+      const extra = new Map(); // genre -> rows added
+      const placed = [];
+      for (const R of regions) {
+        const mine_ = [...leftovers].filter(([cid]) => sections.get(cid).genre === R.genre);
+        if (!mine_.length) continue;
+        const rest = autoArrange(new Map(mine_.map(([cid, items]) => [cid, { id: cid, items, genre: R.genre }])), perRow).shelves;
+        const used = 1 + Math.max(-1, ...[...where.values()].filter((w) => regionAt(w.bay) === R).map((w) => w.bay - R.start));
+        const startLocal = used > 0 ? used : 0;
+        const need = 1 + Math.max(...Object.keys(rest).map((k) => +k.split(":")[0]));
+        const rows = Math.ceil((startLocal + need) / perRow);
+        extra.set(R.genre, Math.max(0, rows - R.rows));
+        placed.push([R, rest, startLocal]);
+      }
+      // shift: final start of each region
+      let shift = 0;
+      for (const R of regions) { R.final = R.start + shift * perRow; shift += extra.get(R.genre) || 0; R.rows += extra.get(R.genre) || 0; }
+      const moveBay = (b) => { const R = regions.find((x) => b >= x.start && b < x.start + (x.rows - (extra.get(x.genre) || 0)) * perRow) || regions[regions.length - 1]; return b - R.start + R.final; };
+      for (const w of where.values()) w.bay = moveBay(w.bay);
+      for (const [k, refs] of [...shelfList]) { const [b, sh] = k.split(":").map(Number); shelfList.delete(k); shelfList.set(`${moveBay(b)}:${sh}`, refs); }
+      for (const R of regions) R.start = R.final;
       const fed = new Map([...leftovers].map(([cid]) => [cid, 0]));
-      for (const [key, list] of Object.entries(rest)) {
+      for (const [R, rest, startLocal] of placed) for (const [key, list] of Object.entries(rest)) {
         const [b0, sh] = key.split(":").map(Number);
-        const nk = `${b0 + start}:${sh}`;
+        const nk = `${b0 + startLocal + R.start}:${sh}`;
         const keep = [];
         for (const pc of list) {
-          const ref = `${nk}/${keep.length}`;
-          where.set(ref, { bay: b0 + start, shelf: sh, slot: keep.length });
+          const ref = `L${nk}/${keep.length}`; // (L: overflow, never clashes with a plan's refs)
+          where.set(ref, { bay: b0 + startLocal + R.start, shelf: sh, slot: keep.length });
           refCid.set(ref, pc.c);
           const items = leftovers.get(pc.c);
           let k = fed.get(pc.c), acc = 0;
@@ -1697,16 +1774,19 @@
       if (run) stickers.push(run);
     }
     // Edit mode keeps an empty bay at the end to drop pieces into.
-    const bays = edit.on ? Math.max(maxBay + 2, Math.ceil(totalShelves / WU.shelves) + 1) : maxBay + 1;
+    const roomBays = regions.reduce((n, R) => n + R.rows * perRow, 0);
+    const bays = edit.on ? Math.max(maxBay + 1, roomBays) : maxBay + 1;
     const width = Math.min(bays, perRow) * (WU.bayW + WU.gap);
     const height = Math.ceil(bays / perRow) * ROW_H;
     // Each row of bays is an aisle; its sign names the categories along it.
     const aisles = [];
     for (const r of [...runs].sort((a, c) => a.bay - c.bay || a.shelf - c.shelf || a.x0 - c.x0)) {
       const row = Math.floor(r.bay / perRow);
-      const a = aisles[row] || (aisles[row] = { row, y: row * ROW_H, secs: [] });
+      const a = aisles[row] || (aisles[row] = { row, y: row * ROW_H, secs: [], genre: lib.cats.get(secs[r.sec].id).genre });
       if (!a.secs.includes(r.sec)) a.secs.push(r.sec);
     }
+    // Aisles are numbered within their genre.
+    { const seen = new Map(); for (const a of aisles.filter(Boolean)) { const n = (seen.get(a.genre) || 0) + 1; seen.set(a.genre, n); a.num = n; } }
     wall.lay = { films, chunks, secs, runs, bookends, stickers, hang, aisles: aisles.filter(Boolean), left: -AISLE_W - AISLE_GAP, faces: [], idx, bucket, held: H.held, width, height, bays, k: perRow, origin };
     recolourSections();
     renderTray();
@@ -1764,7 +1844,8 @@
   function flyToFolder(id) {
     if (!wall.lay || wall.level !== "wall") return;
     const p = partsOf(id);
-    if (p.genre !== STOCKED || !p.cat) return fit();
+    if (!inRoom(p.genre)) return fit();
+    if (!p.cat) { const g = wall.lay.secs.find((x) => lib.cats.get(x.id).genre === p.genre); const f = g && wall.lay.films[g.films[0]]; return f ? flyTo(f.x + 300, f.y - 120, 0.12) : fit(); }
     const L = wall.lay;
     const i = p.niche ? L.films.findIndex((f) => f.sub === p.niche) : p.sub ? L.films.findIndex((f) => f.sub === p.sub || (lib.subs.get(f.sub) || {}).parent === p.sub) : L.secs.find((s) => s.id === p.cat)?.films[0];
     if (i == null || i < 0) return;
@@ -2873,7 +2954,7 @@
       ctx.textBaseline = "middle";
       ctx.fillStyle = "#f0e6cf";
       ctx.font = `800 64px "Helvetica Neue", Arial, sans-serif`;
-      ctx.fillText(`AISLE ${a.row + 1}`, ax + AISLE_W / 2, ay + 120);
+      ctx.fillText(roomGenres().length > 1 ? `${nameOf(a.genre).toUpperCase()} · AISLE ${a.num}` : `AISLE ${a.num}`, ax + AISLE_W / 2, ay + 120, AISLE_W - 100);
       const n = a.secs.length, top = ay + 200, room = ah - 200 - 80;
       const fs = Math.min(130, (room / n) * 0.6);
       ctx.font = `800 ${fs}px "Helvetica Neue", Arial, sans-serif`;
@@ -3047,7 +3128,7 @@
     box.innerHTML = [...lib.genres.values()]
       .map((g) => {
         const n = lib.count.get(g.id) || 0;
-        const live = g.id === STOCKED;
+        const live = n > 0;
         return (
           `<button type="button" class="lbs-aisle-box${live ? " -live" : ""}" data-act="${live ? "enter" : "open"}" data-id="${esc(g.id)}" data-drop="${esc(g.id)}">` +
           `<span class="lbs-aisle-sign">${esc(g.name)}</span>` +
@@ -3669,7 +3750,7 @@
     const target = right && !lib.genres.has(right) ? landingSub(right) : null;
     // Jump to: the last thing you clicked (a film, or a folder), else the open folder.
     const focus = libUI.focus && (libUI.focus.film ? (lib.place.has(libUI.focus.film[0]) ? libUI.focus : null) : path.includes(libUI.focus.folder) ? libUI.focus : null) || (right ? { folder: right } : null);
-    const jumpOk = focus && (focus.film || (partsOf(focus.folder).genre === STOCKED && focus.folder !== STOCKED));
+    const jumpOk = focus && (focus.film || inRoom(partsOf(focus.folder).genre));
     const jumpLabel = focus ? (focus.film ? titleOf(focus.film[1]) : nameOf(focus.folder)) : "";
     const jumpBtn = `<button type="button" data-act="lib-jump"${jumpOk ? "" : " disabled"} title="${jumpOk ? `Fly to ${esc(jumpLabel)} on the wall` : ""}">Jump to section</button>`;
     const canMove = sel && target && target !== selAt;
@@ -3982,7 +4063,7 @@
       (placing
         ? `<div class="lbs-tray-tools"><span class="lbs-grabtype">Grab <button type="button" data-act="grab" data-v="one" class="${edit.grab === "one" ? "-on" : ""}">Individual</button><button type="button" data-act="grab" data-v="group" class="${edit.grab === "group" ? "-on" : ""}">Group</button></span>` +
           `<span><button type="button" data-act="w-auto">Auto-arrange</button><button type="button" data-act="w-clear">Everything down</button></span></div>` +
-          `<h4>Blocks to place <select class="lbs-tray-filter" aria-label="Show blocks from"><option value="">All categories</option>${[...new Set(list.map((pc) => pc.cat))].map((c) => `<option value="${esc(c)}"${edit.filter === c ? " selected" : ""}>${esc(nameOf(c))}</option>`).join("")}</select></h4>` +
+          `<h4>Blocks to place <select class="lbs-tray-filter" aria-label="Show blocks from"><option value="">All categories</option>${[...new Set(list.map((pc) => pc.cat))].map((c) => `<option value="${esc(c)}"${edit.filter === c ? " selected" : ""}>${esc(roomGenres().length > 1 ? pathOf(c).join(" › ") : nameOf(c))}</option>`).join("")}</select></h4>` +
           `<div class="lbs-tray-list">` +
           (list.length
             ? list.filter((pc) => !edit.filter || pc.cat === edit.filter).map((pc) => {
@@ -4046,7 +4127,7 @@
     }
     (sh[t.key] ||= []).splice(t.at, 0, { c: cid, u: Math.round(t.size) });
     const rest = had - t.size;
-    houseEdit(rest > 2 ? `${nameOf(cid)}: filled that space; the rest is in the inventory.` : `Placed ${nameOf(cid)}.`, (H) => { H.wall = { perRow: wall.plan.perRow, shelves: sh }; });
+    houseEdit(rest > 2 ? `${nameOf(cid)}: filled that space; the rest is in the inventory.` : `Placed ${nameOf(cid)}.`, (H) => setPlan(H, sh));
   }
   /* Group grab: every piece of the section moves together. Each keeps its
    * size and its position relative to the piece you picked up (in bays,
@@ -4102,7 +4183,7 @@
     for (const it of t.items) (rest[it.key] ||= []).push({ pc: { c: it.c, u: it.u }, x: it.x + it.u / 2 });
     const out = {};
     for (const [key, list] of Object.entries(rest)) if (list.length) out[key] = list.sort((a, b) => a.x - b.x).map((e) => e.pc);
-    houseEdit(`Moved all of ${nameOf(t.cid)}.`, (H) => { H.wall = { perRow: wall.plan.perRow, shelves: out }; });
+    houseEdit(`Moved all of ${nameOf(t.cid)}.`, (H) => setPlan(H, out));
   }
 
   // Group grab from the inventory: pour the whole section in from where you
@@ -4140,7 +4221,7 @@
   function placePour(t) {
     const sh = shelvesNow();
     for (const it of t.items) (sh[it.key] ||= []).splice(it.at, 0, { c: t.cid, u: it.u });
-    houseEdit(`Poured all of ${nameOf(t.cid)} onto ${t.items.length} shel${t.items.length === 1 ? "f" : "ves"}.`, (H) => { H.wall = { perRow: wall.plan.perRow, shelves: sh }; });
+    houseEdit(`Poured all of ${nameOf(t.cid)} onto ${t.items.length} shel${t.items.length === 1 ? "f" : "ves"}.`, (H) => setPlan(H, sh));
   }
 
   function unplaceGrab(g) {
@@ -4148,7 +4229,7 @@
     const [k, slot] = g.ref.split("/");
     sh[k].splice(+slot, 1);
     if (!sh[k].length) delete sh[k];
-    houseEdit(`Took ${nameOf(grabCid(g))} down to the inventory.`, (H) => { H.wall = { perRow: wall.plan.perRow, shelves: sh }; });
+    houseEdit(`Took ${nameOf(grabCid(g))} down to the inventory.`, (H) => setPlan(H, sh));
   }
 
   // Where a DVD dropped at (sx, sy) on the canvas would go.
@@ -4260,7 +4341,7 @@
         const keep = new Set(groupRefs(grabCid(d)).map((r) => r.ref));
         const sh = shelvesNow();
         for (const k of Object.keys(sh)) { sh[k] = sh[k].filter((_, i) => !keep.has(`${k}/${i}`)); if (!sh[k].length) delete sh[k]; }
-        return houseEdit(`Took all of ${nameOf(grabCid(d))} down.`, (H) => { H.wall = { perRow: wall.plan.perRow, shelves: sh }; });
+        return houseEdit(`Took all of ${nameOf(grabCid(d))} down.`, (H) => setPlan(H, sh));
       }
       if (toTray) { if (d.from === "wall") unplaceGrab(d); return drawSoon(); }
       if (hint && hint.pour) { if (hint.ok) return placePour(hint); toast("Not enough room from there on to fit the whole section."); return drawSoon(); }
@@ -4316,7 +4397,7 @@
 
   // A block's (or category's) colour: its category's.
   const catOfBlock = (id) => (lib.cats.has(id) ? id : lib.subs.has(id) ? lib.subs.get(id).cat : id);
-  const hueOfBlock = (id) => secHue(Math.max(0, lib.genres.get(STOCKED).cats.indexOf(catOfBlock(id))));
+  const hueOfBlock = (id) => secHue(Math.max(0, roomCats().indexOf(catOfBlock(id))));
   function selectSection(id) {
     id = catOfBlock(id);
     edit.sel = id;
@@ -4763,8 +4844,14 @@
     }
     if (act === "sort") return setSort(id, btn.dataset.v);
     if (act === "grab") { edit.grab = btn.dataset.v; return renderTray(); }
-    if (act === "w-clear") return houseEdit("Everything is back in the inventory.", (H) => { H.wall = { perRow: wall.plan.perRow, shelves: {} }; });
-    if (act === "w-auto") return houseEdit("Auto-arranged the wall.", (H) => { H.wall = autoArrange(sectionStock(), wall.plan.perRow); });
+    if (act === "w-clear") return houseEdit("Everything is back in the inventory.", (H) => setPlan(H, {}));
+    if (act === "w-auto") return houseEdit("Auto-arranged the wall.", (H) => {
+      // each genre arranged within its own region
+      const all = sectionStock();
+      H.walls = { ...(H.walls || {}) };
+      for (const g of roomGenres()) H.walls[g] = { shelves: autoArrange(new Map([...all].filter(([, P]) => P.genre === g)), wall.plan.perRow).shelves };
+      H.wall = { perRow: wall.plan.perRow };
+    });
     if (act === "rename") { e.stopPropagation(); edit.renaming = id; edit.deleting = null; return renderFolders(); }
     if (act === "del") { e.stopPropagation(); edit.deleting = id; edit.renaming = null; return renderFolders(); }
     if (act === "del-yes") return deleteFolder(id);
@@ -4810,14 +4897,14 @@
       if (el) walkway.track.scrollTo({ left: Math.max(0, el.offsetLeft - 12), behavior: "smooth" });
       return;
     }
-    if (act === "open" && edit.on && lib.cats.has(id) && lib.cats.get(id).genre === STOCKED) { edit.sel = id; drawSoon(); }
+    if (act === "open" && edit.on && lib.cats.has(id) && inRoom(lib.cats.get(id).genre)) { edit.sel = id; drawSoon(); }
     if (act === "open") {
       if (!desk.open) {
         desk.folder = id;
         desk.folder = id;
         return setDesk(true);
       }
-      if (desk.mode === "store" && partsOf(id).genre === STOCKED && wall.level === "aisles" && id !== STOCKED) wall.level = "wall";
+      if (desk.mode === "store" && inRoom(partsOf(id).genre) && wall.level === "aisles" && !lib.genres.has(id)) wall.level = "wall";
       openFolder(id);
       if (desk.mode === "store") requestAnimationFrame(() => flyToFolder(id));
       return;
