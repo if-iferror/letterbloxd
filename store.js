@@ -1249,7 +1249,7 @@
   const FAR = 0.09, NEAR = 0.45, TEXT = 0.8, ZMIN = 0.02, ZMAX = 6;
   const DEPTH_X = 4, DEPTH_Y = 5; // the sliver of top and side we see
   // Case plastic, as seen on top: VHS clamshells (darkest), DVDs, Blu-rays.
-  const caseTop = (y) => (y && y < 1990 ? "#141517" : y && y < 2010 ? "#25272b" : "#1d5aa6");
+  const caseTop = (y) => (y && y < 2000 ? "#141517" : y && y < 2016 ? "#25272b" : "#1d5aa6");
   const YEAR_ZONE = 18; // the year sits in this much of the bottom of a spine
   const CASE_END = 3, LAMINATE = 5, PAPER_IN = CASE_END + LAMINATE; // paper wrap stops short of the case ends
   const PAPER_TOP = PAPER_IN - 3; // where the paper wrap starts and ends (same at both ends)
@@ -1262,9 +1262,9 @@
   const wall = { level: "aisles", lay: null, cam: { x: 0, y: 0, z: 0.05 }, hover: null, pin: null, lite: false, slow: 0, imgs: new Map(), logos: new Map(), frame: 0 };
   // 1969 and earlier: round steel film cans, standing on edge. Then VHS, DVD, Blu-ray.
   const isCan = (y) => !!y && y < 1970;
-  const CAN_RX = 5, CAN_T = 15; // a can's lid ellipse half-width and rim thickness (see drawCan)
-  const spineW = (y) => (isCan(y) ? CAN_T + CAN_RX : y && y < 1990 ? 20 : y && y < 2010 ? 12 : 10);
-  const spineH = (y) => (isCan(y) ? WU.shelfH - WU.lip - 1 : y && y < 1990 ? 168 : y && y < 2010 ? 158 : 148);
+  const CAN_RX = 5, CAN_T = 17; // a can's lid ellipse half-width and rim thickness (see drawCan)
+  const spineW = (y) => (isCan(y) ? CAN_T : y && y < 2000 ? 20 : y && y < 2016 ? 12 : 10);
+  const spineH = (y) => (isCan(y) ? WU.shelfH - WU.lip - 1 : y && y < 2000 ? 168 : y && y < 2016 ? 158 : 148);
   const hash = (s) => { let x = 2166136261; for (let i = 0; i < s.length; i++) x = Math.imul(x ^ s.charCodeAt(i), 16777619); return x >>> 0; };
 
   /* The wall is built from "pieces". Each section's films, A-Z, are cut into
@@ -2154,8 +2154,9 @@
    * ellipses), the near lid shows as an ellipse with pressed rings and four
    * triangular windows onto the reel, and the title tape wraps round the rim,
    * so its art bends away at the top and bottom. Lit from the front left. */
-  // (CAN_RX, CAN_T: see isCan.) Each can's near lid rests against the next
-  // can, so a can takes only its rim and one lid's worth of shelf.
+  // (CAN_RX, CAN_T: see isCan.) Cans stand pressed together: the next can's
+  // far edge sits right on this one's lid, so a can takes only its rim's width
+  // and you only see the lid of the last can in a row.
   // The lid: an ellipse centred (cx, cy), radii (rx, ry): pressed steel with
   // a rolled edge, a ring of raised segments, and stepped rings to a hub;
   // optionally with a poster pasted in the middle.
@@ -2315,10 +2316,23 @@
     ctx.fillStyle = canCurve(ctx, top, f.y);
     ctx.fillRect(f.x - 1, top, CAN_T + 2 * rx + 2, f.h);
     ctx.restore();
-    // the far lid's rolled edge
-    ctx.strokeStyle = "rgba(225,230,235,0.5)";
-    ctx.lineWidth = 0.9;
-    ctx.beginPath(); ctx.ellipse(cxL + 0.6, cy, rx, ry - 0.6, 0, Math.PI / 2, (Math.PI * 3) / 2); ctx.stroke();
+    // Its curved edges, like the boxes' corners: a glint of light down the
+    // left edge, shadow down the right (where it meets its lid or the next
+    // can), so one can reads apart from the next.
+    ctx.lineCap = "round";
+    ctx.strokeStyle = "rgba(255,255,255,0.55)";
+    ctx.lineWidth = 1.1;
+    ctx.beginPath(); ctx.ellipse(cxL + 0.9, cy, rx, ry - 1.2, 0, Math.PI * 0.62, Math.PI * 1.38); ctx.stroke();
+    ctx.strokeStyle = "rgba(255,255,255,0.22)";
+    ctx.lineWidth = 2.4;
+    ctx.beginPath(); ctx.ellipse(cxL + 2, cy, rx, ry - 2, 0, Math.PI * 0.7, Math.PI * 1.3); ctx.stroke();
+    ctx.strokeStyle = "rgba(0,0,0,0.5)";
+    ctx.lineWidth = 1.6;
+    ctx.beginPath(); ctx.ellipse(cxR - 0.8, cy, rx, ry - 0.5, 0, Math.PI / 2, (Math.PI * 3) / 2); ctx.stroke();
+    ctx.strokeStyle = "rgba(0,0,0,0.22)";
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.ellipse(cxR - 2.2, cy, rx, ry - 1.5, 0, Math.PI * 0.6, Math.PI * 1.4); ctx.stroke();
+    ctx.lineCap = "butt";
     // the near lid (the next can along rests against it)
     canLid(ctx, cxR, cy, rx, ry, null);
   }
@@ -2420,8 +2434,8 @@
       const hv = f ? hash(f.slug) : 0;
       const hue = sec.hue + ((hv % 37) - 18);
       if (!f) return `hsl(${sec.hue} 38% 34%)`;
-      const vhs = f.year && f.year < 1990;
-      return vhs ? `hsl(${hue} 10% ${10 + (hv % 9)}%)` : `hsl(${hue} ${32 + (hv % 22)}% ${f.year >= 2010 ? 36 + (hv % 14) : 24 + (hv % 14)}%)`;
+      const vhs = f.year && f.year < 2000;
+      return vhs ? `hsl(${hue} 10% ${10 + (hv % 9)}%)` : `hsl(${hue} ${32 + (hv % 22)}% ${f.year >= 2016 ? 36 + (hv % 14) : 24 + (hv % 14)}%)`;
     };
 
     // Franchise stickers on the back wall: a colour block the width of the
@@ -2508,7 +2522,7 @@
               side(top + PAPER_TOP, f.y - PAPER_TOP, body);
               side(top + r, f.y - r, "rgba(0,0,0,0.4)");
               // the seam on top, where the two halves of the case meet (fainter on Blu-ray blue)
-              ctx.strokeStyle = f.year >= 2010 ? "rgba(0,0,0,0.3)" : "rgba(0,0,0,0.55)";
+              ctx.strokeStyle = f.year >= 2016 ? "rgba(0,0,0,0.3)" : "rgba(0,0,0,0.55)";
               ctx.lineWidth = Math.max(px, 0.6);
               ctx.beginPath();
               ctx.moveTo(f.x + f.w * 0.5, top);
@@ -3165,7 +3179,7 @@
     ui.details.set(slug, p);
     return p;
   }
-  const caseName = (y) => (isCan(y) ? "Film can" : y && y < 1990 ? "VHS" : y && y < 2010 ? "DVD" : "Blu-ray");
+  const caseName = (y) => (isCan(y) ? "Film can" : y && y < 2000 ? "VHS" : y && y < 2016 ? "DVD" : "Blu-ray");
   const whereIs = (slug) => { const sub = lib.place.get(slug); return sub && lib.subs.has(sub) ? pathOf(sub) : null; };
   const filmActs = (slug, name, extra = "") => {
     const a = (act, label, cls = "") => `<button type="button" class="lbs-fact ${cls}" data-act="${act}" data-slug="${esc(slug)}" data-name="${esc(name)}">${label}</button>`;
@@ -3187,7 +3201,7 @@
     }
     const spine = own ? `#${own.slice(0, 6)}` : "#2c3440";
     // The cover art (2:3) fills the paper area exactly; the case is as wide as that.
-    const h = big ? 330 : 170, inset = big ? 7 : 4, w = Math.round(((h - 2 * inset) * 2) / 3), d = Math.round((y && y < 1990 ? 0.2 : y && y < 2010 ? 0.12 : 0.1) * w * 1.4);
+    const h = big ? 330 : 170, inset = big ? 7 : 4, w = Math.round(((h - 2 * inset) * 2) / 3), d = Math.round((y && y < 2000 ? 0.2 : y && y < 2016 ? 0.12 : 0.1) * w * 1.4);
     const ink = own && lum(rgbOf(own)) > 0.62 ? "#14181c" : "#fff";
     const lp = logoPath(slug);
     const wash = (mine.wash && mine.wash[slug]) || shared.wash[slug];
