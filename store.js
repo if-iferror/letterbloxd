@@ -351,6 +351,93 @@
     refresh();
   }
 
+  /* ---------------- the catalogue ----------------
+   * Every popular film with its genres, countries, languages and themes,
+   * built by the Catalogue builder and published as data/catalogue.json.
+   * When it's there the store reads it instead of scraping Letterboxd:
+   * Horror's aisles come from its lists, and every other film starts in its
+   * home genre's Everything Else. */
+  const CAT_FILE = "https://raw.githubusercontent.com/if-iferror/letterbloxd/dev/data/catalogue.json";
+  let catalogue = null; // { films: [[slug, name, rating]], lists: Map(key -> { name, set }) }
+  let catState = "idle"; // idle | loading | ready | none
+  function loadCatalogue() {
+    catState = "loading";
+    return fetch(CAT_FILE)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => {
+        if (!j || !Array.isArray(j.films)) { catState = "none"; return; }
+        const lists = new Map();
+        for (const [key, [name, gaps]] of Object.entries(j.lists || {})) {
+          let i = -1;
+          lists.set(key, { name, set: new Set(gaps.map((d) => (i += d))) });
+        }
+        catalogue = { at: j.at, films: j.films, lists };
+        catState = "ready";
+      })
+      .catch(() => { catState = "none"; });
+  }
+  // The films matching a browse path ("genre/horror+comedy/country/italy/decade/1970s"),
+  // or null when the catalogue lacks one of its lists.
+  function catQuery(q) {
+    const parts = q.split("/");
+    let out = null;
+    const meet = (set) => { out = out ? new Set([...out].filter((i) => set.has(i))) : new Set(set); };
+    for (let n = 0; n < parts.length; n += 2) {
+      const [kind, val] = [parts[n], parts[n + 1]];
+      if (kind === "decade") {
+        const y0 = parseInt(val, 10);
+        const set = new Set();
+        catalogue.films.forEach((f, i) => { const y = yearOf(f[1]); if (y >= y0 && y < y0 + 10) set.add(i); });
+        meet(set);
+        continue;
+      }
+      for (const v of val.split("+")) {
+        const l = catalogue.lists.get(`${kind}/${v}`);
+        if (!l) return null;
+        meet(l.set);
+      }
+    }
+    return out || new Set();
+  }
+  // Lists the store itself needs (Horror's aisles and tags).
+  const neededLists = () => [...new Set([...AISLES, ...TAGS].flatMap((a) => {
+    const parts = a.q.split("/"), keys = [];
+    for (let n = 0; n < parts.length; n += 2) if (parts[n] !== "decade") for (const v of parts[n + 1].split("+")) keys.push(`${parts[n]}/${v}`);
+    return keys;
+  }))];
+  // A film's home genre: the most specific of its genres.
+  const HOME_ORDER = ["horror", "documentary", "animation", "western", "war", "music", "science-fiction", "fantasy", "comedy", "romance", "crime", "thriller", "mystery", "family", "adventure", "action", "history", "tv-movie", "drama"];
+  function stockFromCatalogue() {
+    const C = catalogue;
+    const films = C.films.map((f) => [f[0], f[1]]);
+    const horror = (C.lists.get(`genre/${STOCKED}`) || { set: new Set() }).set;
+    const sorted = (set) => [...set].filter((i) => horror.has(i)).sort((a, b) => a - b);
+    const members = {};
+    for (const a of AISLES) {
+      const set = catQuery(a.q);
+      if (!set) console.warn(`[store] catalogue has no list for aisle ${a.id} (${a.q})`);
+      members[a.id] = set ? sorted(set) : [];
+    }
+    const placed = new Set();
+    const aisles = {};
+    for (const id of AISLE_PRIORITY) {
+      aisles[id] = (members[id] || []).filter((i) => !placed.has(i));
+      aisles[id].forEach((i) => placed.add(i));
+    }
+    aisles.rest = sorted(horror).filter((i) => !placed.has(i));
+    const tags = {};
+    for (const t of TAGS) { const set = catQuery(t.q); if (set) (tags[t.id] = tags[t.id] || []).push(...sorted(set)); }
+    // Everyone else's home genre.
+    const homes = {};
+    const genreSets = HOME_ORDER.map((g) => [g, C.lists.get(`genre/${g}`)]).filter(([, l]) => l);
+    films.forEach((f, i) => {
+      if (horror.has(i)) return;
+      const g = genreSets.find(([, l]) => l.set.has(i));
+      if (g) homes[i] = g[0];
+    });
+    return { v: 2, at: Date.now(), films, aisles, tags, front: [], homes, catalogue: C.at };
+  }
+
   // The house placement for every stocked film: aisle, then the first shelf
   // rule it matches (rules with fewer than MIN_SHELF films fall through).
   function houseDefaults() {
@@ -372,6 +459,10 @@
         for (const [r, list] of groups) for (const f of list) out.set(f.slug, `${STOCKED}/${a.id}/${r.id}`);
         break;
       }
+    }
+    for (const [i, g] of Object.entries(stock.homes || {})) {
+      const slug = stock.films[i][0];
+      if (!out.has(slug)) out.set(slug, `${g}/rest/general`);
     }
     return out;
   }
@@ -688,7 +779,13 @@
   }
 
   function render() {
-    stock = stock || loadStock();
+    if (catState === "idle") {
+      loadCatalogue().then(() => {
+        if (catalogue) { stock = stockFromCatalogue(); defaults = null; lib = null; }
+        if (root && !root.hidden) render();
+      });
+    }
+    if (catState !== "loading") stock = stock || loadStock();
     const total = stock ? stock.films.length : COLLECTIONS[0].count;
     root.classList.toggle("lbs-nodates", !!mine.noDates);
     root.innerHTML =
@@ -709,6 +806,7 @@
       `<div class="lbs-hall"></div>`;
 
     const hall = $(".lbs-hall", root);
+    if (catState === "loading") { hall.append(h("div", "lbs-loading", `<p>Opening the store…</p>`)); return; }
     if (stock && DESK_ONLY) {
       buildLibrary();
       root.classList.add("lbs-desk-only");
@@ -2224,6 +2322,32 @@
     }
   }
   const parse = (html) => new DOMParser().parseFromString(html, "text/html");
+  // A film page's theme links, reading only as far as they go (the themes sit
+  // about a third of the way into a ~300 KB page).
+  async function filmThemes(slug) {
+    for (let tries = 0; ; tries++) {
+      if (!catJob.running) throw new Error("paused");
+      const r = await catLane(() => fetch(`/film/${slug}/`, { credentials: "include" }));
+      catJob.reqs++;
+      if (r.status === 404) return [];
+      if (!r.ok) {
+        if (tries >= 6) throw new Error(`Letterboxd answered ${r.status}`);
+        await new Promise((ok) => setTimeout(ok, 5000 * 2 ** tries));
+        continue;
+      }
+      const reader = r.body.getReader();
+      const dec = new TextDecoder();
+      let text = "";
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        text += dec.decode(value, { stream: true });
+        const last = Math.max(text.lastIndexOf("/films/theme/"), text.lastIndexOf("/films/mini-theme/"));
+        if ((last > 0 && text.length - last > 4000) || text.length > 140000) { reader.cancel().catch(() => {}); break; }
+      }
+      return [...text.matchAll(/href="\/films\/((?:mini-)?theme\/[a-z0-9-]+)\/[^"]*"[^>]*>([^<]+)</g)].map((m) => [m[1], m[2]]);
+    }
+  }
   async function catPage(path, page) {
     const html = await lbGet(`/csi/films/films-browser-list/${path ? path + "/" : ""}by/popular/${page > 1 ? `page/${page}/` : ""}?esiAllowFilters=false`);
     return [...parse(html).querySelectorAll("[data-item-slug]")].map((el) => {
@@ -2237,7 +2361,7 @@
     return a ? +a.getAttribute("title").replace(/\D/g, "") : 0;
   }
 
-  const catBlank = () => ({ v: 1, phase: "cutoff", min: 1000, lo: 300, hi: 3000, probes: {}, cutPage: 0, page: 0, films: [], lists: {}, sampled: 0, quiet: 0, names: {} });
+  const catBlank = () => ({ v: 1, themeV: 2, phase: "cutoff", min: 1000, lo: 300, hi: 3000, probes: {}, cutPage: 0, page: 0, films: [], lists: {}, sampled: 0, quiet: 0, names: {} });
 
   async function catSave() { catJob.st.at = Date.now(); await idbPut(CAT_KEY, catJob.st); }
 
@@ -2251,6 +2375,10 @@
     try {
       if (!catJob.st) catJob.st = (await idbGet(CAT_KEY)) || catBlank();
       const st = catJob.st;
+      // Lists the store needs are always read, found on a film page or not.
+      const seed = () => { for (const k of neededLists()) if (!st.lists[k]) st.lists[k] = { name: k.split("/")[1].replace(/-/g, " "), ids: null }; };
+      if (st.themeV !== 2 && (st.phase === "lists" || st.phase === "done")) { st.sampled = 0; st.quiet = 0; st.phase = "themes"; }
+      if (st.phase === "done") { seed(); if (Object.values(st.lists).some((l) => !l.ids)) st.phase = "lists"; }
       const tick = () => { catJob.msg = ""; renderCatBuild(); };
 
       // 1. The cutoff: the last page whose sampled films have a median of MIN watches.
@@ -2299,18 +2427,22 @@
           }
           await catSave();
         }
+        // Themes belong to well-watched films, so read the top films closely
+        // and the rest sparsely. Stop once 400 films with themes in a row
+        // turn up nothing new.
         const N = st.films.length;
-        const step = Math.max(1, Math.floor(N / CAT_SAMPLE));
-        // A fixed shuffle of the sample, so stopping early still covers every rank.
-        const order = Array.from({ length: Math.ceil(N / step) }, (_, i) => i * step).sort((a, b) => ((a * 2654435761) % 4093) - ((b * 2654435761) % 4093));
-        while (st.sampled < order.length && !(st.sampled >= 400 && st.quiet >= 250)) {
+        const order = [];
+        for (let i = 0; i < Math.min(N, 4000); i += 2) order.push(i);
+        for (let i = 4000; i < N; i += Math.max(1, Math.floor((N - 4000) / 1200))) order.push(i);
+        while (st.sampled < order.length && !(st.sampled >= 600 && st.quiet >= 400)) {
           const batch = order.slice(st.sampled, st.sampled + 8);
-          const pages = await Promise.all(batch.map((i) => lbGet(`/film/${st.films[i][0]}/genres/`)));
-          for (const html of pages) {
+          const found = await Promise.all(batch.map((i) => filmThemes(st.films[i][0])));
+          for (const links of found) {
+            if (!links.length) continue;
             let fresh = false;
-            for (const m of html.matchAll(/href="\/films\/((?:mini-)?theme\/[a-z0-9-]+)\/[^"]*"[^>]*>([^<]+)</g)) {
-              if (st.lists[m[1]]) continue;
-              st.lists[m[1]] = { name: parse(m[2]).body.textContent.trim(), ids: null };
+            for (const [key, name] of links) {
+              if (st.lists[key]) continue;
+              st.lists[key] = { name: parse(name).body.textContent.trim(), ids: null };
               fresh = true;
             }
             st.quiet = fresh ? 0 : st.quiet + 1;
@@ -2319,6 +2451,8 @@
           await catSave();
           tick();
         }
+        st.themeV = 2;
+        seed();
         st.phase = "lists";
         await catSave();
       }
@@ -2378,7 +2512,7 @@
       (catJob.running ? `<p>${fmt(catJob.reqs)} requests in ${mins} min${catJob.msg ? ` · ${esc(catJob.msg)}` : ""}</p>` : "") +
       (catJob.error ? `<p class="-err">${esc(catJob.error)}</p>` : "") +
       `<div class="lbs-logobuild-row">` +
-      (catJob.running ? `<button type="button" data-act="cat-stop">Pause</button>` : st && st.phase === "done" ? "" : `<button type="button" data-act="cat-start" class="-go">${st && (st.films.length || Object.keys(st.probes).length) ? "Continue" : "Start"}</button>`) +
+      (catJob.running ? `<button type="button" data-act="cat-stop">Pause</button>` : st && st.phase === "done" && neededLists().every((k) => st.lists[k]) ? "" : `<button type="button" data-act="cat-start" class="-go">${st && (st.films.length || Object.keys(st.probes).length) ? "Continue" : "Start"}</button>`) +
       (st && st.phase === "done" ? `<button type="button" data-act="cat-save" class="-go">Download catalogue</button>` : "") +
       (!catJob.running && st ? `<button type="button" data-act="cat-reset">Start over</button>` : "") +
       `<button type="button" data-act="cat-close">Close</button></div>`;
