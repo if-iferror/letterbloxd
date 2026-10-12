@@ -2382,6 +2382,8 @@
       ctx.font = `800 ${fsz}px Arial, sans-serif`;
       ctx.textBaseline = "middle";
       ctx.textAlign = "left";
+      const stickerSpans = new Map();
+      for (const st of L.stickers || []) { const k = `${st.bay}:${st.shelf}`; (stickerSpans.get(k) || stickerSpans.set(k, []).get(k)).push([st.x0, st.x1 + DEPTH_X + 2]); }
       // One tag (repeating) per subsection along the shelf; the section's own
       // name goes up on the hanging sign above the bay.
       for (const r of L.runs) for (const pt of r.parts && r.parts.length ? r.parts : [{ sub: null, x0: r.x0, x1: r.x1 }]) {
@@ -2393,7 +2395,11 @@
         const tw = Math.min(pt.x1 - pt.x0 - 4, ctx.measureText(label).width + 26);
         if (tw < 40) continue;
         const ty = r.by + WU.sign + (r.shelf + 1) * WU.shelfH - WU.lip + 2;
+        // Tags hang down into the shelf below: never over a franchise sticker there.
+        const below = stickerSpans.get(`${r.bay}:${r.shelf + 1}`) || [];
         for (let sx = pt.x0 + 2; sx + tw <= pt.x1 + 1; sx += Math.max(spacing, tw + 120)) {
+          const hit = below.find(([a, b]) => sx < b + 6 && sx + tw > a - 6);
+          if (hit) { sx = hit[1] + 8 - Math.max(spacing, tw + 120); continue; }
           if (sx + tw < x0 || sx > x1) continue;
           ctx.fillStyle = "rgba(0,0,0,0.45)";
           ctx.fillRect(sx + 3, ty + 3, tw, th);
