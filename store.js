@@ -3317,7 +3317,9 @@
    * film, open the folder it should live in, and Move here, or drag it onto
    * a folder. Drag films into your inventory. "Sort" on any film just opens
    * the Library on that film. */
-  const libUI = { open: !!mine.libOpen, path: [STOCKED], sel: null, adding: null };
+  // sel: the selected film (what Move here moves). focus: whatever you clicked
+  // last, a film or a folder: that's where Jump to section takes you.
+  const libUI = { open: !!mine.libOpen, path: [STOCKED], sel: null, focus: null, adding: null };
   function kidsOf(id) {
     if (!id) return { folders: [...lib.genres.keys()], films: [] };
     const p = partsOf(id);
@@ -3343,6 +3345,7 @@
     libUI.path = [p.genre, p.cat, p.sub, p.niche].filter(Boolean);
     if (!libUI.path.length) libUI.path = [STOCKED];
     libUI.sel = [slug, name || lib.names.get(slug) || slug];
+    libUI.focus = { film: libUI.sel };
     setLibrary(true);
     requestAnimationFrame(() => root.querySelector(`.lbs-library [data-film="${CSS.escape(slug)}"]`)?.scrollIntoView({ block: "center" }));
   }
@@ -3361,10 +3364,9 @@
     const sel = libUI.sel;
     const selAt = sel ? lib.place.get(sel[0]) : null;
     const selPath = selAt ? (() => { const p = partsOf(selAt); return [p.genre, p.cat, p.sub, p.niche].filter(Boolean); })() : [];
-    const hue = (id) => { const c = lib.cats.has(id) ? id : lib.subs.has(id) ? lib.subs.get(id).cat : null; return c && lib.cats.get(c).genre === STOCKED ? `hsl(${hueOfBlock(c)} 60% 50%)` : "#567"; };
     const folderRow = (id, side) =>
       `<li class="lbs-lib-row lbs-folder${path.includes(id) ? " -on" : ""}" data-act="lib-open" data-side="${side}" data-id="${esc(id)}" data-drop="${esc(id)}">` +
-      `<i class="lbs-lib-dot" style="background:${hue(id)}"></i>${ICON_FOLDER}<span>${esc(nameOf(id))}</span>` +
+      `${ICON_FOLDER}<span>${esc(nameOf(id))}</span>` +
       (selPath.includes(id) ? `<em>here</em>` : "") +
       `<small>${fmt(lib.count.get(id) || 0)}</small><b>›</b></li>`;
     const filmRow = ([slug, name]) =>
@@ -3385,11 +3387,16 @@
       );
     };
     const target = right && !lib.genres.has(right) ? landingSub(right) : null;
+    // Jump to: the last thing you clicked (a film, or a folder), else the open folder.
+    const focus = libUI.focus && (libUI.focus.film ? (lib.place.has(libUI.focus.film[0]) ? libUI.focus : null) : path.includes(libUI.focus.folder) ? libUI.focus : null) || (right ? { folder: right } : null);
+    const jumpOk = focus && (focus.film || (partsOf(focus.folder).genre === STOCKED && focus.folder !== STOCKED));
+    const jumpLabel = focus ? (focus.film ? titleOf(focus.film[1]) : nameOf(focus.folder)) : "";
+    const jumpBtn = `<button type="button" data-act="lib-jump"${jumpOk ? "" : " disabled"} title="${jumpOk ? `Fly to ${esc(jumpLabel)} on the wall` : ""}">Jump to section</button>`;
     const canMove = sel && target && target !== selAt;
     box.innerHTML =
       `<div class="lbs-lib-head">` +
-      `<div class="lbs-lib-crumbs"><button type="button" data-act="lib-root">Library</button>${path.map((id, i) => `<i>›</i><button type="button" data-act="lib-to" data-i="${i}" data-drop="${esc(id)}" class="lbs-crumb">${esc(nameOf(id))}</button>`).join("")}</div>` +
       `<button type="button" class="lbs-lib-up" data-act="lib-up" aria-label="Up a level" title="Up a level"${path.length ? "" : " disabled"}>${ICON_LEFT}</button>` +
+      `<div class="lbs-lib-crumbs"><button type="button" data-act="lib-root">Library</button>${path.map((id, i) => `<i>›</i><button type="button" data-act="lib-to" data-i="${i}" data-drop="${esc(id)}" class="lbs-crumb">${esc(nameOf(id))}</button>`).join("")}</div>` +
       `<button type="button" class="lbs-lib-x" data-act="lib" aria-label="Close the Library">${ICON_CLOSE}</button></div>` +
       `<div class="lbs-lib-cols">${column(left, "left")}${path.length ? column(right, "right") : `<div class="lbs-lib-col -right"><p class="lbs-lib-hint">Pick a genre</p></div>`}</div>` +
       `<div class="lbs-lib-foot">` +
@@ -3400,9 +3407,10 @@
           `<button type="button" class="-go" data-act="lib-move"${canMove ? "" : " disabled"} title="${target ? `Move to ${esc(pathOf(target).slice(1).join(" › "))}` : "Open a folder to move it into"}">Move here</button>` +
           `<button type="button" data-act="f-open" data-slug="${esc(sel[0])}" data-name="${esc(sel[1])}">Details</button>` +
           `<button type="button" data-act="lib-fr">${franchiseOf(sel[0]) ? "Franchise" : "Add to franchise"}</button>` +
+          jumpBtn +
           `<button type="button" class="-link" data-act="lib-remove">Request removal</button></div>`
-        : `<p class="lbs-lib-tip">Click a film to select it, then open the folder it belongs in and Move here. Or drag it onto a folder, the wall, or your inventory.</p>`) +
-      `<button type="button" class="lbs-lib-jump" data-act="lib-jump"${sel || (right && partsOf(right).genre === STOCKED && right !== STOCKED) ? "" : " disabled"}>Jump to section</button>` +
+        : `<div class="lbs-lib-acts"><p class="lbs-lib-tip">Click a film to select it, then open the folder it belongs in and Move here. Or drag it onto a folder, the wall, or your inventory.</p>` +
+          jumpBtn + `</div>`) +
       `</div>`;
     fillPosters($(".lbs-lib-foot", box), false);
     // Posters in the lists load as they scroll into view.
@@ -4404,11 +4412,13 @@
         libUI.adding = null;
         if (btn.dataset.side === "left") libUI.path = libUI.path.length >= 2 ? [...libUI.path.slice(0, -1), fid] : [fid];
         else libUI.path = [...libUI.path, fid];
+        libUI.focus = { folder: fid };
         return renderLibrary();
       }
       if (act === "lib-film") {
         if (wall.dragged) return;
         libUI.sel = libUI.sel && libUI.sel[0] === fs ? null : [fs, fn];
+        libUI.focus = libUI.sel ? { film: libUI.sel } : null;
         return renderLibrary();
       }
       if (act === "lib-unsel") { libUI.sel = null; return renderLibrary(); }
@@ -4422,8 +4432,9 @@
       if (act === "lib-fr") return libUI.sel && openFranchise(libUI.sel[0], libUI.sel[1]);
       if (act === "lib-remove") return libUI.sel && requestRemoval("film", libUI.sel[0], titleOf(libUI.sel[1]));
       if (act === "lib-jump") {
-        if (libUI.sel) return jumpTo(libUI.sel[0], libUI.sel[1]);
-        const right = libUI.path[libUI.path.length - 1];
+        const fo = libUI.focus;
+        if (fo && fo.film) return jumpTo(fo.film[0], fo.film[1]);
+        const right = fo && fo.folder && libUI.path.includes(fo.folder) ? fo.folder : libUI.path[libUI.path.length - 1];
         if (wall.level !== "wall") { wall.level = "wall"; showStage(); }
         return requestAnimationFrame(() => flyToFolder(right));
       }
