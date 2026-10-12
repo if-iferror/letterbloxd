@@ -1728,7 +1728,10 @@
       for (const R of regions) { R.final = R.start + shift * perRow; shift += extra.get(R.genre) || 0; R.rows += extra.get(R.genre) || 0; }
       const moveBay = (b) => { const R = regions.find((x) => b >= x.start && b < x.start + (x.rows - (extra.get(x.genre) || 0)) * perRow) || regions[regions.length - 1]; return b - R.start + R.final; };
       for (const w of where.values()) w.bay = moveBay(w.bay);
-      for (const [k, refs] of [...shelfList]) { const [b, sh] = k.split(":").map(Number); shelfList.delete(k); shelfList.set(`${moveBay(b)}:${sh}`, refs); }
+      // (into a fresh map: a moved key can land on one not yet moved)
+      const movedList = [...shelfList].map(([k, refs]) => { const [b, sh] = k.split(":").map(Number); return [`${moveBay(b)}:${sh}`, refs]; });
+      shelfList.clear();
+      for (const [k, refs] of movedList) shelfList.set(k, refs);
       for (const R of regions) R.start = R.final;
       const fed = new Map([...leftovers].map(([cid]) => [cid, 0]));
       for (const [R, rest, startLocal] of placed) for (const [key, list] of Object.entries(rest)) {
