@@ -1530,6 +1530,25 @@
   window.lbNotInterested = {
     resync: () => syncList({ force: true }),
     state: () => ({ prefs, user: USER, ...cache, lidSet: undefined, slugSet: undefined }),
+    // For the video store (store.js): block / unblock a film, and read the list.
+    isBlocked: (film) => isNotInterested(film),
+    blocked: () => cache.slugSet,
+    toggle: async (film) => {
+      if (!USER) throw new Error(signedOutMessage);
+      if (!film || !film.lid) throw new Error("Couldn't identify this film.");
+      const wasOn = isNotInterested(film);
+      setMarked(film, !wasOn);
+      try {
+        if (!wasOn) await addToList(film);
+        else await removeFromList(film);
+        toast(wasOn ? `‘${film.name}’ removed from Not interested.` : `‘${film.name}’ marked Not interested.`);
+        return !wasOn;
+      } catch (err) {
+        setMarked(film, wasOn);
+        toast(err.message || "Something went wrong.", true);
+        return wasOn;
+      }
+    },
   };
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start);
