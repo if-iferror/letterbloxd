@@ -3961,3 +3961,50 @@ html.lbs-open {
 .lbs-lib-up {
   order: -1;
 }
+
+/* Settings: formats */
+.lbs-fmts {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.lbs-fmt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 4px;
+  border-radius: 4px;
+  color: #fff;
+  cursor: pointer;
+}
+.lbs-fmt:hover {
+  background: #2c3440;
+}
+.lbs-fmt input[type="checkbox"] {
+  margin: 0;
+  accent-color: #40bcf4;
+}
+.lbs-fmt span {
+  flex: 1;
+}
+.lbs-fmt em {
+  color: #789;
+  font-size: 11px;
+  font-style: normal;
+}
+.lbs-fmt-to {
+  width: 62px;
+  padding: 3px 6px;
+  border: 1px solid #384350;
+  border-radius: 4px;
+  background: #14181c;
+  color: #fff;
+  font: 12px Arial, sans-serif;
+}
+.lbs-fmt-to:disabled {
+  opacity: 0.4;
+}
+.lbs-fmt.-off span {
+  color: #678;
+  text-decoration: line-through;
+}
