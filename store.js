@@ -1280,7 +1280,7 @@
   const wall = { level: "aisles", lay: null, cam: { x: 0, y: 0, z: 0.05 }, hover: null, pin: null, lite: false, slow: 0, imgs: new Map(), logos: new Map(), frame: 0 };
   // 1969 and earlier: round steel film cans, standing on edge. Then VHS, DVD, Blu-ray.
   const isCan = (y) => fmtOf(y) === "can";
-  const CAN_RX = 5, CAN_T = 17; // a can's lid ellipse half-width and rim thickness (see drawCan)
+  const CAN_RX = 5, CAN_T = 25; // a can's lid ellipse half-width and rim thickness (see drawCan)
   const CAN_LIP = 2.6, CAN_GAP = 0.7, CAN_TAPE = CAN_T - 2 * (CAN_LIP + CAN_GAP); // its rolled lips, the bare steel beside them, the tape
   const spineW = (y) => ({ can: CAN_T, vhs: 20, dvd: 12, bluray: 10 })[fmtOf(y)];
   const spineH = (y) => ({ can: WU.shelfH - WU.lip - 1, vhs: 168, dvd: 158, bluray: 148 })[fmtOf(y)];
