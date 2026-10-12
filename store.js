@@ -1249,7 +1249,25 @@
   const FAR = 0.09, NEAR = 0.45, TEXT = 0.8, ZMIN = 0.02, ZMAX = 6;
   const DEPTH_X = 4, DEPTH_Y = 5; // the sliver of top and side we see
   // Case plastic, as seen on top: VHS clamshells (darkest), DVDs, Blu-rays.
-  const caseTop = (y) => (y && y < 2000 ? "#141517" : y && y < 2016 ? "#25272b" : "#1d5aa6");
+  /* Formats. Which case a film comes in goes by its year: film cans, VHS,
+   * DVD, Blu-ray, each up to its cutoff year (Settings lets you switch
+   * formats off and move the cutoffs). The last format switched on takes
+   * everything after the one before it, and films with no year. */
+  const FORMATS = [["can", "Film can", 1969], ["vhs", "VHS", 1999], ["dvd", "DVD", 2015], ["bluray", "Blu-ray", null]];
+  function formatPlan() {
+    const set = mine.formats || {};
+    const on = FORMATS.filter(([k]) => (set[k] ? set[k].on !== false : true));
+    const list = on.length ? on : [FORMATS[3]];
+    return list.map(([k], i) => [k, i === list.length - 1 ? Infinity : +((set[k] && set[k].to) || FORMATS.find((x) => x[0] === k)[2])]);
+  }
+  let fmtPlan = null;
+  const fmtOf = (y) => {
+    const plan = fmtPlan || (fmtPlan = formatPlan());
+    if (!y) return plan[plan.length - 1][0];
+    for (const [k, to] of plan) if (y <= to) return k;
+    return plan[plan.length - 1][0];
+  };
+  const caseTop = (y) => ({ can: "#141517", vhs: "#141517", dvd: "#25272b", bluray: "#1d5aa6" })[fmtOf(y)];
   const YEAR_ZONE = 18; // the year sits in this much of the bottom of a spine
   const CASE_END = 3, LAMINATE = 5, PAPER_IN = CASE_END + LAMINATE; // paper wrap stops short of the case ends
   const PAPER_TOP = PAPER_IN - 3; // where the paper wrap starts and ends (same at both ends)
@@ -1261,11 +1279,11 @@
 
   const wall = { level: "aisles", lay: null, cam: { x: 0, y: 0, z: 0.05 }, hover: null, pin: null, lite: false, slow: 0, imgs: new Map(), logos: new Map(), frame: 0 };
   // 1969 and earlier: round steel film cans, standing on edge. Then VHS, DVD, Blu-ray.
-  const isCan = (y) => !!y && y < 1970;
+  const isCan = (y) => fmtOf(y) === "can";
   const CAN_RX = 5, CAN_T = 17; // a can's lid ellipse half-width and rim thickness (see drawCan)
   const CAN_LIP = 2.6, CAN_GAP = 0.7, CAN_TAPE = CAN_T - 2 * (CAN_LIP + CAN_GAP); // its rolled lips, the bare steel beside them, the tape
-  const spineW = (y) => (isCan(y) ? CAN_T : y && y < 2000 ? 20 : y && y < 2016 ? 12 : 10);
-  const spineH = (y) => (isCan(y) ? WU.shelfH - WU.lip - 1 : y && y < 2000 ? 168 : y && y < 2016 ? 158 : 148);
+  const spineW = (y) => ({ can: CAN_T, vhs: 20, dvd: 12, bluray: 10 })[fmtOf(y)];
+  const spineH = (y) => ({ can: WU.shelfH - WU.lip - 1, vhs: 168, dvd: 158, bluray: 148 })[fmtOf(y)];
   const hash = (s) => { let x = 2166136261; for (let i = 0; i < s.length; i++) x = Math.imul(x ^ s.charCodeAt(i), 16777619); return x >>> 0; };
 
   /* The wall is built from "pieces". Each section's films, A-Z, are cut into
@@ -2476,8 +2494,8 @@
       const hv = f ? hash(f.slug) : 0;
       const hue = sec.hue + ((hv % 37) - 18);
       if (!f) return `hsl(${sec.hue} 38% 34%)`;
-      const vhs = f.year && f.year < 2000;
-      return vhs ? `hsl(${hue} 10% ${10 + (hv % 9)}%)` : `hsl(${hue} ${32 + (hv % 22)}% ${f.year >= 2016 ? 36 + (hv % 14) : 24 + (hv % 14)}%)`;
+      const fm = fmtOf(f.year);
+      return fm === "vhs" || fm === "can" ? `hsl(${hue} 10% ${10 + (hv % 9)}%)` : `hsl(${hue} ${32 + (hv % 22)}% ${fm === "bluray" ? 36 + (hv % 14) : 24 + (hv % 14)}%)`;
     };
 
     // Franchise stickers on the back wall: a colour block the width of the
@@ -2564,7 +2582,7 @@
               side(top + PAPER_TOP, f.y - PAPER_TOP, body);
               side(top + r, f.y - r, "rgba(0,0,0,0.4)");
               // the seam on top, where the two halves of the case meet (fainter on Blu-ray blue)
-              ctx.strokeStyle = f.year >= 2016 ? "rgba(0,0,0,0.3)" : "rgba(0,0,0,0.55)";
+              ctx.strokeStyle = fmtOf(f.year) === "bluray" ? "rgba(0,0,0,0.3)" : "rgba(0,0,0,0.55)";
               ctx.lineWidth = Math.max(px, 0.6);
               ctx.beginPath();
               ctx.moveTo(f.x + f.w * 0.5, top);
@@ -3221,7 +3239,7 @@
     ui.details.set(slug, p);
     return p;
   }
-  const caseName = (y) => (isCan(y) ? "Film can" : y && y < 2000 ? "VHS" : y && y < 2016 ? "DVD" : "Blu-ray");
+  const caseName = (y) => FORMATS.find(([k]) => k === fmtOf(y))[1];
   const whereIs = (slug) => { const sub = lib.place.get(slug); return sub && lib.subs.has(sub) ? pathOf(sub) : null; };
   const filmActs = (slug, name, extra = "") => {
     const a = (act, label, cls = "") => `<button type="button" class="lbs-fact ${cls}" data-act="${act}" data-slug="${esc(slug)}" data-name="${esc(name)}">${label}</button>`;
@@ -3243,7 +3261,7 @@
     }
     const spine = own ? `#${own.slice(0, 6)}` : "#2c3440";
     // The cover art (2:3) fills the paper area exactly; the case is as wide as that.
-    const h = big ? 330 : 170, inset = big ? 7 : 4, w = Math.round(((h - 2 * inset) * 2) / 3), d = Math.round((y && y < 2000 ? 0.2 : y && y < 2016 ? 0.12 : 0.1) * w * 1.4);
+    const h = big ? 330 : 170, inset = big ? 7 : 4, w = Math.round(((h - 2 * inset) * 2) / 3), d = Math.round(({ can: 0.2, vhs: 0.2, dvd: 0.12, bluray: 0.1 })[fmtOf(y)] * w * 1.4);
     const ink = own && lum(rgbOf(own)) > 0.62 ? "#14181c" : "#fff";
     const lp = logoPath(slug);
     const wash = (mine.wash && mine.wash[slug]) || shared.wash[slug];
@@ -3474,12 +3492,43 @@
       chk("hideBlocked", !!mine.hideBlocked, "Hide blocked films", "Their spot on the shelf stays empty") +
       chk("noDates", !mine.noDates, "Years on spines", "The release year at the foot of every box") +
       chk("overlay", !!mine.overlay, "Section colours from afar", "Colour and name each section when zoomed out") +
+      `<h6>Formats</h6>` + formatsHTML() +
       `<h6>Inventory</h6>` +
       chk("autoCollapse", mine.autoCollapse !== false, "Auto collapse", "Closes when you click somewhere else") +
       `<h6>Your store</h6>` +
       `<p class="lbs-menu-note">Your shelves, picks and inventory live in this browser. Back them up before clearing your browser's data.</p>` +
       `<div class="lbs-menu-btns"><button type="button" data-act="mine-save">Back up</button><label class="lbs-restore">Restore<input type="file" accept="application/json,.json" class="lbs-restore-file" hidden></label></div>` +
       (DEV_TOOLS ? `<h6>Developer</h6><div class="lbs-menu-btns"><button type="button" data-act="logo-build">${logoJob.running ? `Logos ${fmt(logoJob.done)} / ${fmt(logoJob.total)}` : "Logo builder…"}</button></div>` : "");
+  }
+  // Formats: each on or off, each with the last year it covers. The last one
+  // switched on covers everything after, so its cutoff is greyed out (as is
+  // the only one, when only one is on). Blu-ray never has a cutoff.
+  function formatsHTML() {
+    const plan = formatPlan(), last = plan[plan.length - 1][0];
+    return `<div class="lbs-fmts">` + FORMATS.map(([k, label, def]) => {
+      const set = (mine.formats || {})[k] || {};
+      const on = set.on !== false;
+      const to = set.to || def;
+      const fixed = k === "bluray" || !on || k === last;
+      return `<label class="lbs-fmt${on ? "" : " -off"}"><input type="checkbox" data-fmt="${k}"${on ? " checked" : ""}><span>${label}</span>` +
+        (k === "bluray" ? `<em>and after</em>` : `<em>through</em><input type="number" class="lbs-fmt-to" data-fmt-to="${k}" min="1880" max="2100" step="1" value="${to}"${fixed ? " disabled" : ""}>`) +
+        `</label>`;
+    }).join("") + `</div>`;
+  }
+  function setFormat(k, patch) {
+    const all = (mine.formats = mine.formats || {});
+    const next = { ...(all[k] || {}), ...patch };
+    // never all off
+    if (next.on === false && FORMATS.filter(([x]) => x !== k && (all[x] ? all[x].on !== false : true)).length === 0) return renderSettings();
+    all[k] = next;
+    saveMine();
+    fmtPlan = null;
+    canLabels.clear();
+    const was = document.activeElement && document.activeElement.dataset && document.activeElement.dataset.fmtTo;
+    refresh();
+    renderSettings();
+    drawSoon();
+    if (was) { const el = root.querySelector(`[data-fmt-to="${was}"]`); if (el && !el.disabled) el.focus(); }
   }
   function toggleMenu(sel, open) {
     root.querySelectorAll(".lbs-menu").forEach((m) => { if (!m.matches(sel)) m.hidden = true; });
@@ -4816,6 +4865,12 @@
 
   function onInput(e) {
     if (e.target.classList.contains("lbs-tray-filter")) { edit.filter = e.target.value || null; return renderTray(); }
+    if (e.target.dataset && e.target.dataset.fmt) return setFormat(e.target.dataset.fmt, { on: e.target.checked });
+    if (e.target.dataset && e.target.dataset.fmtTo) {
+      const v = +e.target.value;
+      if (String(e.target.value).length === 4 && v >= 1880 && v <= 2100) setFormat(e.target.dataset.fmtTo, { to: v });
+      return;
+    }
     if (e.target.dataset && e.target.dataset.set) {
       const key = e.target.dataset.set;
       mine[key] = !!e.target.checked;
