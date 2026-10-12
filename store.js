@@ -3285,10 +3285,11 @@
     el.querySelectorAll("canvas.lbs-can-cv").forEach((cv) => {
       const name = cv.dataset.name || (lib && lib.names.get(cv.dataset.can)) || cv.dataset.can;
       const f = { slug: cv.dataset.can, name, year: yearOf(name) };
+      cv._f = f;
       drawCanBig(cv, null, cv.dataset.tape, f);
       posterFor(cv.dataset.can).then(([a, b]) => {
         const im = new Image();
-        im.onload = () => drawCanBig(cv, im, cv.dataset.tape, f);
+        im.onload = () => { cv._poster = im; drawCanBig(cv, im, cv.dataset.tape, f); };
         im.src = cv.dataset.big ? b || a : a;
       }).catch(() => {});
     });
@@ -4909,6 +4910,9 @@
       drawSoon();
       const box = $(".lbs-filmview .lbs-box", root);
       if (box) box.style.setProperty("--spine", e.target.value);
+      // a film can's tape takes the colour too: redraw it live
+      const can = $(".lbs-filmview canvas.lbs-can-cv", root);
+      if (can) { can.dataset.tape = e.target.value; drawCanBig(can, can._poster || null, e.target.value, can._f); }
       return;
     }
     if (e.target.classList.contains("lbs-fq")) {
