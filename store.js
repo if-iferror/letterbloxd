@@ -1292,7 +1292,12 @@
     }
     const az = (a, b) => byTitle([a.slug, a.name], [b.slug, b.name]);
     const mode = sortOf(cid);
-    if (mode === "year") return list.sort((a, b) => (yearOf(a.name) || 9999) - (yearOf(b.name) || 9999) || az(a, b));
+    // Subsections sit together on the shelf, each with its own tag, in folder
+    // order ("General" last); A-Z or by year inside each.
+    const subAt = new Map(lib.cats.get(cid).subs.map((sid, i) => [sid, /\/general$/.test(sid) ? 1e6 : i]));
+    const bySub = (a, b) => (subAt.get(a.sub) ?? 1e7) - (subAt.get(b.sub) ?? 1e7);
+    if (mode === "year") return list.sort((a, b) => bySub(a, b) || (yearOf(a.name) || 9999) - (yearOf(b.name) || 9999) || az(a, b));
+    if (mode !== "index") return list.sort((a, b) => bySub(a, b) || az(a, b));
     list.sort(az);
     const index = mode === "index" && H.index[cid];
     if (!index) return list;
