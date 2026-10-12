@@ -2234,7 +2234,7 @@
   const canLabels = new Map();
   function canLabel(f, tape, lg, k, len, wide) {
     const wash = (mine.wash && mine.wash[f.slug]) || shared.wash[f.slug] || "";
-    const key = `${f.slug}|${k}|${tape}|${wash}|${lg ? 1 : 0}|${mine.noDates ? 0 : 1}`;
+    const key = `${f.slug}|${k}|${tape}|${wash}|${lg ? lg.img.src : ""}|${mine.noDates ? 0 : 1}`;
     let cv = canLabels.get(key);
     if (cv) return cv;
     if (canLabels.size > 160) [...canLabels.keys()].slice(0, 60).forEach((x) => canLabels.delete(x));
