@@ -1354,6 +1354,7 @@
   const HANG_H = 216, HANG_DROP = 18; // the hanging category boards over each bay
   const AISLE_W = 900, AISLE_GAP = 90; // the big aisle sign at the start of each row of bays
   const ROW_H = WU.sign + WU.shelves * WU.shelfH + 150; // a row of bays plus the floor between rows
+  const RUN_GAP = 700, GENRE_GAP = 400; // between runs of aisles, and between genres in a run
   const FAR = 0.09, NEAR = 0.45, TEXT = 0.8, ZMIN = 0.02, ZMAX = 6;
   const DEPTH_X = 4, DEPTH_Y = 5; // the sliver of top and side we see
   // Case plastic, as seen on top: VHS clamshells (darkest), DVDs, Blu-rays.
@@ -1642,7 +1643,13 @@
     wall.regions = regions;
     // Where each bay ends up once every genre's overflow has been given room.
     const regionAt = (b) => regions.find((r) => b >= r.start && b < r.start + r.rows * perRow) || regions[regions.length - 1];
-    const origin = (b) => ({ x: (b % perRow) * (WU.bayW + WU.gap), y: Math.floor(b / perRow) * ROW_H });
+    // Where each row of bays stands. Genres are packed into side-by-side runs
+    // (set once the regions are final, below); until then rows simply stack.
+    let rowPos = null;
+    const origin = (b) => {
+      const row = Math.floor(b / perRow), P = rowPos && (rowPos[row] || rowPos.extra(row));
+      return P ? { x: P.x + (b % perRow) * (WU.bayW + WU.gap), y: P.y } : { x: (b % perRow) * (WU.bayW + WU.gap), y: row * ROW_H };
+    };
 
     // Each placed piece: a section and an amount of shelf. ref = "bay:shelf/slot".
     const where = new Map(), refCid = new Map(), refU = new Map(), shelfList = new Map();
@@ -1743,6 +1750,52 @@
         shelfList.set(nk, keep);
       }
     }
+    // The room's floor plan: each genre's rows stay together, genres run top
+    // to bottom and then on to the next run to the right, with the number of
+    // runs chosen so the room roughly matches the window's shape.
+    const RUN_W = perRow * (WU.bayW + WU.gap) + AISLE_W + AISLE_GAP + RUN_GAP;
+    let roomW = perRow * (WU.bayW + WU.gap), roomH = 0;
+    {
+      const lastBay = Math.max(0, ...[...shelfList.keys()].map((k) => +k.split(":")[0]));
+      const blocks = regions.map((R) => ({ r0: R.start / perRow, n: R.rows }));
+      const T = Math.max(Math.ceil((lastBay + 1) / perRow), ...blocks.map((B) => B.r0 + B.n));
+      if (blocks.length) blocks[blocks.length - 1].n = T - blocks[blocks.length - 1].r0;
+      const pack = (target) => {
+        const cols = [];
+        for (const B of blocks) {
+          const c = cols[cols.length - 1];
+          if (c && c.h + B.n <= target) { c.items.push(B); c.h += B.n; }
+          else cols.push({ items: [B], h: B.n });
+        }
+        return cols;
+      };
+      const c = wall.canvas;
+      const aspect = c && c.clientHeight ? c.clientWidth / c.clientHeight : 1.4;
+      let best = null;
+      const total = blocks.reduce((n, B) => n + B.n, 0);
+      for (let k = 1; k <= Math.max(1, blocks.length); k++) {
+        const cols = pack(Math.ceil(total / k));
+        const h = Math.max(...cols.map((cl) => cl.h * ROW_H + (cl.items.length - 1) * GENRE_GAP));
+        const w = cols.length * RUN_W - RUN_GAP;
+        const d = Math.abs(Math.log(w / h / aspect));
+        if (!best || d < best.d) best = { d, cols };
+      }
+      if (best && blocks.length > 1) {
+        rowPos = [];
+        best.cols.forEach((cl, ci) => {
+          let y = 0;
+          for (const B of cl.items) {
+            for (let i = 0; i < B.n; i++) rowPos[B.r0 + i] = { x: ci * RUN_W, y: y + i * ROW_H };
+            y += B.n * ROW_H + GENRE_GAP;
+          }
+          roomH = Math.max(roomH, y - GENRE_GAP);
+        });
+        roomW = (best.cols.length - 1) * RUN_W + perRow * (WU.bayW + WU.gap);
+        const last = rowPos.length - 1, L0 = rowPos[last];
+        rowPos.extra = (row) => ({ x: L0.x, y: L0.y + (row - last) * ROW_H });
+      }
+    }
+
     const parseRef = (ref) => [sections.get(refCid.get(ref)).cat, refCid.get(ref)];
     wall.refs = { refCid, refU };
     wall.leftovers = leftovers;
@@ -1878,18 +1931,18 @@
     // Edit mode keeps an empty bay at the end to drop pieces into.
     const roomBays = regions.reduce((n, R) => n + R.rows * perRow, 0);
     const bays = edit.on ? Math.max(maxBay + 1, roomBays) : maxBay + 1;
-    const width = Math.min(bays, perRow) * (WU.bayW + WU.gap);
-    const height = Math.ceil(bays / perRow) * ROW_H;
+    const width = rowPos ? roomW : Math.min(bays, perRow) * (WU.bayW + WU.gap);
+    const height = rowPos ? Math.max(roomH, ...Array.from({ length: Math.ceil(bays / perRow) }, (_, r) => origin(r * perRow).y + ROW_H)) : Math.ceil(bays / perRow) * ROW_H;
     // Each row of bays is an aisle; its sign names the categories along it.
     const aisles = [];
     for (const r of [...runs].sort((a, c) => a.bay - c.bay || a.shelf - c.shelf || a.x0 - c.x0)) {
       const row = Math.floor(r.bay / perRow);
-      const a = aisles[row] || (aisles[row] = { row, y: row * ROW_H, secs: [], genre: lib.cats.get(secs[r.sec].id).genre });
+      const a = aisles[row] || (aisles[row] = { row, x: origin(row * perRow).x, y: origin(row * perRow).y, secs: [], genre: lib.cats.get(secs[r.sec].id).genre });
       if (!a.secs.includes(r.sec)) a.secs.push(r.sec);
     }
     // Aisles are numbered within their genre.
     { const seen = new Map(); for (const a of aisles.filter(Boolean)) { const n = (seen.get(a.genre) || 0) + 1; seen.set(a.genre, n); a.num = n; } }
-    wall.lay = { films, chunks, secs, runs, bookends, stickers, hang, aisles: aisles.filter(Boolean), left: -AISLE_W - AISLE_GAP, faces: [], idx, bucket, held: H.held, width, height, bays, k: perRow, origin };
+    wall.lay = { films, chunks, secs, runs, bookends, stickers, hang, aisles: aisles.filter(Boolean), left: -AISLE_W - AISLE_GAP, faces: [], idx, bucket, held: H.held, width, height, bays, k: perRow, origin, rowPos };
     recolourSections();
     renderTray();
   }
@@ -2008,12 +2061,26 @@
     })).catch(() => {});
   }
 
-  async function runColorJob() {
-    if (colorJob.running || !stock) return;
+  // Colours are read from posters, so only for films you can see: the bays
+  // in view, once the camera settles. (A prebuilt colour file will replace this.)
+  let colorWait = null;
+  const colorTried = new Set(); // (posters that failed aren't retried this visit)
+  function colorView(bays) {
+    if (colorJob.running || !wall.lay) return;
+    clearTimeout(colorWait);
+    colorWait = setTimeout(() => {
+      const L = wall.lay, want = [];
+      for (const b of bays) for (let s = 0; s < WU.shelves; s++) for (const i of L.chunks.get(`${b}:${s}`) || []) if (!colors[L.films[i].slug] && !colorTried.has(L.films[i].slug)) want.push(L.films[i].slug);
+      if (want.length) runColorJob(want);
+    }, 700);
+  }
+  async function runColorJob(want) {
+    if (colorJob.running || !stock || !want) return;
     colorJob.running = true;
-    const todo = stock.films.map(([slug]) => slug).filter((s) => !colors[s]);
-    colorJob.total = stock.films.length;
-    colorJob.done = colorJob.total - todo.length;
+    const todo = want.filter((s) => !colors[s]);
+    todo.forEach((s) => colorTried.add(s));
+    colorJob.total = todo.length;
+    colorJob.done = 0;
     const lane = limiter(4); // gentle on Letterboxd
     let n = 0;
     await Promise.all(todo.map((slug) => lane(async () => {
@@ -2029,6 +2096,7 @@
     })));
     writeJSON(COLOR_KEY, colors);
     colorJob.running = false;
+    colorJob.total = 0;
     if (wall.lay) recolourSections();
     drawSoon();
   }
@@ -3352,7 +3420,7 @@
     // At the head of each aisle (row of bays): a big sign naming its
     // categories, readable from all the way back.
     for (const a of L.aisles || []) {
-      const ax = -AISLE_W - AISLE_GAP / 2, ay = a.y + WU.sign - 10, ah = WU.shelves * WU.shelfH + 10;
+      const ax = (a.x || 0) - AISLE_W - AISLE_GAP / 2, ay = a.y + WU.sign - 10, ah = WU.shelves * WU.shelfH + 10;
       if (ax + AISLE_W < x0 || ax > x1 || ay > y1 || ay + ah < y0) continue;
       ctx.fillStyle = "rgba(0,0,0,0.5)";
       ctx.fillRect(ax + 14, ay + 18, AISLE_W, ah);
@@ -3456,6 +3524,7 @@
       ctx.restore();
     }
 
+    if (z >= FAR) colorView(inView);
     // Too slow on this machine? Drop the extras (no sheen, no titles, 1x pixels).
     const ms = performance.now() - t0;
     wall.slow = ms > 28 ? wall.slow + 1 : Math.max(0, wall.slow - 1);
@@ -3465,9 +3534,21 @@
 
   function bayAt(p) {
     const L = wall.lay;
-    const col = Math.floor(p.x / (WU.bayW + WU.gap)), row = Math.floor(p.y / ROW_H);
+    let row, rx = 0, ry;
+    if (L.rowPos) {
+      row = L.rowPos.findIndex((P) => P && p.y >= P.y && p.y < P.y + ROW_H && p.x >= P.x - WU.gap && p.x < P.x + L.k * (WU.bayW + WU.gap));
+      if (row < 0) {
+        // past the last row (edit mode's spare bays)
+        const P = L.rowPos.extra(L.rowPos.length);
+        row = p.x >= P.x && p.x < P.x + L.k * (WU.bayW + WU.gap) && p.y >= P.y ? L.rowPos.length + Math.floor((p.y - P.y) / ROW_H) : -1;
+      }
+      if (row < 0) return { b: -1, s: -1 };
+      const P = L.rowPos[row] || L.rowPos.extra(row);
+      rx = P.x; ry = P.y;
+    } else { row = Math.floor(p.y / ROW_H); ry = row * ROW_H; }
+    const col = Math.floor((p.x - rx) / (WU.bayW + WU.gap));
     if (col < 0 || col >= L.k || row < 0) return { b: -1, s: -1 };
-    return { b: row * L.k + col, s: Math.floor((p.y - row * ROW_H - WU.sign) / WU.shelfH) };
+    return { b: row * L.k + col, s: Math.floor((p.y - ry - WU.sign) / WU.shelfH) };
   }
 
   function filmAt(sx, sy) {
