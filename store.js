@@ -3361,10 +3361,9 @@
     const sel = libUI.sel;
     const selAt = sel ? lib.place.get(sel[0]) : null;
     const selPath = selAt ? (() => { const p = partsOf(selAt); return [p.genre, p.cat, p.sub, p.niche].filter(Boolean); })() : [];
-    const hue = (id) => { const c = lib.cats.has(id) ? id : lib.subs.has(id) ? lib.subs.get(id).cat : null; return c && lib.cats.get(c).genre === STOCKED ? `hsl(${hueOfBlock(c)} 60% 50%)` : "#567"; };
     const folderRow = (id, side) =>
       `<li class="lbs-lib-row lbs-folder${path.includes(id) ? " -on" : ""}" data-act="lib-open" data-side="${side}" data-id="${esc(id)}" data-drop="${esc(id)}">` +
-      `<i class="lbs-lib-dot" style="background:${hue(id)}"></i>${ICON_FOLDER}<span>${esc(nameOf(id))}</span>` +
+      `${ICON_FOLDER}<span>${esc(nameOf(id))}</span>` +
       (selPath.includes(id) ? `<em>here</em>` : "") +
       `<small>${fmt(lib.count.get(id) || 0)}</small><b>›</b></li>`;
     const filmRow = ([slug, name]) =>
@@ -3388,8 +3387,8 @@
     const canMove = sel && target && target !== selAt;
     box.innerHTML =
       `<div class="lbs-lib-head">` +
-      `<div class="lbs-lib-crumbs"><button type="button" data-act="lib-root">Library</button>${path.map((id, i) => `<i>›</i><button type="button" data-act="lib-to" data-i="${i}" data-drop="${esc(id)}" class="lbs-crumb">${esc(nameOf(id))}</button>`).join("")}</div>` +
       `<button type="button" class="lbs-lib-up" data-act="lib-up" aria-label="Up a level" title="Up a level"${path.length ? "" : " disabled"}>${ICON_LEFT}</button>` +
+      `<div class="lbs-lib-crumbs"><button type="button" data-act="lib-root">Library</button>${path.map((id, i) => `<i>›</i><button type="button" data-act="lib-to" data-i="${i}" data-drop="${esc(id)}" class="lbs-crumb">${esc(nameOf(id))}</button>`).join("")}</div>` +
       `<button type="button" class="lbs-lib-x" data-act="lib" aria-label="Close the Library">${ICON_CLOSE}</button></div>` +
       `<div class="lbs-lib-cols">${column(left, "left")}${path.length ? column(right, "right") : `<div class="lbs-lib-col -right"><p class="lbs-lib-hint">Pick a genre</p></div>`}</div>` +
       `<div class="lbs-lib-foot">` +
@@ -3400,9 +3399,10 @@
           `<button type="button" class="-go" data-act="lib-move"${canMove ? "" : " disabled"} title="${target ? `Move to ${esc(pathOf(target).slice(1).join(" › "))}` : "Open a folder to move it into"}">Move here</button>` +
           `<button type="button" data-act="f-open" data-slug="${esc(sel[0])}" data-name="${esc(sel[1])}">Details</button>` +
           `<button type="button" data-act="lib-fr">${franchiseOf(sel[0]) ? "Franchise" : "Add to franchise"}</button>` +
+          `<button type="button" data-act="lib-jump" title="Fly to ${esc(titleOf(sel[1]))} on the wall">Jump to section</button>` +
           `<button type="button" class="-link" data-act="lib-remove">Request removal</button></div>`
-        : `<p class="lbs-lib-tip">Click a film to select it, then open the folder it belongs in and Move here. Or drag it onto a folder, the wall, or your inventory.</p>`) +
-      `<button type="button" class="lbs-lib-jump" data-act="lib-jump"${sel || (right && partsOf(right).genre === STOCKED && right !== STOCKED) ? "" : " disabled"}>Jump to section</button>` +
+        : `<div class="lbs-lib-acts"><p class="lbs-lib-tip">Click a film to select it, then open the folder it belongs in and Move here. Or drag it onto a folder, the wall, or your inventory.</p>` +
+          `<button type="button" data-act="lib-jump"${right && partsOf(right).genre === STOCKED && right !== STOCKED ? "" : " disabled"} title="${right ? `Fly to ${esc(nameOf(right))} on the wall` : ""}">Jump to section</button></div>`) +
       `</div>`;
     fillPosters($(".lbs-lib-foot", box), false);
     // Posters in the lists load as they scroll into view.

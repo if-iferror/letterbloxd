@@ -3955,3 +3955,9 @@ html.lbs-open {
   font-size: 12px;
   line-height: 1.4;
 }
+.lbs-lib-acts .lbs-lib-tip {
+  flex: 1 1 100%;
+}
+.lbs-lib-up {
+  order: -1;
+}
