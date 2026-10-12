@@ -3455,3 +3455,62 @@ html.lbs-open {
 .lbs-fr-list li.-other img {
   box-shadow: 0 0 0 2px #ffb84a;
 }
+
+/* The box view: the spine's logo sits on the middle of the spine, like on the wall. */
+.lbs-spine-paper > .lbs-spine-logo {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  margin: 0;
+  transform: translate(-50%, -50%) rotate(90deg);
+}
+.lbs-spine-paper > .lbs-spine-logo.-upright {
+  transform: translate(-50%, -50%);
+}
+/* The film's other main title (its original-language title), under its name */
+.lbs-forig {
+  margin: -4px 0 8px;
+  color: #9ab;
+  font: italic 15px Georgia, "Times New Roman", serif;
+}
+/* Franchise builder: each film's year, small, in the poster's corner */
+.lbs-fr-list li i {
+  position: absolute;
+  right: 4px;
+  top: 116px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(10, 13, 16, 0.78);
+  color: #def;
+  font: 700 10.5px Arial, sans-serif;
+  font-style: normal;
+}
+
+/* The store's logo: in the header, and on the home page strip */
+.lbs-logo {
+  display: flex;
+  align-items: center;
+  height: 46px;
+}
+.lbs-logo-svg {
+  display: block;
+  height: 100%;
+  width: auto;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.5));
+}
+.lbs-home-door.-logo {
+  grid-template-columns: auto 1fr;
+  column-gap: 20px;
+  align-items: center;
+}
+.lbs-home-door.-logo > :not(.lbs-home-logo) {
+  grid-column: 2;
+}
+.lbs-home-logo {
+  grid-row: 1 / span 3;
+  height: 84px;
+}
+.lbs-home-logo .lbs-logo-svg {
+  height: 100%;
+  width: auto;
+}
