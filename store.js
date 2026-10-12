@@ -259,13 +259,15 @@
   const MINE_KEY = `${NS}:store:mine:v1`;
   let mine = readJSON(MINE_KEY, null) || {};
   mine = { place: {}, cats: {}, subs: {}, recent: [], view: "community", sort: {}, held: [], colors: {}, wash: {}, ...mine };
-  const saveMine = () => writeJSON(MINE_KEY, mine);
+  let paintVer = 0; // bumps when anything that colours the far-away wall changes
+  const saveMine = () => { paintVer++; return writeJSON(MINE_KEY, mine); };
 
   /* What everyone has changed (the store's shared edits), folded by the
    * backend into one small state file and fetched once per visit. Layers:
    * built-in defaults < house plan < shared edits < your own edits. */
   let shared = { place: {}, logo: {}, color: {}, wash: {}, franchises: {}, cats: {}, subs: {} };
   function applySharedState(data) {
+    paintVer++;
     const next = { place: {}, logo: {}, color: {}, wash: {}, franchises: {}, cats: {}, subs: {} };
     const parse = (v) => { try { return typeof v === "string" && /^[\[{"]|^null$|^-?\d/.test(v) ? JSON.parse(v) : v; } catch { return v; } };
     for (const [kind, target, raw] of Object.values((data && data.edits) || {})) {
@@ -351,6 +353,95 @@
     refresh();
   }
 
+  /* ---------------- the catalogue ----------------
+   * Every popular film with its genres, countries, languages and themes,
+   * built by the Catalogue builder and published as data/catalogue.json.
+   * When it's there the store reads it instead of scraping Letterboxd:
+   * Horror's aisles come from its lists, and every other film starts in its
+   * home genre's Everything Else. */
+  const CAT_FILE = "https://raw.githubusercontent.com/if-iferror/letterbloxd/dev/data/catalogue.json";
+  let catalogue = null; // { films: [[slug, name, rating]], lists: Map(key -> { name, set }) }
+  let catState = "idle"; // idle | loading | ready | none
+  function loadCatalogue() {
+    catState = "loading";
+    return fetch(CAT_FILE)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j) => { if (!useCatalogue(j)) catState = "none"; })
+      .catch(() => { catState = "none"; });
+  }
+  function useCatalogue(j) {
+    if (!j || !Array.isArray(j.films)) return false;
+    const lists = new Map();
+    for (const [key, [name, gaps]] of Object.entries(j.lists || {})) {
+      let i = -1;
+      lists.set(key, { name, set: new Set(gaps.map((d) => (i += d))) });
+    }
+    catalogue = { at: j.at, films: j.films, lists };
+    catState = "ready";
+    return true;
+  }
+  // The films matching a browse path ("genre/horror+comedy/country/italy/decade/1970s"),
+  // or null when the catalogue lacks one of its lists.
+  function catQuery(q) {
+    const parts = q.split("/");
+    let out = null;
+    const meet = (set) => { out = out ? new Set([...out].filter((i) => set.has(i))) : new Set(set); };
+    for (let n = 0; n < parts.length; n += 2) {
+      const [kind, val] = [parts[n], parts[n + 1]];
+      if (kind === "decade") {
+        const y0 = parseInt(val, 10);
+        const set = new Set();
+        catalogue.films.forEach((f, i) => { const y = yearOf(f[1]); if (y >= y0 && y < y0 + 10) set.add(i); });
+        meet(set);
+        continue;
+      }
+      for (const v of val.split("+")) {
+        const l = catalogue.lists.get(`${kind}/${v}`);
+        if (!l) return null;
+        meet(l.set);
+      }
+    }
+    return out || new Set();
+  }
+  // Lists the store itself needs (Horror's aisles and tags).
+  const neededLists = () => [...new Set([...AISLES, ...TAGS].flatMap((a) => {
+    const parts = a.q.split("/"), keys = [];
+    for (let n = 0; n < parts.length; n += 2) if (parts[n] !== "decade") for (const v of parts[n + 1].split("+")) keys.push(`${parts[n]}/${v}`);
+    return keys;
+  }))];
+  // A film's home genre: the most specific of its genres.
+  const HOME_ORDER = ["horror", "documentary", "animation", "western", "war", "music", "science-fiction", "fantasy", "comedy", "romance", "crime", "thriller", "mystery", "family", "adventure", "action", "history", "tv-movie", "drama"];
+  function stockFromCatalogue() {
+    const C = catalogue;
+    const films = C.films.map((f) => [f[0], f[1]]);
+    const horror = (C.lists.get(`genre/${STOCKED}`) || { set: new Set() }).set;
+    const sorted = (set) => [...set].filter((i) => horror.has(i)).sort((a, b) => a - b);
+    const members = {};
+    for (const a of AISLES) {
+      const set = catQuery(a.q);
+      if (!set) console.warn(`[store] catalogue has no list for aisle ${a.id} (${a.q})`);
+      members[a.id] = set ? sorted(set) : [];
+    }
+    const placed = new Set();
+    const aisles = {};
+    for (const id of AISLE_PRIORITY) {
+      aisles[id] = (members[id] || []).filter((i) => !placed.has(i));
+      aisles[id].forEach((i) => placed.add(i));
+    }
+    aisles.rest = sorted(horror).filter((i) => !placed.has(i));
+    const tags = {};
+    for (const t of TAGS) { const set = catQuery(t.q); if (set) (tags[t.id] = tags[t.id] || []).push(...sorted(set)); }
+    // Everyone else's home genre.
+    const homes = {};
+    const genreSets = HOME_ORDER.map((g) => [g, C.lists.get(`genre/${g}`)]).filter(([, l]) => l);
+    films.forEach((f, i) => {
+      if (horror.has(i)) return;
+      const g = genreSets.find(([, l]) => l.set.has(i));
+      if (g) homes[i] = g[0];
+    });
+    return { v: 2, at: Date.now(), films, aisles, tags, front: [], homes, catalogue: C.at };
+  }
+
   // The house placement for every stocked film: aisle, then the first shelf
   // rule it matches (rules with fewer than MIN_SHELF films fall through).
   function houseDefaults() {
@@ -372,6 +463,10 @@
         for (const [r, list] of groups) for (const f of list) out.set(f.slug, `${STOCKED}/${a.id}/${r.id}`);
         break;
       }
+    }
+    for (const [i, g] of Object.entries(stock.homes || {})) {
+      const slug = stock.films[i][0];
+      if (!out.has(slug)) out.set(slug, `${g}/rest/general`);
     }
     return out;
   }
@@ -688,7 +783,13 @@
   }
 
   function render() {
-    stock = stock || loadStock();
+    if (catState === "idle") {
+      loadCatalogue().then(() => {
+        if (catalogue) { stock = stockFromCatalogue(); defaults = null; lib = null; }
+        if (root && !root.hidden) render();
+      });
+    }
+    if (catState !== "loading") stock = stock || loadStock();
     const total = stock ? stock.films.length : COLLECTIONS[0].count;
     root.classList.toggle("lbs-nodates", !!mine.noDates);
     root.innerHTML =
@@ -709,6 +810,7 @@
       `<div class="lbs-hall"></div>`;
 
     const hall = $(".lbs-hall", root);
+    if (catState === "loading") { hall.append(h("div", "lbs-loading", `<p>Opening the store…</p>`)); return; }
     if (stock && DESK_ONLY) {
       buildLibrary();
       root.classList.add("lbs-desk-only");
@@ -979,7 +1081,7 @@
       `<ul class="lbs-find-types lbs-menu" role="menu" hidden><li><button type="button" data-act="find-as" data-v="film" class="-on">Movie</button></li><li><button type="button" disabled>Actor <em>soon</em></button></li><li><button type="button" disabled>Director <em>soon</em></button></li><li><button type="button" disabled>Crew <em>soon</em></button></li></ul>` +
       `<div class="lbs-settings lbs-menu" role="menu" hidden></div>` +
       `<ul class="lbs-find-list" hidden></ul><div class="lbs-card" hidden></div></div>` +
-      `<div class="lbs-logopick" hidden></div><div class="lbs-logobuild" hidden></div>` +
+      `<div class="lbs-logopick" hidden></div><div class="lbs-logobuild" hidden></div><div class="lbs-logobuild lbs-catbuild" hidden></div>` +
       `<p class="lbs-credit" hidden>Title logos from <a href="https://www.themoviedb.org/" target="_blank" rel="noopener">TMDB</a>. This product uses the TMDB API but is not endorsed or certified by TMDB.</p>` +
       `</div>` +
       `<ul class="lbs-rows" role="listbox" aria-multiselectable="true"></ul>` +
@@ -1252,6 +1354,7 @@
   const HANG_H = 216, HANG_DROP = 18; // the hanging category boards over each bay
   const AISLE_W = 900, AISLE_GAP = 90; // the big aisle sign at the start of each row of bays
   const ROW_H = WU.sign + WU.shelves * WU.shelfH + 150; // a row of bays plus the floor between rows
+  const RUN_GAP = 700, GENRE_GAP = 400; // between runs of aisles, and between genres in a run
   const FAR = 0.09, NEAR = 0.45, TEXT = 0.8, ZMIN = 0.02, ZMAX = 6;
   const DEPTH_X = 4, DEPTH_Y = 5; // the sliver of top and side we see
   // Case plastic, as seen on top: VHS clamshells (darkest), DVDs, Blu-rays.
@@ -1283,7 +1386,7 @@
   const yearInk = (own) => (own && lum(rgbOf(own)) > 0.62 ? "rgba(10,12,14,0.85)" : "rgba(255,255,255,0.9)");
   const reduceMotion = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-  const wall = { level: "wall", lay: null, cam: { x: 0, y: 0, z: 0.05 }, hover: null, pin: null, lite: false, slow: 0, imgs: new Map(), logos: new Map(), frame: 0 };
+  const wall = { level: "wall", bayCache: new Map(), lay: null, cam: { x: 0, y: 0, z: 0.05 }, hover: null, pin: null, lite: false, slow: 0, imgs: new Map(), logos: new Map(), frame: 0 };
   // 1969 and earlier: round steel film cans, standing on edge. Then VHS, DVD, Blu-ray.
   const isCan = (y) => fmtOf(y) === "can";
   const CAN_RX = 5, CAN_T = 25; // a can's lid ellipse half-width and rim thickness (see drawCan)
@@ -1540,7 +1643,13 @@
     wall.regions = regions;
     // Where each bay ends up once every genre's overflow has been given room.
     const regionAt = (b) => regions.find((r) => b >= r.start && b < r.start + r.rows * perRow) || regions[regions.length - 1];
-    const origin = (b) => ({ x: (b % perRow) * (WU.bayW + WU.gap), y: Math.floor(b / perRow) * ROW_H });
+    // Where each row of bays stands. Genres are packed into side-by-side runs
+    // (set once the regions are final, below); until then rows simply stack.
+    let rowPos = null;
+    const origin = (b) => {
+      const row = Math.floor(b / perRow), P = rowPos && (rowPos[row] || rowPos.extra(row));
+      return P ? { x: P.x + (b % perRow) * (WU.bayW + WU.gap), y: P.y } : { x: (b % perRow) * (WU.bayW + WU.gap), y: row * ROW_H };
+    };
 
     // Each placed piece: a section and an amount of shelf. ref = "bay:shelf/slot".
     const where = new Map(), refCid = new Map(), refU = new Map(), shelfList = new Map();
@@ -1619,7 +1728,10 @@
       for (const R of regions) { R.final = R.start + shift * perRow; shift += extra.get(R.genre) || 0; R.rows += extra.get(R.genre) || 0; }
       const moveBay = (b) => { const R = regions.find((x) => b >= x.start && b < x.start + (x.rows - (extra.get(x.genre) || 0)) * perRow) || regions[regions.length - 1]; return b - R.start + R.final; };
       for (const w of where.values()) w.bay = moveBay(w.bay);
-      for (const [k, refs] of [...shelfList]) { const [b, sh] = k.split(":").map(Number); shelfList.delete(k); shelfList.set(`${moveBay(b)}:${sh}`, refs); }
+      // (into a fresh map: a moved key can land on one not yet moved)
+      const movedList = [...shelfList].map(([k, refs]) => { const [b, sh] = k.split(":").map(Number); return [`${moveBay(b)}:${sh}`, refs]; });
+      shelfList.clear();
+      for (const [k, refs] of movedList) shelfList.set(k, refs);
       for (const R of regions) R.start = R.final;
       const fed = new Map([...leftovers].map(([cid]) => [cid, 0]));
       for (const [R, rest, startLocal] of placed) for (const [key, list] of Object.entries(rest)) {
@@ -1641,6 +1753,52 @@
         shelfList.set(nk, keep);
       }
     }
+    // The room's floor plan: each genre's rows stay together, genres run top
+    // to bottom and then on to the next run to the right, with the number of
+    // runs chosen so the room roughly matches the window's shape.
+    const RUN_W = perRow * (WU.bayW + WU.gap) + AISLE_W + AISLE_GAP + RUN_GAP;
+    let roomW = perRow * (WU.bayW + WU.gap), roomH = 0;
+    {
+      const lastBay = Math.max(0, ...[...shelfList.keys()].map((k) => +k.split(":")[0]));
+      const blocks = regions.map((R) => ({ r0: R.start / perRow, n: R.rows }));
+      const T = Math.max(Math.ceil((lastBay + 1) / perRow), ...blocks.map((B) => B.r0 + B.n));
+      if (blocks.length) blocks[blocks.length - 1].n = T - blocks[blocks.length - 1].r0;
+      const pack = (target) => {
+        const cols = [];
+        for (const B of blocks) {
+          const c = cols[cols.length - 1];
+          if (c && c.h + B.n <= target) { c.items.push(B); c.h += B.n; }
+          else cols.push({ items: [B], h: B.n });
+        }
+        return cols;
+      };
+      const c = wall.canvas;
+      const aspect = c && c.clientHeight ? c.clientWidth / c.clientHeight : 1.4;
+      let best = null;
+      const total = blocks.reduce((n, B) => n + B.n, 0);
+      for (let k = 1; k <= Math.max(1, blocks.length); k++) {
+        const cols = pack(Math.ceil(total / k));
+        const h = Math.max(...cols.map((cl) => cl.h * ROW_H + (cl.items.length - 1) * GENRE_GAP));
+        const w = cols.length * RUN_W - RUN_GAP;
+        const d = Math.abs(Math.log(w / h / aspect));
+        if (!best || d < best.d) best = { d, cols };
+      }
+      if (best && blocks.length > 1) {
+        rowPos = [];
+        best.cols.forEach((cl, ci) => {
+          let y = 0;
+          for (const B of cl.items) {
+            for (let i = 0; i < B.n; i++) rowPos[B.r0 + i] = { x: ci * RUN_W, y: y + i * ROW_H };
+            y += B.n * ROW_H + GENRE_GAP;
+          }
+          roomH = Math.max(roomH, y - GENRE_GAP);
+        });
+        roomW = (best.cols.length - 1) * RUN_W + perRow * (WU.bayW + WU.gap);
+        const last = rowPos.length - 1, L0 = rowPos[last];
+        rowPos.extra = (row) => ({ x: L0.x, y: L0.y + (row - last) * ROW_H });
+      }
+    }
+
     const parseRef = (ref) => [sections.get(refCid.get(ref)).cat, refCid.get(ref)];
     wall.refs = { refCid, refU };
     wall.leftovers = leftovers;
@@ -1776,18 +1934,18 @@
     // Edit mode keeps an empty bay at the end to drop pieces into.
     const roomBays = regions.reduce((n, R) => n + R.rows * perRow, 0);
     const bays = edit.on ? Math.max(maxBay + 1, roomBays) : maxBay + 1;
-    const width = Math.min(bays, perRow) * (WU.bayW + WU.gap);
-    const height = Math.ceil(bays / perRow) * ROW_H;
+    const width = rowPos ? roomW : Math.min(bays, perRow) * (WU.bayW + WU.gap);
+    const height = rowPos ? Math.max(roomH, ...Array.from({ length: Math.ceil(bays / perRow) }, (_, r) => origin(r * perRow).y + ROW_H)) : Math.ceil(bays / perRow) * ROW_H;
     // Each row of bays is an aisle; its sign names the categories along it.
     const aisles = [];
     for (const r of [...runs].sort((a, c) => a.bay - c.bay || a.shelf - c.shelf || a.x0 - c.x0)) {
       const row = Math.floor(r.bay / perRow);
-      const a = aisles[row] || (aisles[row] = { row, y: row * ROW_H, secs: [], genre: lib.cats.get(secs[r.sec].id).genre });
+      const a = aisles[row] || (aisles[row] = { row, x: origin(row * perRow).x, y: origin(row * perRow).y, secs: [], genre: lib.cats.get(secs[r.sec].id).genre });
       if (!a.secs.includes(r.sec)) a.secs.push(r.sec);
     }
     // Aisles are numbered within their genre.
     { const seen = new Map(); for (const a of aisles.filter(Boolean)) { const n = (seen.get(a.genre) || 0) + 1; seen.set(a.genre, n); a.num = n; } }
-    wall.lay = { films, chunks, secs, runs, bookends, stickers, hang, aisles: aisles.filter(Boolean), left: -AISLE_W - AISLE_GAP, faces: [], idx, bucket, held: H.held, width, height, bays, k: perRow, origin };
+    wall.lay = { films, chunks, secs, runs, bookends, stickers, hang, aisles: aisles.filter(Boolean), left: -AISLE_W - AISLE_GAP, faces: [], idx, bucket, held: H.held, width, height, bays, k: perRow, origin, rowPos };
     recolourSections();
     renderTray();
   }
@@ -1900,18 +2058,32 @@
     return posterFor(slug).then(([url]) => new Promise((ok) => {
       const im = new Image();
       im.crossOrigin = "anonymous";
-      im.onload = () => { try { colors[slug] = measure(im); } catch {} ok(); };
+      im.onload = () => { try { colors[slug] = measure(im); paintVer++; } catch {} ok(); };
       im.onerror = () => ok();
       im.src = url;
     })).catch(() => {});
   }
 
-  async function runColorJob() {
-    if (colorJob.running || !stock) return;
+  // Colours are read from posters, so only for films you can see: the bays
+  // in view, once the camera settles. (A prebuilt colour file will replace this.)
+  let colorWait = null;
+  const colorTried = new Set(); // (posters that failed aren't retried this visit)
+  function colorView(bays) {
+    if (colorJob.running || !wall.lay) return;
+    clearTimeout(colorWait);
+    colorWait = setTimeout(() => {
+      const L = wall.lay, want = [];
+      for (const b of bays) for (let s = 0; s < WU.shelves; s++) for (const i of L.chunks.get(`${b}:${s}`) || []) if (!colors[L.films[i].slug] && !colorTried.has(L.films[i].slug)) want.push(L.films[i].slug);
+      if (want.length) runColorJob(want);
+    }, 700);
+  }
+  async function runColorJob(want) {
+    if (colorJob.running || !stock || !want) return;
     colorJob.running = true;
-    const todo = stock.films.map(([slug]) => slug).filter((s) => !colors[s]);
-    colorJob.total = stock.films.length;
-    colorJob.done = colorJob.total - todo.length;
+    const todo = want.filter((s) => !colors[s]);
+    todo.forEach((s) => colorTried.add(s));
+    colorJob.total = todo.length;
+    colorJob.done = 0;
     const lane = limiter(4); // gentle on Letterboxd
     let n = 0;
     await Promise.all(todo.map((slug) => lane(async () => {
@@ -1927,6 +2099,7 @@
     })));
     writeJSON(COLOR_KEY, colors);
     colorJob.running = false;
+    colorJob.total = 0;
     if (wall.lay) recolourSections();
     drawSoon();
   }
@@ -2170,6 +2343,283 @@
     a.download = "horror-logos.json";
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  }
+
+  /* ---------------- the catalogue builder (developer only) ----------------
+   * Reads every popular film once, with its genres, countries, languages and
+   * Letterboxd themes, and saves it as one file (data/catalogue.json) that the
+   * store then loads instead of scraping. Steps:
+   *   1. cutoff  find how far down Letterboxd's popularity list films still
+   *              have about MIN_WATCHES watches (popularity isn't watch count,
+   *              so this samples pages and takes the median)
+   *   2. films   every film above that point, in popularity order
+   *   3. themes  which themes exist: read the Genres tab of a sample of films
+   *   4. lists   every genre, country, language and theme list, read down to
+   *              the cutoff, keeping which of our films are in it
+   * Progress is saved in this browser (IndexedDB), so it can be paused,
+   * closed and continued. */
+  const CAT_DB = `${NS}-store`;
+  const CAT_KEY = "catalogue-job:v1";
+  const CAT_SAMPLE = 1500; // most film pages read to find themes
+  const catJob = { running: false, st: null, msg: "", error: "", started: 0, reqs: 0 };
+  const catLane = limiter(4); // gentle: four requests at a time
+
+  function idb(mode, fn) {
+    return new Promise((ok, fail) => {
+      const open = indexedDB.open(CAT_DB, 1);
+      open.onupgradeneeded = () => open.result.createObjectStore("kv");
+      open.onerror = () => fail(open.error);
+      open.onsuccess = () => {
+        const db = open.result;
+        const tx = db.transaction("kv", mode);
+        const req = fn(tx.objectStore("kv"));
+        tx.oncomplete = () => { db.close(); ok(req && req.result); };
+        tx.onerror = () => { db.close(); fail(tx.error); };
+      };
+    });
+  }
+  const idbGet = (k) => idb("readonly", (s) => s.get(k));
+  const idbPut = (k, v) => idb("readwrite", (s) => s.put(v, k));
+  const idbDel = (k) => idb("readwrite", (s) => s.delete(k));
+
+  // A Letterboxd page, politely: four at a time, backing off when told to.
+  async function lbGet(url) {
+    for (let tries = 0; ; tries++) {
+      if (!catJob.running) throw new Error("paused");
+      const r = await catLane(() => fetch(url, { credentials: "include" }));
+      catJob.reqs++;
+      if (r.ok || r.status === 404) return r.ok ? r.text() : "";
+      if (tries >= 6) throw new Error(`Letterboxd answered ${r.status}`);
+      const wait = r.status === 429 || r.status >= 500 ? 5000 * 2 ** tries : 1500;
+      catJob.msg = `Letterboxd asked us to slow down; waiting ${Math.round(wait / 1000)}s`;
+      renderCatBuild();
+      await new Promise((ok) => setTimeout(ok, wait));
+    }
+  }
+  const parse = (html) => new DOMParser().parseFromString(html, "text/html");
+  // A film page's theme links, reading only as far as they go (the themes sit
+  // about a third of the way into a ~300 KB page).
+  async function filmThemes(slug) {
+    for (let tries = 0; ; tries++) {
+      if (!catJob.running) throw new Error("paused");
+      const r = await catLane(() => fetch(`/film/${slug}/`, { credentials: "include" }));
+      catJob.reqs++;
+      if (r.status === 404) return [];
+      if (!r.ok) {
+        if (tries >= 6) throw new Error(`Letterboxd answered ${r.status}`);
+        await new Promise((ok) => setTimeout(ok, 5000 * 2 ** tries));
+        continue;
+      }
+      const reader = r.body.getReader();
+      const dec = new TextDecoder();
+      let text = "";
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        text += dec.decode(value, { stream: true });
+        const last = Math.max(text.lastIndexOf("/films/theme/"), text.lastIndexOf("/films/mini-theme/"));
+        if ((last > 0 && text.length - last > 4000) || text.length > 140000) { reader.cancel().catch(() => {}); break; }
+      }
+      return [...text.matchAll(/href="\/films\/((?:mini-)?theme\/[a-z0-9-]+)\/[^"]*"[^>]*>([^<]+)</g)].map((m) => [m[1], m[2]]);
+    }
+  }
+  async function catPage(path, page) {
+    const html = await lbGet(`/csi/films/films-browser-list/${path ? path + "/" : ""}by/popular/${page > 1 ? `page/${page}/` : ""}?esiAllowFilters=false`);
+    return [...parse(html).querySelectorAll("[data-item-slug]")].map((el) => {
+      const li = el.closest("li") || el;
+      const r = li.querySelector("[data-average-rating]") || (li.dataset.averageRating ? li : null);
+      return { slug: el.dataset.itemSlug, name: el.dataset.itemFullDisplayName || el.dataset.itemName || el.dataset.itemSlug, rating: r ? Math.round(+r.dataset.averageRating * 100) || 0 : 0 };
+    });
+  }
+  async function catWatches(slug) {
+    const a = parse(await lbGet(`/csi/film/${slug}/stats/`)).querySelector('[title^="Watched by"]');
+    return a ? +a.getAttribute("title").replace(/\D/g, "") : 0;
+  }
+
+  const catBlank = () => ({ v: 1, themeV: 2, phase: "cutoff", min: 1000, lo: 300, hi: 3000, probes: {}, cutPage: 0, page: 0, films: [], lists: {}, sampled: 0, quiet: 0, names: {} });
+
+  async function catSave() { catJob.st.at = Date.now(); await idbPut(CAT_KEY, catJob.st); }
+
+  async function runCatJob() {
+    if (catJob.running) return;
+    catJob.running = true;
+    catJob.error = "";
+    catJob.started = Date.now();
+    catJob.reqs = 0;
+    renderCatBuild();
+    try {
+      if (!catJob.st) catJob.st = (await idbGet(CAT_KEY)) || catBlank();
+      const st = catJob.st;
+      // Lists the store needs are always read, found on a film page or not.
+      const seed = () => { for (const k of neededLists()) if (!st.lists[k]) st.lists[k] = { name: k.split("/")[1].replace(/-/g, " "), ids: null }; };
+      if (st.themeV !== 2 && (st.phase === "lists" || st.phase === "done")) { st.sampled = 0; st.quiet = 0; st.phase = "themes"; }
+      if (st.phase === "done") { seed(); if (Object.values(st.lists).some((l) => !l.ids)) st.phase = "lists"; }
+      const tick = () => { catJob.msg = ""; renderCatBuild(); };
+
+      // 1. The cutoff: the last page whose sampled films have a median of MIN watches.
+      if (st.phase === "cutoff") {
+        while (st.hi - st.lo > 8) {
+          const mid = Math.round((st.lo + st.hi) / 2);
+          const list = await catPage("", mid);
+          const pick = [0, 9, 18, 27, 36, 45, 54, 63, 71].map((i) => list[i]).filter(Boolean);
+          const w = (await Promise.all(pick.map((f) => catWatches(f.slug)))).sort((a, b) => a - b);
+          const median = w[w.length >> 1] || 0;
+          st.probes[mid] = median;
+          if (median >= st.min) st.lo = mid; else st.hi = mid;
+          await catSave();
+          tick();
+        }
+        st.cutPage = st.lo;
+        st.phase = "films";
+        await catSave();
+      }
+
+      // 2. Every film down to the cutoff, in popularity order.
+      if (st.phase === "films") {
+        const seen = new Set(st.films.map((f) => f[0]));
+        while (st.page < st.cutPage) {
+          const from = st.page + 1, to = Math.min(st.cutPage, st.page + 20);
+          const pages = await Promise.all(Array.from({ length: to - from + 1 }, (_, i) => catPage("", from + i)));
+          for (const f of pages.flat()) if (!seen.has(f.slug)) { seen.add(f.slug); st.films.push([f.slug, f.name, f.rating]); }
+          st.page = to;
+          await catSave();
+          tick();
+        }
+        st.phase = "themes";
+        await catSave();
+      }
+
+      // 3. Which lists exist: genres, countries and languages are listed by
+      //    Letterboxd; themes are found on a spread-out sample of film pages.
+      if (st.phase === "themes") {
+        for (const [id, name] of GENRES) if (!st.lists[`genre/${id}`]) st.lists[`genre/${id}`] = { name, ids: null };
+        if (!Object.keys(st.lists).some((k) => k.startsWith("country/"))) {
+          const doc = parse(await lbGet("/countries/"));
+          for (const a of doc.querySelectorAll('a[href^="/films/country/"], a[href^="/films/language/"]')) {
+            const m = a.getAttribute("href").match(/^\/films\/(country|language)\/([a-z0-9-]+)\/$/);
+            const name = (a.querySelector(".name") || a).textContent.replace(/[\d,]+\s*$/, "").trim();
+            if (m && name && !st.lists[`${m[1]}/${m[2]}`]) st.lists[`${m[1]}/${m[2]}`] = { name, ids: null };
+          }
+          await catSave();
+        }
+        // Themes belong to well-watched films, so read the top films closely
+        // and the rest sparsely. Stop once 400 films with themes in a row
+        // turn up nothing new.
+        const N = st.films.length;
+        const order = [];
+        for (let i = 0; i < Math.min(N, 4000); i += 2) order.push(i);
+        for (let i = 4000; i < N; i += Math.max(1, Math.floor((N - 4000) / 1200))) order.push(i);
+        while (st.sampled < order.length && !(st.sampled >= 600 && st.quiet >= 400)) {
+          const batch = order.slice(st.sampled, st.sampled + 8);
+          const found = await Promise.all(batch.map((i) => filmThemes(st.films[i][0])));
+          for (const links of found) {
+            if (!links.length) continue;
+            let fresh = false;
+            for (const [key, name] of links) {
+              if (st.lists[key]) continue;
+              st.lists[key] = { name: parse(name).body.textContent.trim(), ids: null };
+              fresh = true;
+            }
+            st.quiet = fresh ? 0 : st.quiet + 1;
+          }
+          st.sampled += batch.length;
+          await catSave();
+          tick();
+        }
+        st.themeV = 2;
+        seed();
+        st.phase = "lists";
+        await catSave();
+      }
+
+      // 4. Each list, read down to the cutoff. A list is in popularity order,
+      //    so the first page with none of our films ends it.
+      if (st.phase === "lists") {
+        const index = new Map(st.films.map((f, i) => [f[0], i]));
+        const todo = Object.keys(st.lists).filter((k) => !st.lists[k].ids);
+        let since = 0;
+        await Promise.all(todo.map((key) => (async () => {
+          // Page 1, then three pages at a time (big lists like Drama run to hundreds of pages).
+          const ids = [];
+          outer: for (let p = 1; p <= 2000; p += p === 1 ? 1 : 3) {
+            const pages = await Promise.all((p === 1 ? [1] : [p, p + 1, p + 2]).map((n) => catPage(key, n)));
+            for (const list of pages) {
+              const hits = list.map((f) => index.get(f.slug)).filter((i) => i != null);
+              ids.push(...hits);
+              if (!hits.length || list.length < PER_PAGE) break outer;
+            }
+          }
+          st.lists[key].ids = [...new Set(ids)].sort((a, b) => a - b);
+          if (++since % 10 === 0) await catSave();
+          tick();
+        })()));
+        st.phase = "done";
+        await catSave();
+      }
+    } catch (err) {
+      if (err.message !== "paused") catJob.error = err.message;
+      if (catJob.st) await catSave().catch(() => {});
+    } finally {
+      catJob.running = false;
+      catJob.msg = "";
+      renderCatBuild();
+    }
+  }
+
+  function catProgress(st) {
+    if (!st) return "Not started.";
+    const lists = Object.values(st.lists);
+    const done = lists.filter((l) => l.ids).length;
+    if (st.phase === "cutoff") return `Finding the cutoff (${fmt(st.min)}+ watches)… ${Object.keys(st.probes).length} pages sampled`;
+    if (st.phase === "films") return `Reading films: page ${fmt(st.page)} / ${fmt(st.cutPage)} · ${fmt(st.films.length)} films`;
+    if (st.phase === "themes") return `Finding themes: ${fmt(st.sampled)} film pages read · ${fmt(Object.keys(st.lists).filter((k) => /theme\//.test(k)).length)} themes so far`;
+    if (st.phase === "lists") return `Reading lists: ${fmt(done)} / ${fmt(lists.length)}`;
+    return `Done: ${fmt(st.films.length)} films · ${fmt(lists.length)} lists`;
+  }
+
+  function renderCatBuild() {
+    const box = $(".lbs-catbuild", root);
+    if (!box || box.hidden) return;
+    const st = catJob.st;
+    const mins = catJob.running ? Math.round((Date.now() - catJob.started) / 60000) : 0;
+    box.innerHTML =
+      `<b>Catalogue builder</b>` +
+      `<p>Reads every popular film with its genres, countries, languages and themes, then downloads <code>catalogue.json</code> for the repo. Takes about an hour; keep this tab open. You can pause and continue later.</p>` +
+      `<p>${esc(catProgress(st))}</p>` +
+      (st && st.cutPage ? `<p>Cutoff: page ${fmt(st.cutPage)} (about ${fmt(st.cutPage * PER_PAGE)} films)</p>` : "") +
+      (catJob.running ? `<p>${fmt(catJob.reqs)} requests in ${mins} min${catJob.msg ? ` · ${esc(catJob.msg)}` : ""}</p>` : "") +
+      (catJob.error ? `<p class="-err">${esc(catJob.error)}</p>` : "") +
+      `<div class="lbs-logobuild-row">` +
+      (catJob.running ? `<button type="button" data-act="cat-stop">Pause</button>` : st && st.phase === "done" && neededLists().every((k) => st.lists[k]) ? "" : `<button type="button" data-act="cat-start" class="-go">${st && (st.films.length || Object.keys(st.probes).length) ? "Continue" : "Start"}</button>`) +
+      (st && st.phase === "done" ? `<button type="button" data-act="cat-save" class="-go">Download catalogue</button><button type="button" data-act="cat-try">Try it here</button>` : "") +
+      (!catJob.running && st ? `<button type="button" data-act="cat-reset">Start over</button>` : "") +
+      `<button type="button" data-act="cat-close">Close</button></div>`;
+  }
+
+  // The file: films in popularity order, [slug, "Title (Year)", rating x100];
+  // each list as its name and the gaps between its films' places (small numbers).
+  function catalogueJSON() {
+    const st = catJob.st;
+    const lists = {};
+    for (const [k, l] of Object.entries(st.lists)) {
+      if (!l.ids || !l.ids.length) continue;
+      let prev = -1;
+      lists[k] = [l.name, l.ids.map((i) => { const d = i - prev; prev = i; return d; })];
+    }
+    return { v: 1, at: new Date().toISOString().slice(0, 10), min: st.min, cutPage: st.cutPage, films: st.films, lists };
+  }
+  function downloadCatalogue() {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([JSON.stringify(catalogueJSON())], { type: "application/json" }));
+    a.download = "catalogue.json";
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  }
+  async function openCatBuild() {
+    const b = $(".lbs-catbuild", root);
+    b.hidden = !b.hidden;
+    if (!catJob.st) catJob.st = (await idbGet(CAT_KEY).catch(() => null)) || null;
+    renderCatBuild();
   }
 
   // Right-click a spine: the film's other TMDB logos, to pick from.
@@ -2612,7 +3062,41 @@
     {
       // Every spine in view (detail only up close).
       const near = z >= NEAR, text = z >= TEXT && !wall.lite;
+      // From far away each bay's spines are flat blocks of colour: draw them
+      // once into a small picture per bay and reuse it while nothing changes.
+      const zd = z * dpr;
+      const cacheS = !near && zd <= 0.2 ? (zd <= 0.07 ? 0.07 : 0.2) : 0;
+      const sig = `${paintVer}|${blk ? blk.size : 0}|${wall.lifted || ""}`;
       for (const b of inView) {
+        if (cacheS) {
+          const key = `${b}:${cacheS}`;
+          let e = wall.bayCache.get(key);
+          if (!e || e.lay !== L || e.sig !== sig) {
+            const { x: bx, y: by } = L.origin(b);
+            const X = bx - 30, Y = by + WU.sign - 60, Wd = WU.bayW + 60, Hd = WU.shelves * WU.shelfH + 70;
+            const cv = (e && e.cv) || document.createElement("canvas");
+            cv.width = Math.ceil(Wd * cacheS); cv.height = Math.ceil(Hd * cacheS);
+            const g = cv.getContext("2d");
+            g.setTransform(cacheS, 0, 0, cacheS, -X * cacheS, -Y * cacheS);
+            for (let s = 0; s < WU.shelves; s++) {
+              for (const i of L.chunks.get(`${b}:${s}`) || []) {
+                const f = L.films[i];
+                if (f.slug === wall.lifted || (blk && blk.has(f.slug))) continue;
+                if (f.lean) { g.save(); g.translate(f.x, f.y); g.rotate(-f.lean); g.translate(-f.x, -f.y); }
+                const top = f.y - f.h, body = secColor(L.secs[f.sec], f);
+                if (isCan(f.year)) { g.fillStyle = "#8f979f"; g.fillRect(f.x, top, f.w, f.h); g.fillStyle = body; g.fillRect(f.x + 2, top + PAPER_IN, f.w - 4, f.h - 2 * PAPER_IN); }
+                else { g.fillStyle = body; g.fillRect(f.x, top, f.w, f.h); }
+                if (f.lean) g.restore();
+              }
+            }
+            e = { cv, lay: L, sig, X, Y, Wd, Hd };
+          }
+          wall.bayCache.delete(key);
+          wall.bayCache.set(key, e); // most recently used last
+          if (wall.bayCache.size > 500) wall.bayCache.delete(wall.bayCache.keys().next().value);
+          ctx.drawImage(e.cv, e.X, e.Y, e.Wd, e.Hd);
+          continue;
+        }
         for (let s = 0; s < WU.shelves; s++) {
           const list = L.chunks.get(`${b}:${s}`);
           if (!list) continue;
@@ -2939,7 +3423,7 @@
     // At the head of each aisle (row of bays): a big sign naming its
     // categories, readable from all the way back.
     for (const a of L.aisles || []) {
-      const ax = -AISLE_W - AISLE_GAP / 2, ay = a.y + WU.sign - 10, ah = WU.shelves * WU.shelfH + 10;
+      const ax = (a.x || 0) - AISLE_W - AISLE_GAP / 2, ay = a.y + WU.sign - 10, ah = WU.shelves * WU.shelfH + 10;
       if (ax + AISLE_W < x0 || ax > x1 || ay > y1 || ay + ah < y0) continue;
       ctx.fillStyle = "rgba(0,0,0,0.5)";
       ctx.fillRect(ax + 14, ay + 18, AISLE_W, ah);
@@ -3043,6 +3527,7 @@
       ctx.restore();
     }
 
+    if (z >= FAR) colorView(inView);
     // Too slow on this machine? Drop the extras (no sheen, no titles, 1x pixels).
     const ms = performance.now() - t0;
     wall.slow = ms > 28 ? wall.slow + 1 : Math.max(0, wall.slow - 1);
@@ -3052,9 +3537,21 @@
 
   function bayAt(p) {
     const L = wall.lay;
-    const col = Math.floor(p.x / (WU.bayW + WU.gap)), row = Math.floor(p.y / ROW_H);
+    let row, rx = 0, ry;
+    if (L.rowPos) {
+      row = L.rowPos.findIndex((P) => P && p.y >= P.y && p.y < P.y + ROW_H && p.x >= P.x - WU.gap && p.x < P.x + L.k * (WU.bayW + WU.gap));
+      if (row < 0) {
+        // past the last row (edit mode's spare bays)
+        const P = L.rowPos.extra(L.rowPos.length);
+        row = p.x >= P.x && p.x < P.x + L.k * (WU.bayW + WU.gap) && p.y >= P.y ? L.rowPos.length + Math.floor((p.y - P.y) / ROW_H) : -1;
+      }
+      if (row < 0) return { b: -1, s: -1 };
+      const P = L.rowPos[row] || L.rowPos.extra(row);
+      rx = P.x; ry = P.y;
+    } else { row = Math.floor(p.y / ROW_H); ry = row * ROW_H; }
+    const col = Math.floor((p.x - rx) / (WU.bayW + WU.gap));
     if (col < 0 || col >= L.k || row < 0) return { b: -1, s: -1 };
-    return { b: row * L.k + col, s: Math.floor((p.y - row * ROW_H - WU.sign) / WU.shelfH) };
+    return { b: row * L.k + col, s: Math.floor((p.y - ry - WU.sign) / WU.shelfH) };
   }
 
   function filmAt(sx, sy) {
@@ -3561,7 +4058,7 @@
       `<h6>Your store</h6>` +
       `<p class="lbs-menu-note">Your shelves, picks and inventory live in this browser. Back them up before clearing your browser's data.</p>` +
       `<div class="lbs-menu-btns"><button type="button" data-act="mine-save">Back up</button><label class="lbs-restore">Restore<input type="file" accept="application/json,.json" class="lbs-restore-file" hidden></label></div>` +
-      (DEV_TOOLS ? `<h6>Developer</h6><div class="lbs-menu-btns"><button type="button" data-act="logo-build">${logoJob.running ? `Logos ${fmt(logoJob.done)} / ${fmt(logoJob.total)}` : "Logo builder…"}</button></div>` : "");
+      (DEV_TOOLS ? `<h6>Developer</h6><div class="lbs-menu-btns"><button type="button" data-act="logo-build">${logoJob.running ? `Logos ${fmt(logoJob.done)} / ${fmt(logoJob.total)}` : "Logo builder…"}</button><button type="button" data-act="cat-build">${catJob.running ? "Catalogue: running" : "Catalogue builder…"}</button></div>` : "");
   }
   // Formats: each on or off, each with the last year it covers. The last one
   // switched on covers everything after, so its cutoff is greyed out (as is
@@ -3586,6 +4083,7 @@
     all[k] = next;
     saveMine();
     fmtPlan = null;
+    paintVer++;
     canLabels.clear();
     const was = document.activeElement && document.activeElement.dataset && document.activeElement.dataset.fmtTo;
     refresh();
@@ -4848,6 +5346,18 @@
       return toast("Discarded your unpublished changes.");
     }
 
+    if (act === "cat-build") return openCatBuild();
+    if (act === "cat-close") { $(".lbs-catbuild", root).hidden = true; return; }
+    if (act === "cat-stop") { catJob.running = false; catJob.msg = "pausing after the requests in flight…"; return renderCatBuild(); }
+    if (act === "cat-start") { runCatJob(); return; }
+    if (act === "cat-save") return downloadCatalogue();
+    if (act === "cat-try") {
+      // Stock the store from the finished job, in this tab only (nothing published).
+      useCatalogue(JSON.parse(JSON.stringify(catalogueJSON())));
+      stock = stockFromCatalogue(); defaults = null; lib = null;
+      return render();
+    }
+    if (act === "cat-reset") { catJob.st = catBlank(); idbDel(CAT_KEY).catch(() => {}); return renderCatBuild(); }
     if (act === "logo-build") { const b = $(".lbs-logobuild", root); b.hidden = !b.hidden; return renderLogoBuild(); }
     if (act === "logo-close") { $(".lbs-logobuild", root).hidden = true; return; }
     if (act === "logo-stop") { logoJob.running = false; return renderLogoBuild(); }
