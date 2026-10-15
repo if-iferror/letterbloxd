@@ -2133,11 +2133,26 @@
   const LOGO_PICK_KEY = `${NS}:store:logo-picks:v1`;
   const SUGGEST_KEY = `${NS}:store:suggest:v1`;
   const TMDB_KEY = `${NS}:dev:tmdb`; // the developer's own key, this browser only
-  const LOGO_FILE = "https://raw.githubusercontent.com/if-iferror/letterbloxd/dev/data/horror-logos.json";
+  // Published indexes: the first Horror run, then the whole catalogue.
+  const LOGO_FILES = ["horror-logos.json", "logos.json"].map((f) => `https://raw.githubusercontent.com/if-iferror/letterbloxd/dev/data/${f}`);
+  const LOGO_DB_KEY = "logos:v1";
   const TMDB_IMG = "https://image.tmdb.org/t/p/";
   const LOGO_Z = 0.7; // logos appear from this zoom in
+  // Your own build, kept in IndexedDB (localStorage is too small for the
+  // whole catalogue). An older build in localStorage is moved over once.
   let logoIndex = readJSON(LOGO_KEY, null) || { v: 1, films: {} };
+  const logoReady = Promise.resolve().then(async () => { // (after the rest of this file has run)
+    try {
+      const saved = await idbGet(LOGO_DB_KEY);
+      if (saved && saved.films) logoIndex = { ...saved, films: { ...logoIndex.films, ...saved.films } };
+      if (localStorage.getItem(LOGO_KEY)) { await idbPut(LOGO_DB_KEY, logoIndex); localStorage.removeItem(LOGO_KEY); }
+    } catch {}
+    drawSoon();
+  });
   let logoShared = null; // the published index, once fetched
+  let logoSharedReady = Promise.resolve();
+  // A film the build has already looked at (here, or in a published index).
+  const logoKnown = (slug) => !!(logoIndex.films[slug] || (logoShared && logoShared[slug]));
   const logoPicks = readJSON(LOGO_PICK_KEY, {});
   const logoLoad = limiter(10);
   const logoJob = { running: false, done: 0, total: 0, found: 0, error: "" };
@@ -2164,12 +2179,13 @@
   }
 
   function loadSharedLogos() {
-    if (logoShared) return;
+    if (logoShared) return logoSharedReady;
     logoShared = {};
-    fetch(LOGO_FILE, { cache: "no-cache" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((j) => { if (j && j.films) { logoShared = j.films; drawSoon(); renderStagePath(); } })
-      .catch(() => {});
+    return (logoSharedReady = Promise.all(LOGO_FILES.map((u) => fetch(u, { cache: "no-cache" }).then((r) => (r.ok ? r.json() : null)).catch(() => null)))
+      .then((js) => {
+        const films = Object.assign({}, ...js.map((j) => (j && j.films) || {}));
+        if (Object.keys(films).length) { logoShared = films; drawSoon(); renderStagePath(); }
+      }));
   }
 
   // Linear-light luminance, for contrast against the spine.
@@ -2244,6 +2260,8 @@
     if (logoJob.running || !stock) return;
     logoJob.running = true;
     logoJob.error = "";
+    await logoReady;
+    await loadSharedLogos();
     const bearer = key.length > 40;
     const api = async (path, params, tries = 0) => {
       const u = new URL(`https://api.themoviedb.org/3/${path}`);
@@ -2277,12 +2295,12 @@
     }
 
     const lane = limiter(6);
-    const todo = stock.films.filter(([slug]) => !logoIndex.films[slug]);
+    const todo = stock.films.filter(([slug]) => !logoKnown(slug));
     logoJob.total = stock.films.length;
     logoJob.done = logoJob.total - todo.length;
-    logoJob.found = Object.values(logoIndex.films).filter((e) => e.length > 1).length;
+    logoJob.found = stock.films.filter(([slug]) => { const e = logoEntry(slug); return e && e.length > 1; }).length;
     let n = 0;
-    const save = () => { logoIndex.at = Date.now(); writeJSON(LOGO_KEY, logoIndex); };
+    const save = () => { logoIndex.at = Date.now(); idbPut(LOGO_DB_KEY, logoIndex).catch(() => {}); };
     try {
       await Promise.all(todo.map(([slug, name]) => lane(async () => {
         if (!logoJob.running) return;
@@ -2320,11 +2338,11 @@
     if (!box || box.hidden) return;
     const have = !!readJSON(TMDB_KEY, "");
     const pct = logoJob.done ? Math.round((logoJob.found / logoJob.done) * 100) : 0;
-    const counted = Object.keys(logoIndex.films).length;
-    if (!logoJob.running) logoJob.found = Object.values(logoIndex.films).filter((e) => e.length > 1).length;
+    const counted = stock ? stock.films.filter(([slug]) => logoKnown(slug)).length : 0;
+    if (!logoJob.running && stock) logoJob.found = stock.films.filter(([slug]) => { const e = logoEntry(slug); return e && e.length > 1; }).length;
     box.innerHTML =
       `<b>Title logos from TMDB</b>` +
-      `<p>Matches each Horror film to TMDB and keeps its first logo. Your TMDB key stays in this browser; it's only used for this.</p>` +
+      `<p>Matches every film in the store to TMDB and keeps its logos. Takes a few hours for the whole catalogue; it can be paused and continued. Your TMDB key stays in this browser; it's only used for this.</p>` +
       (have ? "" : `<label>TMDB API key or read token<input type="password" class="lbs-tmdb-key" autocomplete="off" spellcheck="false"></label>`) +
       (logoJob.error ? `<p class="-err">${esc(logoJob.error)}</p>` : "") +
       `<p>${fmt(logoJob.done || counted)} / ${fmt(logoJob.total || (stock ? stock.films.length : 0))} checked · ${fmt(logoJob.found)} with a logo${logoJob.done ? ` (${pct}%)` : ""}</p>` +
@@ -2336,11 +2354,12 @@
   }
 
   function downloadLogos() {
-    const films = Object.fromEntries(Object.entries(logoIndex.films).filter(([, e]) => e[0]).sort());
+    // Everything known: the published indexes plus this browser's build.
+    const films = Object.fromEntries(Object.entries({ ...(logoShared || {}), ...logoIndex.films }).filter(([, e]) => e[0]).sort());
     const blob = new Blob([JSON.stringify({ v: 1, at: new Date().toISOString().slice(0, 10), source: "TMDB", films })], { type: "application/json" });
     const a = document.createElement("a");
     a.href = URL.createObjectURL(blob);
-    a.download = "horror-logos.json";
+    a.download = "logos.json";
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   }
