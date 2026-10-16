@@ -260,7 +260,29 @@
   let mine = readJSON(MINE_KEY, null) || {};
   mine = { place: {}, cats: {}, subs: {}, recent: [], view: "community", sort: {}, held: [], colors: {}, wash: {}, ...mine };
   let paintVer = 0; // bumps when anything that colours the far-away wall changes
-  const saveMine = () => { paintVer++; return writeJSON(MINE_KEY, mine); };
+  const saveMine = () => { paintVer++; return persist(MINE_KEY, mine); };
+
+  /* Your shelves and the house plan are saved to IndexedDB as well as
+   * localStorage. localStorage holds about 5 MB, and a few thousand moves
+   * fill it; when it's full, it keeps a marker and IndexedDB keeps the rest.
+   * The newer copy wins when the store opens. */
+  const bigTimers = {};
+  function persist(key, obj) {
+    if (obj) obj._at = Date.now();
+    let ok = true;
+    if (!obj) { try { localStorage.removeItem(key); } catch {} }
+    else if (!writeJSON(key, obj)) { ok = false; try { localStorage.setItem(key, JSON.stringify({ _idb: true, _at: obj._at })); } catch {} }
+    clearTimeout(bigTimers[key]);
+    bigTimers[key] = setTimeout(() => idbPut(`ls:${key}`, obj || null).catch(() => {}), ok ? 600 : 0);
+    return true;
+  }
+  async function restoreBig(key, cur) {
+    try {
+      const saved = await idbGet(`ls:${key}`);
+      if (saved && (saved._at || 0) > ((cur && cur._at) || 0)) return saved;
+    } catch {}
+    return cur && cur._idb ? null : cur;
+  }
 
   /* What everyone has changed (the store's shared edits), folded by the
    * backend into one small state file and fetched once per visit. Layers:
@@ -308,6 +330,14 @@
   const fullHouse = (x) => ({ ...blankHouse(), ...(x || {}) });
   let houseShared = null;
   let houseLocal = readJSON(HOUSE_KEY, null);
+  // (after the rest of this file has run: the IndexedDB helpers are further down)
+  const bigReady = Promise.resolve().then(async () => {
+    const m = await restoreBig(MINE_KEY, mine);
+    if (m && m !== mine) mine = { place: {}, cats: {}, subs: {}, recent: [], view: "community", sort: {}, held: [], colors: {}, wash: {}, ...m };
+    delete mine._idb;
+    if (mine.lv) Object.assign(lv, { mode: mine.lv.mode || lv.mode, f: mine.lv.f || {}, y0: mine.lv.y0 || "", y1: mine.lv.y1 || "", sort: mine.lv.sort || "pop", showFilters: !mine.lv.hideFilters });
+    houseLocal = await restoreBig(HOUSE_KEY, houseLocal);
+  });
   const house = () => fullHouse(houseLocal || houseShared);
   // grab: "one" moves a single piece; "group" moves every piece of that section, keeping its shape.
   const edit = { on: false, sel: null, renaming: null, deleting: null, undo: [], grab: "one" };
@@ -338,18 +368,17 @@
   // Every edit goes through here: snapshot for undo, apply, save, redraw.
   function houseEdit(label, fn) {
     edit.undo.push(JSON.stringify(houseLocal));
-    if (edit.undo.length > 60) edit.undo.shift();
+    if (edit.undo.length > 30) edit.undo.shift();
     houseLocal = fullHouse(JSON.parse(JSON.stringify(house())));
     fn(houseLocal);
-    writeJSON(HOUSE_KEY, houseLocal);
+    persist(HOUSE_KEY, houseLocal);
     refresh();
     if (label) toast(label, undoHouse);
   }
   function undoHouse() {
     if (!edit.undo.length) return;
     houseLocal = JSON.parse(edit.undo.pop());
-    if (houseLocal) writeJSON(HOUSE_KEY, houseLocal);
-    else try { localStorage.removeItem(HOUSE_KEY); } catch {}
+    persist(HOUSE_KEY, houseLocal);
     refresh();
   }
 
@@ -376,7 +405,7 @@
       let i = -1;
       lists.set(key, { name, set: new Set(gaps.map((d) => (i += d))) });
     }
-    catalogue = { at: j.at, films: j.films, lists };
+    catalogue = { at: j.at, films: j.films, lists, info: Array.isArray(j.info) ? j.info : null, people: j.people || [], langNames: j.langNames || {} };
     catState = "ready";
     return true;
   }
@@ -702,7 +731,7 @@
 
   function posterHTML([slug, name], tag) {
     return (
-      `<li class="lbs-item${posterCache.has(slug) ? " lbs-loaded" : ""}" data-slug="${esc(slug)}" data-name="${esc(name)}" draggable="true">` +
+      `<li class="lbs-item${posterCache.has(slug) ? " lbs-loaded" : ""}" data-slug="${esc(slug)}" data-name="${esc(name)}" data-dnd="film">` +
       `<div class="poster film-poster lbs-poster">` +
       `<img class="image" ${imgAttrs(slug)} width="150" height="225" alt="${esc(name)}" decoding="async" draggable="false">` +
       `<a class="frame" href="/film/${esc(slug)}/" title="${esc(name)}" draggable="false"><span class="frame-title">${esc(name)}</span><span class="overlay"></span></a>` +
@@ -738,22 +767,28 @@
       root.addEventListener("click", onClick);
       root.addEventListener("input", onInput);
       root.addEventListener("keydown", onFieldKey);
-      root.addEventListener("dragstart", onDragStart);
-      root.addEventListener("dragend", onDragEnd);
-      root.addEventListener("dragover", onDragOver);
-      root.addEventListener("dragleave", onDragLeave);
-      root.addEventListener("drop", onDrop);
+      // No native drag and drop anywhere in the store. A native drag on
+      // macOS can get stuck (when the thing being dragged is redrawn mid-drag)
+      // and leave the whole computer ignoring clicks. Every drag here is our
+      // own, done with the mouse (see mouseDndDown below).
+      root.addEventListener("dragstart", (e) => e.preventDefault(), true);
+      root.addEventListener("mousedown", mouseDndDown);
       root.addEventListener("contextmenu", onContextMenu);
       root.addEventListener("mousedown", (e) => {
         maybeCollapsePocket(e);
         if (e.button !== 0) return;
         const pc = edit.on && e.target.closest(".lbs-tray .lbs-piece");
         if (pc) { e.preventDefault(); return grabDown({ kind: "piece", cid: pc.dataset.cid, from: "tray" }, e); }
+        const lr = e.target.closest(".lbs-lv-row");
+        if (lr && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey) {
+          const many = lv.sel.has(lr.dataset.slug) && lv.sel.size > 1;
+          return grabDown({ kind: "dvd", slug: lr.dataset.slug, name: lr.dataset.name, films: many ? lvFilms() : null, from: "lib" }, e);
+        }
         const dv = e.target.closest(".lbs-tray .lbs-dvd, .lbs-pk, .lbs-sp-chip, .lbs-lib-film");
         if (dv && !e.target.closest("button")) { e.preventDefault(); grabDown({ kind: "dvd", slug: dv.dataset.slug, name: dv.dataset.name, from: dv.classList.contains("lbs-lib-film") ? "lib" : dv.classList.contains("lbs-sp-chip") ? "card" : "tray" }, e); }
       });
       root.addEventListener("dblclick", (e) => {
-        const lf = e.target.closest(".lbs-lib-film");
+        const lf = e.target.closest(".lbs-lib-film, .lbs-lv-row");
         if (lf) return openFilm(lf.dataset.slug, lf.dataset.name);
         const row = edit.on && e.target.closest(".lbs-folder");
         if (!row || isFixed(row.dataset.id)) return;
@@ -784,7 +819,7 @@
 
   function render() {
     if (catState === "idle") {
-      loadCatalogue().then(() => {
+      Promise.all([loadCatalogue(), bigReady]).then(() => {
         if (catalogue) { stock = stockFromCatalogue(); defaults = null; lib = null; }
         if (root && !root.hidden) render();
       });
@@ -796,7 +831,7 @@
       `<header class="lbs-top">` +
       (DESK_ONLY ? "" : `<div class="lbs-brand">LetterBloxd <span>video store</span></div>`) +
       (DESK_ONLY
-        ? `<div class="lbs-logo">${LOGO_SVG}</div><button type="button" class="lbs-lib-btn" data-act="lib" aria-label="Library: every folder and film">${ICON_FOLDER}<span>Library</span></button>`
+        ? `<div class="lbs-logo">${LOGO_SVG}</div><button type="button" class="lbs-lib-btn -inhead" data-act="lib" aria-label="Library: every folder and film">${ICON_FOLDER}<span>Library</span></button>`
         : `<div class="lbs-wing-sign"><b>Horror</b><span>wing</span></div>`) +
       `<nav class="lbs-collections" aria-label="Collections"${DESK_ONLY ? " hidden" : ""}>` +
       COLLECTIONS.map((c) =>
@@ -1074,13 +1109,6 @@
       `<div class="lbs-zoom"><button type="button" data-act="zoom-out" aria-label="Zoom out">−</button><button type="button" data-act="zoom-in" aria-label="Zoom in">+</button></div></div>` +
       `<canvas class="lbs-canvas" draggable="false" aria-label="Horror wall. Scroll to move, pinch or Ctrl-scroll to zoom, drag a spine to a folder."></canvas>` +
       `<div class="lbs-tip" hidden></div><div class="lbs-sortpick" hidden></div>` +
-      `<div class="lbs-find">` +
-      `<div class="lbs-find-box">${ICON_SEARCH}<input type="search" class="lbs-find-q" placeholder="Find a movie in the store" autocomplete="off" spellcheck="false">` +
-      `<button type="button" class="lbs-find-type" data-act="find-type" aria-haspopup="menu" aria-label="Search for">Movie<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div>` +
-      `<button type="button" class="lbs-gear" data-act="settings" aria-haspopup="menu" aria-label="Settings" title="Settings">${ICON_GEAR}</button>` +
-      `<ul class="lbs-find-types lbs-menu" role="menu" hidden><li><button type="button" data-act="find-as" data-v="film" class="-on">Movie</button></li><li><button type="button" disabled>Actor <em>soon</em></button></li><li><button type="button" disabled>Director <em>soon</em></button></li><li><button type="button" disabled>Crew <em>soon</em></button></li></ul>` +
-      `<div class="lbs-settings lbs-menu" role="menu" hidden></div>` +
-      `<ul class="lbs-find-list" hidden></ul><div class="lbs-card" hidden></div></div>` +
       `<div class="lbs-logopick" hidden></div><div class="lbs-logobuild" hidden></div><div class="lbs-logobuild lbs-catbuild" hidden></div>` +
       `<p class="lbs-credit" hidden>Title logos from <a href="https://www.themoviedb.org/" target="_blank" rel="noopener">TMDB</a>. This product uses the TMDB API but is not endorsed or certified by TMDB.</p>` +
       `</div>` +
@@ -1091,6 +1119,15 @@
       `<div class="lbs-tray" data-drop="@inv"></div>` +
       `</div>` +
       `</section>` +
+      // The find bar stays put, above the Library, whether it's open or not.
+      `<div class="lbs-find">` +
+      `<button type="button" class="lbs-lib-btn" data-act="lib" aria-label="Library: every folder and film">${ICON_FOLDER}<span>Library</span></button>` +
+      `<div class="lbs-find-box">${ICON_SEARCH}<input type="search" class="lbs-find-q" placeholder="Find a movie in the store" autocomplete="off" spellcheck="false">` +
+      `<button type="button" class="lbs-find-type" data-act="find-type" aria-haspopup="menu" aria-label="Search for">Movie<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div>` +
+      `<button type="button" class="lbs-gear" data-act="settings" aria-haspopup="menu" aria-label="Settings" title="Settings">${ICON_GEAR}</button>` +
+      `<ul class="lbs-find-types lbs-menu" role="menu" hidden><li><button type="button" data-act="find-as" data-v="film" class="-on">Movie</button></li><li><button type="button" disabled>Actor <em>soon</em></button></li><li><button type="button" disabled>Director <em>soon</em></button></li><li><button type="button" disabled>Crew <em>soon</em></button></li></ul>` +
+      `<div class="lbs-settings lbs-menu" role="menu" hidden></div>` +
+      `<ul class="lbs-find-list" hidden></ul><div class="lbs-card" hidden></div></div>` +
       `<div class="lbs-pocket" hidden></div>` +
       `<div class="lbs-filmview" hidden></div>` +
       `<aside class="lbs-library" aria-label="Library" hidden></aside>` +
@@ -1203,7 +1240,7 @@
           const loc = at ? pathOf(at).join(" › ") : "Not in the store yet";
           const own = mine.place[slug] ? `<em title="You filed this one">you</em>` : "";
           return (
-            `<li class="lbs-row${desk.selected.has(slug) ? " -sel" : ""}${posterCache.has(slug) ? " lbs-loaded" : ""}" data-slug="${esc(slug)}" data-name="${esc(name)}" draggable="true" role="option" aria-selected="${desk.selected.has(slug)}">` +
+            `<li class="lbs-row${desk.selected.has(slug) ? " -sel" : ""}${posterCache.has(slug) ? " lbs-loaded" : ""}" data-slug="${esc(slug)}" data-name="${esc(name)}" data-dnd="film" role="option" aria-selected="${desk.selected.has(slug)}">` +
             `<img ${imgAttrs(slug)} alt="" width="30" height="45" draggable="false">` +
             `<div class="lbs-row-text"><b>${esc(titleOf(name))}</b> <span>${yearOf(name) || ""}</span><small>${own}${esc(loc)}</small></div>` +
             `<a class="lbs-row-open" href="/film/${esc(slug)}/" title="Open on Letterboxd" draggable="false">↗</a>` +
@@ -1258,7 +1295,7 @@
     const own = o && o.own ? `<em class="lbs-proposed" title="Only you can see this until a moderator approves it">proposed</em>` : "";
     const move = desk.moving ? `<button type="button" class="lbs-move-here" data-act="move-here" data-id="${esc(id)}">Move here</button>` : "";
     return (
-      `<li class="lbs-folder${edit.on && edit.sel === id ? " -editsel" : ""}" data-act="open" data-id="${esc(id)}" data-drop="${esc(id)}"${edit.on && !lib.genres.has(id) ? ' draggable="true"' : ""}>` +
+      `<li class="lbs-folder${edit.on && edit.sel === id ? " -editsel" : ""}" data-act="open" data-id="${esc(id)}" data-drop="${esc(id)}"${edit.on && !lib.genres.has(id) ? ' data-dnd="folder"' : ""}>` +
       `${ICON_FOLDER}<span class="lbs-folder-name">${esc(nameOf(id))}</span>${own}<span class="lbs-n">${fmt(lib.count.get(id) || 0)}</span>${tools}${kids ? '<i class="lbs-chev" aria-hidden="true">›</i>' : ""}${move}</li>`
     );
   }
@@ -2447,7 +2484,9 @@
     return [...parse(html).querySelectorAll("[data-item-slug]")].map((el) => {
       const li = el.closest("li") || el;
       const r = li.querySelector("[data-average-rating]") || (li.dataset.averageRating ? li : null);
-      return { slug: el.dataset.itemSlug, name: el.dataset.itemFullDisplayName || el.dataset.itemName || el.dataset.itemSlug, rating: r ? Math.round(+r.dataset.averageRating * 100) || 0 : 0 };
+      let lid = "";
+      try { lid = JSON.parse(el.dataset.posteredIdentifier || "{}").lid || ""; } catch {}
+      return { slug: el.dataset.itemSlug, name: el.dataset.itemFullDisplayName || el.dataset.itemName || el.dataset.itemSlug, rating: r ? Math.round(+r.dataset.averageRating * 100) || 0 : 0, lid };
     });
   }
   async function catWatches(slug) {
@@ -2575,6 +2614,44 @@
         st.phase = "done";
         await catSave();
       }
+
+      // 5 (optional, "Film details"). Each film's Letterboxd ID (from the
+      //    popularity pages again), then its details from Letterboxd's own
+      //    API: runtime, primary and original language, directors.
+      if (st.phase === "lids") {
+        const index = new Map(st.films.map((f, i) => [f[0], i]));
+        st.info = st.info || new Array(st.films.length).fill(null);
+        st.lidPage = st.lidPage || 0;
+        while (st.lidPage < st.cutPage) {
+          const from = st.lidPage + 1, to = Math.min(st.cutPage, st.lidPage + 20);
+          const pages = await Promise.all(Array.from({ length: to - from + 1 }, (_, i) => catPage("", from + i)));
+          for (const f of pages.flat()) { const i = index.get(f.slug); if (i != null && f.lid && !st.info[i]) st.info[i] = [f.lid]; }
+          st.lidPage = to;
+          await catSave();
+          tick();
+        }
+        st.phase = "details";
+        await catSave();
+      }
+      if (st.phase === "details") {
+        st.langNames = st.langNames || {};
+        const todo = [];
+        st.info.forEach((x, i) => { if (x && x.length === 1) todo.push(i); });
+        let n = 0;
+        await Promise.all(todo.map((i) => (async () => {
+          const lid = st.info[i][0];
+          const txt = await lbGet(`/api/v0/production/${encodeURIComponent(lid)}`);
+          let j = null;
+          try { j = txt ? JSON.parse(txt) : null; } catch {}
+          const pl = j && j.primaryLanguage, ol = j && j.originalLanguage;
+          if (pl && pl.code) st.langNames[pl.code] = pl.name;
+          if (ol && ol.code) st.langNames[ol.code] = ol.name;
+          st.info[i] = [lid, (j && j.runTime) || 0, (pl && pl.code) || "", (ol && ol.code) || "", ((j && j.directors) || []).map((d) => d.name).filter(Boolean), j && j.type && j.type !== "Film" ? j.type : 0];
+          if (++n % 200 === 0) { await catSave(); tick(); }
+        })()));
+        st.phase = "done";
+        await catSave();
+      }
     } catch (err) {
       if (err.message !== "paused") catJob.error = err.message;
       if (catJob.st) await catSave().catch(() => {});
@@ -2593,7 +2670,9 @@
     if (st.phase === "films") return `Reading films: page ${fmt(st.page)} / ${fmt(st.cutPage)} · ${fmt(st.films.length)} films`;
     if (st.phase === "themes") return `Finding themes: ${fmt(st.sampled)} film pages read · ${fmt(Object.keys(st.lists).filter((k) => /theme\//.test(k)).length)} themes so far`;
     if (st.phase === "lists") return `Reading lists: ${fmt(done)} / ${fmt(lists.length)}`;
-    return `Done: ${fmt(st.films.length)} films · ${fmt(lists.length)} lists`;
+    if (st.phase === "lids") return `Film details: matching IDs, page ${fmt(st.lidPage || 0)} / ${fmt(st.cutPage)}`;
+    if (st.phase === "details") { const got = (st.info || []).filter((x) => x && x.length > 1).length; return `Film details: ${fmt(got)} / ${fmt((st.info || []).filter(Boolean).length)} read`; }
+    return `Done: ${fmt(st.films.length)} films · ${fmt(lists.length)} lists${st.info ? ` · details for ${fmt(st.info.filter((x) => x && x.length > 1).length)}` : ""}`;
   }
 
   function renderCatBuild() {
@@ -2610,7 +2689,7 @@
       (catJob.error ? `<p class="-err">${esc(catJob.error)}</p>` : "") +
       `<div class="lbs-logobuild-row">` +
       (catJob.running ? `<button type="button" data-act="cat-stop">Pause</button>` : st && st.phase === "done" && neededLists().every((k) => st.lists[k]) ? "" : `<button type="button" data-act="cat-start" class="-go">${st && (st.films.length || Object.keys(st.probes).length) ? "Continue" : "Start"}</button>`) +
-      (st && st.phase === "done" ? `<button type="button" data-act="cat-save" class="-go">Download catalogue</button><button type="button" data-act="cat-try">Try it here</button>` : "") +
+      (st && st.phase === "done" ? `<button type="button" data-act="cat-save" class="-go">Download catalogue</button><button type="button" data-act="cat-try">Try it here</button>` + (catJob.running ? "" : `<button type="button" data-act="cat-details" title="Runtime, primary language and directors for every film (about an hour)">${st.info ? "Re-read film details" : "Read film details"}</button>`) : "") +
       (!catJob.running && st ? `<button type="button" data-act="cat-reset">Start over</button>` : "") +
       `<button type="button" data-act="cat-close">Close</button></div>`;
   }
@@ -2625,7 +2704,16 @@
       let prev = -1;
       lists[k] = [l.name, l.ids.map((i) => { const d = i - prev; prev = i; return d; })];
     }
-    return { v: 1, at: new Date().toISOString().slice(0, 10), min: st.min, cutPage: st.cutPage, films: st.films, lists };
+    const out = { v: 1, at: new Date().toISOString().slice(0, 10), min: st.min, cutPage: st.cutPage, films: st.films, lists };
+    if (st.info && st.info.some((x) => x && x.length > 1)) {
+      // [lid, runtime, primary language, original language, [director index], type]
+      const people = [], at = new Map();
+      const pid = (n) => { if (!at.has(n)) { at.set(n, people.length); people.push(n); } return at.get(n); };
+      out.info = st.info.map((x) => (x && x.length > 1 ? [x[0], x[1], x[2], x[3], (x[4] || []).map(pid), x[5] || 0] : x ? [x[0]] : 0));
+      out.people = people;
+      out.langNames = st.langNames || {};
+    }
+    return out;
   }
   function downloadCatalogue() {
     const a = document.createElement("a");
@@ -3679,17 +3767,15 @@
         const p = toWall(e.offsetX, e.offsetY);
         const { b, s: sh } = bayAt(p);
         const run = wall.lay.runs.find((r) => r.bay === b && r.shelf === sh && p.x >= r.x0 - 4 && p.x <= r.x1 + 4);
-        if (run) { c.draggable = false; e.preventDefault(); wall.grabAt = p.x - run.x0; return grabDown({ kind: "piece", ref: run.ref, from: "wall" }, e); }
+        if (run) { e.preventDefault(); wall.grabAt = p.x - run.x0; return grabDown({ kind: "piece", ref: run.ref, from: "wall" }, e); }
       }
       const i = filmAt(e.offsetX, e.offsetY);
       if (e.button === 0 && i != null) {
         // Pick the box up (our own drag, not the browser's, which drags the whole picture).
         const f = wall.lay.films[i];
-        c.draggable = false;
         e.preventDefault();
         return grabDown({ kind: "dvd", slug: f.slug, name: f.name, from: "wall" }, e);
       }
-      c.draggable = i != null; // on a spine: pick it up; elsewhere: pan
       if (i != null) return;
       pan = { x: e.clientX, y: e.clientY, moved: 0 };
     });
@@ -3740,9 +3826,7 @@
       e.preventDefault();
       showTip(null);
       const f = wall.lay.films[i];
-      openFilm(f.slug, f.name);
-      ui.pane = "edit";
-      renderFilm();
+      openFilmMenu(f.slug, f.name, e.clientX, e.clientY);
     });
     c.addEventListener("click", (e) => {
       if (wall.dragged) { wall.dragged = false; return; }
@@ -3907,13 +3991,13 @@
       if (!list) allLogos(slug).then((l) => { ui.logos = { slug, list: l }; if (ui.film && ui.film.slug === slug && ui.pane === "edit") renderFilm(); });
       pane =
         `<div class="lbs-fpane"><b>Edit this box</b>` +
-        `<label class="lbs-fcolor">Case colour <input type="color" class="lbs-f-color" value="#${own ? own.slice(0, 6) : "2c3440"}" data-slug="${esc(slug)}">` +
+        `<label class="lbs-fcolor">Case colour ${swatchHTML("lbs-f-color", `#${own ? own.slice(0, 6) : "2c3440"}`, `data-slug="${esc(slug)}"`)}` +
         (mine.colors[slug] ? `<button type="button" data-act="f-color-reset" data-slug="${esc(slug)}">Use the poster's colour</button>` : "") + `</label>` +
         `<div class="lbs-flogos">` +
         (list ? list.map((pth, n) => `<button type="button" data-act="logo-pick" data-slug="${esc(slug)}" data-path="${esc(pth)}" class="${cur === pth ? "-on" : ""}"><img src="${TMDB_IMG}w185/${esc(pth)}" alt="Logo ${n + 1}" loading="lazy"></button>`).join("") : `<p class="lbs-fwait">Fetching every logo from TMDB…</p>`) +
         `<button type="button" data-act="logo-pick" data-slug="${esc(slug)}" data-path="-1" class="-plain${cur === null ? " -on" : ""}">Plain title</button>` +
         `</div>` +
-        `<label class="lbs-fwash"><input type="checkbox" class="lbs-f-wash" data-slug="${esc(slug)}"${mine.wash && mine.wash[slug] ? " checked" : ""}> Logo colour wash <input type="color" class="lbs-f-washc" data-slug="${esc(slug)}" value="${esc((mine.wash && mine.wash[slug]) || "#ffffff")}"${mine.wash && mine.wash[slug] ? "" : " disabled"}></label>` +
+        `<label class="lbs-fwash"><input type="checkbox" class="lbs-f-wash" data-slug="${esc(slug)}"${mine.wash && mine.wash[slug] ? " checked" : ""}> Logo colour wash ${swatchHTML("lbs-f-washc", (mine.wash && mine.wash[slug]) || "#ffffff", `data-slug="${esc(slug)}"`, !(mine.wash && mine.wash[slug]))}</label>` +
         (e && e[0] ? `<a class="lbs-fmore" href="https://www.themoviedb.org/movie/${e[0]}/images/logos" target="_blank" rel="noopener">Upload more on TMDB ↗</a>` : "") +
         `</div>`;
     }
@@ -4200,6 +4284,7 @@
   }
   // Open the Library on a film: its folder open, the film highlighted.
   function openLibraryAt(slug, name) {
+    lv.mode = "folders";
     const p = partsOf(lib.place.get(slug));
     libUI.path = [p.genre, p.cat, p.sub, p.niche].filter(Boolean);
     if (!libUI.path.length) libUI.path = [STOCKED];
@@ -4212,9 +4297,11 @@
     const box = root && $(".lbs-library", root);
     if (!box || !lib) return;
     root.classList.toggle("lbs-lib-open", libUI.open);
-    $(".lbs-lib-btn", root)?.classList.toggle("-on", libUI.open);
+    root.querySelectorAll(".lbs-lib-btn").forEach((b) => b.classList.toggle("-on", libUI.open));
     box.hidden = !libUI.open;
     if (!libUI.open) return;
+    if (lv.mode === "list") return renderListView(box);
+    box.dataset.mode = "folders";
     libUI.path = libUI.path.filter((id) => lib.genres.has(id) || lib.cats.has(id) || lib.subs.has(id));
     const path = libUI.path;
     const right = path.length ? path[path.length - 1] : null;
@@ -4254,7 +4341,7 @@
     const canMove = sel && target && target !== selAt;
     box.innerHTML =
       `<div class="lbs-lib-head">` +
-      `<button type="button" class="lbs-lib-up" data-act="lib-up" aria-label="Up a level" title="Up a level"${path.length ? "" : " disabled"}>${ICON_LEFT}</button>` +
+      `<button type="button" class="lbs-lib-up" data-act="lib-up" aria-label="Up a level" title="Up a level"${path.length ? "" : " disabled"}>${ICON_LEFT}</button>` + libModeHTML() +
       `<div class="lbs-lib-crumbs"><button type="button" data-act="lib-root">Library</button>${path.map((id, i) => `<i>›</i><button type="button" data-act="lib-to" data-i="${i}" data-drop="${esc(id)}" class="lbs-crumb">${esc(nameOf(id))}</button>`).join("")}</div>` +
       `<button type="button" class="lbs-lib-x" data-act="lib" aria-label="Close the Library">${ICON_CLOSE}</button></div>` +
       `<div class="lbs-lib-cols">${column(left, "left")}${path.length ? column(right, "right") : `<div class="lbs-lib-col -right"><p class="lbs-lib-hint">Pick a genre</p></div>`}</div>` +
@@ -4287,6 +4374,401 @@
     const inp = $(".lbs-lib-new-name", box);
     if (inp) inp.focus();
   }
+  /* ---------------- the Library's list view ----------------
+   * Every film in the store in one list, with the folder it's in on the
+   * right. Filters narrow it: each chip cycles include → exclude → off.
+   * Inside a group, included values are "any of these"; groups combine with
+   * "and"; excluded values are always out. Select films one by one or en
+   * masse (bubbles; Shift/Cmd/Option-click; Shift-arrows) and move them
+   * all at once. */
+  const LV_ROW = 34;
+  const lv = {
+    mode: (mine.lv && mine.lv.mode) || "folders",
+    f: (mine.lv && mine.lv.f) || {}, // group -> { value: 1 | -1 }
+    y0: (mine.lv && mine.lv.y0) || "", y1: (mine.lv && mine.lv.y1) || "",
+    sort: (mine.lv && mine.lv.sort) || "pop",
+    q: "", showFilters: !(mine.lv && mine.lv.hideFilters), more: {},
+    sel: new Set(), selecting: false, anchor: null, cursor: null,
+    base: null, baseKey: null, rows: [], pos: new Map(),
+  };
+  const saveLv = () => { mine.lv = { mode: lv.mode, f: lv.f, y0: lv.y0, y1: lv.y1, sort: lv.sort, hideFilters: !lv.showFilters }; saveMine(); };
+
+  // What the catalogue knows about each film: genres, countries, languages,
+  // and (once the builder has read film details) runtime and primary language.
+  let facts = null;
+  function buildFacts() {
+    if (!catalogue) return null;
+    if (facts && facts.cat === catalogue) return facts;
+    const C = catalogue, N = C.films.length;
+    const idx = new Map(C.films.map((f, i) => [f[0], i]));
+    const genre = new Uint32Array(N);
+    GENRES.forEach(([g], b) => { const l = C.lists.get(`genre/${g}`); if (l) for (const i of l.set) genre[i] |= 1 << b; });
+    const multi = (prefix) => {
+      const keys = [], names = [], per = new Array(N);
+      for (const [k, l] of C.lists) {
+        if (!k.startsWith(prefix)) continue;
+        const v = keys.length;
+        keys.push(k.slice(prefix.length)); names.push(l.name);
+        for (const i of l.set) (per[i] || (per[i] = [])).push(v);
+      }
+      return { keys, names, per };
+    };
+    const country = multi("country/");
+    let lang, primary = false;
+    if (C.info) {
+      // one primary language per film (what Letterboxd shows as "Primary Language")
+      const keys = [], names = [], per = new Array(N), at = new Map();
+      C.info.forEach((x, i) => {
+        const code = x && (x[2] || x[3]);
+        if (!code) return;
+        if (!at.has(code)) { at.set(code, keys.length); keys.push(code); names.push((C.langNames && C.langNames[code]) || code); }
+        per[i] = [at.get(code)];
+      });
+      lang = { keys, names, per };
+      primary = true;
+    } else lang = multi("language/");
+    facts = { cat: C, idx, genre, country, lang, primary, runtime: C.info ? (i) => (C.info[i] && C.info[i][1]) || 0 : null };
+    return facts;
+  }
+
+  const LV_TYPES = [["feature", "Feature"], ["short", "Short"], ["doc", "Documentary"], ["tv", "TV"], ["anim", "Animation"]];
+  const decadeOf = (y) => (y ? `${Math.floor(y / 10) * 10}s` : "");
+  // Each film once, with every value each filter group can see.
+  function lvBase() {
+    const H = house();
+    const heldList = edit.on ? H.held : mine.held || [];
+    const key = `${lib.place.size}|${heldList.length}|${edit.on}`;
+    if (lv.base && lv.baseLib === lib && lv.baseKey === key) return lv.base;
+    const F = buildFacts();
+    const held = new Set(heldList.map(([x]) => x));
+    const byHand = new Set([...Object.keys(H.place), ...(mine.view === "mine" && !edit.on ? Object.keys(mine.place) : [])]);
+    const gBit = Object.fromEntries(GENRES.map(([g], b) => [g, 1 << b]));
+    const out = [];
+    for (const [slug, sub] of lib.place) {
+      const p = partsOf(sub);
+      if (!p.genre) continue;
+      const name = lib.names.get(slug) || slug, year = yearOf(name);
+      const i = F ? F.idx.get(slug) : undefined;
+      const gm = i != null ? F.genre[i] : 0;
+      const genres = GENRES.filter(([g]) => gm & gBit[g]).map(([g]) => g);
+      const rt = i != null && F.runtime ? F.runtime(i) : 0;
+      const type = [];
+      if (rt) type.push(rt < 40 ? "short" : "feature");
+      if (gm & gBit.documentary) type.push("doc");
+      if ((gm & gBit["tv-movie"]) || (i != null && F.cat.info && F.cat.info[i] && F.cat.info[i][5])) type.push("tv");
+      if (gm & gBit.animation) type.push("anim");
+      const status = [byHand.has(slug) ? "sorted" : "auto"];
+      if (p.cat && /\/rest$/.test(p.cat)) status.push("uncat");
+      if (held.has(slug)) status.push("held");
+      out.push({
+        slug, name, year, i: i == null ? 1e9 : i, key: fileKey(name),
+        path: [p.genre, p.cat, p.sub, p.niche].filter(Boolean),
+        v: {
+          status, sgenre: [p.genre], scat: p.cat ? [p.cat] : [], ssub: [p.sub, p.niche].filter(Boolean),
+          genre: genres, type, decade: year ? [decadeOf(year)] : [],
+          lang: i != null && F.lang.per[i] ? F.lang.per[i].map(String) : [],
+          country: i != null && F.country.per[i] ? F.country.per[i].map(String) : [],
+        },
+      });
+    }
+    lv.base = out; lv.baseLib = lib; lv.baseKey = key;
+    return out;
+  }
+  // The groups shown: store location narrows level by level.
+  function lvGroups() {
+    const F = buildFacts();
+    const inc = (g) => Object.entries(lv.f[g] || {}).filter(([, s]) => s === 1).map(([v]) => v);
+    const gs = [
+      { id: "status", label: "Store", vals: [["sorted", "Hand-sorted"], ["auto", "Auto-placed"], ["uncat", "Uncategorized"], ["held", "In inventory"]] },
+      { id: "sgenre", label: "Store genre", vals: [...lib.genres.values()].filter((g) => (lib.count.get(g.id) || 0) > 0).map((g) => [g.id, g.name]) },
+    ];
+    const sg = inc("sgenre");
+    if (sg.length === 1) gs.push({ id: "scat", label: `${nameOf(sg[0])} categories`, vals: lib.genres.get(sg[0]).cats.map((c) => [c, nameOf(c)]) });
+    const sc = inc("scat");
+    if (sc.length === 1 && lib.cats.has(sc[0])) gs.push({ id: "ssub", label: `${nameOf(sc[0])} subcats`, vals: lib.cats.get(sc[0]).subs.flatMap((s) => [[s, nameOf(s)], ...(lib.subs.get(s).niches || []).map((n) => [n, `↳ ${nameOf(n)}`])]) });
+    gs.push({ id: "genre", label: "Genre", vals: GENRES.map(([g, n]) => [g, n]) });
+    gs.push({ id: "type", label: "Type", vals: LV_TYPES, note: F && F.runtime ? "" : "Feature and Short need film details (Catalogue builder › Film details)" });
+    const decs = [];
+    for (let d = 1890; d <= 2020; d += 10) decs.push([`${d}s`, `${d}s`]);
+    gs.push({ id: "decade", label: "Decade", vals: decs, years: true });
+    if (F) {
+      gs.push({ id: "lang", label: F.primary ? "Primary language" : "Language (spoken anywhere in the film)", vals: F.lang.keys.map((k, n) => [String(n), F.lang.names[n]]), many: true });
+      gs.push({ id: "country", label: "Country", vals: F.country.keys.map((k, n) => [String(n), F.country.names[n]]), many: true });
+    }
+    return gs;
+  }
+  // Run the filters: the rows, and each chip's count (with every other group applied).
+  function lvRun() {
+    const base = lvBase();
+    const groups = lvGroups();
+    const act = groups.map((g) => {
+      const st = lv.f[g.id] || {};
+      const I = new Set(), X = new Set();
+      for (const [v, s] of Object.entries(st)) (s === 1 ? I : s === -1 ? X : null)?.add(v);
+      return { g, I, X, on: I.size || X.size };
+    });
+    const y0 = +lv.y0 || 0, y1 = +lv.y1 || 0;
+    const q = fileKey(lv.q || "").trim();
+    const counts = groups.map(() => new Map());
+    const rows = [];
+    for (const r of base) {
+      if (q && !r.key.includes(q)) continue;
+      if ((y0 && (!r.year || r.year < y0)) || (y1 && (!r.year || r.year > y1))) continue;
+      let fails = 0, failAt = -1;
+      for (let k = 0; k < act.length; k++) {
+        const a = act[k];
+        if (!a.on) continue;
+        const vs = r.v[a.g.id] || [];
+        let ok = !a.I.size;
+        for (const v of vs) { if (a.X.has(v)) { ok = false; break; } if (a.I.has(v)) ok = true; }
+        if (a.X.size && ok) for (const v of vs) if (a.X.has(v)) { ok = false; break; }
+        if (!ok) { fails++; failAt = k; if (fails > 1) break; }
+      }
+      if (fails > 1) continue;
+      if (fails === 1) { const c = counts[failAt]; for (const v of r.v[act[failAt].g.id] || []) c.set(v, (c.get(v) || 0) + 1); continue; }
+      rows.push(r);
+      for (let k = 0; k < act.length; k++) { const c = counts[k]; for (const v of r.v[act[k].g.id] || []) c.set(v, (c.get(v) || 0) + 1); }
+    }
+    const cmp = lv.sort === "title" ? (a, b) => collator.compare(a.key, b.key) || a.year - b.year : lv.sort === "year" ? (a, b) => (b.year || 0) - (a.year || 0) || a.i - b.i : (a, b) => a.i - b.i;
+    rows.sort(cmp);
+    lv.rows = rows;
+    lv.pos = new Map(rows.map((r, n) => [r.slug, n]));
+    lv.groups = groups;
+    lv.counts = counts;
+  }
+
+  function lvChipsHTML() {
+    const g2 = lv.groups.map((g, k) => {
+      const st = lv.f[g.id] || {};
+      const c = lv.counts[k];
+      let vals = g.vals.slice();
+      if (g.many) vals.sort((a, b) => (c.get(b[0]) || 0) - (c.get(a[0]) || 0));
+      const ql = (lv.more[g.id + ":q"] || "").toLowerCase();
+      if (ql) vals = vals.filter(([, n]) => n.toLowerCase().includes(ql));
+      const shown = g.many && !lv.more[g.id] ? vals.filter(([v], n) => n < 16 || st[v]) : vals;
+      const chip = ([v, label]) => {
+        const s = st[v] || 0, n = c.get(v) || 0;
+        return `<button type="button" class="lbs-chip${s === 1 ? " -in" : s === -1 ? " -out" : ""}${n || s ? "" : " -zero"}" data-act="lv-chip" data-g="${g.id}" data-v="${esc(v)}" title="Click: only these · again: exclude · again: off">${s === -1 ? "−" : s === 1 ? "+" : ""}${esc(label)}<em>${fmt(n)}</em></button>`;
+      };
+      const on = Object.keys(st).length;
+      return `<div class="lbs-lv-group"><h6>${esc(g.label)}${on ? `<button type="button" data-act="lv-clear-g" data-g="${g.id}">clear</button>` : ""}</h6>` +
+        (g.note ? `<p class="lbs-lv-note">${esc(g.note)}</p>` : "") +
+        (g.many ? `<input type="search" class="lbs-lv-gq" data-g="${g.id}" placeholder="Find a ${g.id === "lang" ? "language" : "country"}" value="${esc(lv.more[g.id + ":q"] || "")}">` : "") +
+        `<div class="lbs-chips">${shown.map(chip).join("")}` +
+        (g.many && vals.length > shown.length ? `<button type="button" class="lbs-chip -more" data-act="lv-more" data-g="${g.id}">${fmt(vals.length - shown.length)} more…</button>` : "") +
+        (g.many && lv.more[g.id] ? `<button type="button" class="lbs-chip -more" data-act="lv-more" data-g="${g.id}">fewer</button>` : "") +
+        `</div>` +
+        (g.years ? `<div class="lbs-lv-years">Years <input type="number" class="lbs-lv-y" data-y="y0" min="1880" max="2100" placeholder="from" value="${esc(lv.y0)}"> – <input type="number" class="lbs-lv-y" data-y="y1" min="1880" max="2100" placeholder="to" value="${esc(lv.y1)}"></div>` : "") +
+        `</div>`;
+    });
+    return g2.join("");
+  }
+  const lvActive = () => Object.values(lv.f).reduce((n, st) => n + Object.keys(st).length, 0) + (lv.y0 ? 1 : 0) + (lv.y1 ? 1 : 0);
+
+  function renderListView(box) {
+    lvRun();
+    if (box.dataset.mode !== "list") {
+      box.dataset.mode = "list";
+      box.innerHTML =
+        `<div class="lbs-lib-head">${libModeHTML()}<span class="lbs-lv-headbtns"></span><span class="lbs-lib-gap"></span>` +
+        `<button type="button" class="lbs-lib-x" data-act="lib" aria-label="Close the Library">${ICON_CLOSE}</button></div>` +
+        `<div class="lbs-lv-tools"><label class="lbs-lv-search">${ICON_SEARCH}<input type="search" class="lbs-lv-q" placeholder="Filter by title" autocomplete="off" spellcheck="false"></label>` +
+        `<div class="lbs-seg lbs-lv-sort"></div><button type="button" class="lbs-lv-ftoggle" data-act="lv-filters"></button></div>` +
+        `<div class="lbs-lv-filters"></div>` +
+        `<div class="lbs-lv-meta"></div>` +
+        `<div class="lbs-lv-list" tabindex="0" role="listbox" aria-multiselectable="true"><div class="lbs-lv-spacer"></div></div>` +
+        `<div class="lbs-lib-foot"></div>`;
+      const list = $(".lbs-lv-list", box);
+      list.addEventListener("scroll", () => { if (!lv.raf) lv.raf = requestAnimationFrame(() => { lv.raf = 0; lvPaint(); }); });
+      list.addEventListener("keydown", lvKey);
+      $(".lbs-lv-q", box).value = lv.q;
+    }
+    lvChrome(box);
+    $(".lbs-lv-sort", box).innerHTML = [["pop", "Popular"], ["title", "Title"], ["year", "Year"]].map(([v, l]) => `<button type="button" data-act="lv-sort" data-v="${v}" class="${lv.sort === v ? "-on" : ""}">${l}</button>`).join("");
+    const nAct = lvActive();
+    $(".lbs-lv-ftoggle", box).innerHTML = `Filters${nAct ? ` <em>${nAct}</em>` : ""} ${lv.showFilters ? "▴" : "▾"}`;
+    const fl = $(".lbs-lv-filters", box);
+    fl.hidden = !lv.showFilters;
+    if (lv.showFilters) {
+      const keepFocus = document.activeElement && fl.contains(document.activeElement) && document.activeElement.matches("input") ? [document.activeElement.className, document.activeElement.dataset.g || document.activeElement.dataset.y, document.activeElement.selectionStart] : null;
+      const st = fl.scrollTop;
+      fl.innerHTML = lvChipsHTML();
+      fl.scrollTop = st;
+      if (keepFocus) {
+        const el = [...fl.querySelectorAll("input")].find((x) => x.className === keepFocus[0] && (x.dataset.g || x.dataset.y) === keepFocus[1]);
+        if (el) { el.focus(); try { el.setSelectionRange(keepFocus[2], keepFocus[2]); } catch {} }
+      }
+    }
+    $(".lbs-lv-spacer", box).style.height = `${lv.rows.length * LV_ROW}px`;
+    box._selecting = lv.selecting;
+    lvPaint();
+  }
+  // The parts that follow the selection (cheap: no filtering, no redraw of rows).
+  function lvChrome(box) {
+    const allSel = lv.rows.length > 0 && lv.rows.every((r) => lv.sel.has(r.slug));
+    const nAct = lvActive();
+    $(".lbs-lv-headbtns", box).innerHTML =
+      `<button type="button" class="lbs-lv-check${lv.selecting ? " -on" : ""}" data-act="lv-selmode" aria-pressed="${lv.selecting}" title="Select films (Shift- or Option-click also starts this)">✓</button>` +
+      (lv.selecting ? `<button type="button" class="lbs-lv-all" data-act="${allSel ? "lv-none" : "lv-all"}">${allSel ? "Deselect all in list" : "Select all in list"}</button>` : "");
+    $(".lbs-lv-meta", box).innerHTML = `<b>${fmt(lv.rows.length)}</b> film${lv.rows.length === 1 ? "" : "s"}${lv.sel.size ? ` · ${fmt(lv.sel.size)} selected` : ""}${nAct || lv.q ? ` · <button type="button" data-act="lv-reset">Clear all filters</button>` : ""}`;
+    lvFoot(box);
+  }
+  function lvRefreshSel() {
+    const box = root && $(".lbs-library", root);
+    if (!box || box.dataset.mode !== "list") return renderLibrary();
+    if (box._selecting !== lv.selecting) { box._selecting = lv.selecting; lvPaint(); }
+    else box.querySelectorAll(".lbs-lv-row").forEach((el) => {
+      const on = lv.sel.has(el.dataset.slug);
+      el.classList.toggle("-sel", on);
+      el.classList.toggle("-cur", +el.dataset.n === lv.cursor);
+      el.setAttribute("aria-selected", on);
+      el.querySelector(".lbs-lv-bub")?.classList.toggle("-on", on);
+    });
+    lvChrome(box);
+  }
+  function libModeHTML() {
+    return `<div class="lbs-seg lbs-lib-mode" role="group" aria-label="View"><button type="button" data-act="lib-mode" data-v="folders" class="${lv.mode === "folders" ? "-on" : ""}">Folders</button><button type="button" data-act="lib-mode" data-v="list" class="${lv.mode === "list" ? "-on" : ""}">List</button></div>`;
+  }
+  // Only the rows in view are drawn (there can be 80,000).
+  function lvPaint() {
+    const box = root && $(".lbs-library", root);
+    const list = box && $(".lbs-lv-list", box);
+    if (!list) return;
+    const sp = $(".lbs-lv-spacer", list);
+    const first = Math.max(0, Math.floor(list.scrollTop / LV_ROW) - 8);
+    const last = Math.min(lv.rows.length, Math.ceil((list.scrollTop + list.clientHeight) / LV_ROW) + 8);
+    let html = "";
+    for (let n = first; n < last; n++) {
+      const r = lv.rows[n], on = lv.sel.has(r.slug);
+      const tail = r.path.slice(1).map(nameOf).join(" › ") || nameOf(r.path[0]);
+      html +=
+        `<div class="lbs-lv-row${on ? " -sel" : ""}${lv.cursor === n ? " -cur" : ""}" style="top:${n * LV_ROW}px" data-n="${n}" data-slug="${esc(r.slug)}" data-name="${esc(r.name)}" role="option" aria-selected="${on}">` +
+        (lv.selecting ? `<span class="lbs-lv-bub${on ? " -on" : ""}" data-bub="1"></span>` : "") +
+        `<img data-lvp="${esc(r.slug)}" src="${posterCache.has(r.slug) ? esc(posterCache.get(r.slug)[0]) : EMPTY}" alt="">` +
+        `<span class="lbs-lv-t">${esc(titleOf(r.name))} <i>${r.year || ""}</i></span>` +
+        (r.v.status.includes("held") ? `<em class="-inv">Inv</em>` : "") +
+        `<small title="${esc([nameOf(r.path[0]), tail].join(" › "))}"><b>${esc(nameOf(r.path[0]))}</b> ${esc(r.path.length > 1 ? tail : "")}</small></div>`;
+    }
+    sp.innerHTML = html;
+    clearTimeout(lv.posterT);
+    lv.posterT = setTimeout(() => {
+      sp.querySelectorAll("img[data-lvp]").forEach((im) => { if (!posterCache.has(im.dataset.lvp)) posterFor(im.dataset.lvp).then(([u]) => (im.src = u)).catch(() => {}); });
+    }, 150);
+  }
+  const lvFilms = () => lv.rows.filter((r) => lv.sel.has(r.slug)).map((r) => [r.slug, r.name]);
+  function lvFoot(box) {
+    const foot = $(".lbs-lib-foot", box);
+    const n = lv.sel.size;
+    if (n > 1 || (n === 1 && lv.selecting)) {
+      foot.innerHTML = `<div class="lbs-lib-acts"><b class="lbs-lv-n">${fmt(n)} selected</b>` +
+        `<button type="button" class="-go" data-act="lv-move">Move to…</button>` +
+        `<button type="button" data-act="lv-hold">Add to inventory</button>` +
+        `<button type="button" class="-link" data-act="lv-clear">Deselect</button></div>`;
+      return;
+    }
+    const sel = libUI.sel;
+    if (!sel) { foot.innerHTML = `<div class="lbs-lib-acts"><p class="lbs-lib-tip">Click a film to select it. Shift- or Option-click (or the ✓) to pick several, then Move to… a folder. Right-click for more.</p></div>`; return; }
+    const at = lib.place.get(sel[0]);
+    foot.innerHTML =
+      `<div class="lbs-lib-sel"><img data-poster="${esc(sel[0])}" alt=""><div><b>${esc(titleOf(sel[1]))}</b> <span>${yearOf(sel[1]) || ""}</span><small>${at ? `In ${esc(pathOf(at).join(" › "))}` : ""}</small></div>` +
+      `<button type="button" class="lbs-lib-x -small" data-act="lv-clear" aria-label="Deselect">${ICON_CLOSE}</button></div>` +
+      `<div class="lbs-lib-acts"><button type="button" class="-go" data-act="lv-move">Move to…</button>` +
+      `<button type="button" data-act="f-open" data-slug="${esc(sel[0])}" data-name="${esc(sel[1])}">Details</button>` +
+      `<button type="button" data-act="f-jump" data-slug="${esc(sel[0])}" data-name="${esc(sel[1])}">Jump to section</button>` +
+      `<button type="button" data-act="lib-fr">${franchiseOf(sel[0]) ? "Franchise" : "Add to franchise"}</button></div>`;
+    fillPosters(foot, false);
+  }
+  function lvSetSel(set) {
+    lv.sel = set;
+    const one = lv.sel.size === 1 ? [...lv.sel][0] : null;
+    libUI.sel = one ? [one, lib.names.get(one) || one] : null;
+    libUI.focus = libUI.sel ? { film: libUI.sel } : null;
+  }
+  function lvRange(a, b) { const out = []; for (let n = Math.min(a, b); n <= Math.max(a, b); n++) if (lv.rows[n]) out.push(lv.rows[n].slug); return out; }
+  function lvClickRow(row, e) {
+    const n = +row.dataset.n, slug = row.dataset.slug;
+    if (e.shiftKey || e.altKey || e.metaKey || e.ctrlKey) lv.selecting = true;
+    if (e.shiftKey && lv.anchor != null) {
+      const s2 = new Set(lv.sel);
+      for (const x of lvRange(lv.anchor, n)) s2.add(x);
+      lvSetSel(s2);
+    } else if (lv.selecting) {
+      const s2 = new Set(lv.sel);
+      if (s2.has(slug)) s2.delete(slug); else s2.add(slug);
+      lvSetSel(s2);
+      lv.anchor = n;
+    } else {
+      lvSetSel(new Set([slug]));
+      lv.anchor = n;
+    }
+    lv.cursor = n;
+    lvRefreshSel();
+  }
+  function lvKey(e) {
+    if (e.target.matches("input")) return;
+    const N = lv.rows.length;
+    if (!N) return;
+    const mod = e.metaKey || e.ctrlKey;
+    if (mod && e.key.toLowerCase() === "a") { e.preventDefault(); lv.selecting = true; lvSetSel(new Set(lv.rows.map((r) => r.slug))); return lvRefreshSel(); }
+    if (e.key === "Escape") { if (lv.selecting || lv.sel.size) { e.stopPropagation(); lv.selecting = false; lvSetSel(new Set()); lvRefreshSel(); } return; }
+    if (e.key === "Enter" && lv.cursor != null) { const r = lv.rows[lv.cursor]; return openFilm(r.slug, r.name); }
+    if (e.key === " " && lv.cursor != null) {
+      e.preventDefault();
+      lv.selecting = true;
+      const s2 = new Set(lv.sel), x = lv.rows[lv.cursor].slug;
+      if (s2.has(x)) s2.delete(x); else s2.add(x);
+      lvSetSel(s2);
+      return lvRefreshSel();
+    }
+    const step = e.key === "ArrowDown" ? 1 : e.key === "ArrowUp" ? -1 : e.key === "PageDown" ? 15 : e.key === "PageUp" ? -15 : 0;
+    if (!step) return;
+    e.preventDefault();
+    const was = lv.cursor == null ? (step > 0 ? -1 : N) : lv.cursor;
+    const n = Math.max(0, Math.min(N - 1, was + step));
+    lv.cursor = n;
+    if (e.shiftKey) {
+      lv.selecting = true;
+      if (lv.anchor == null) lv.anchor = was < 0 || was >= N ? n : was;
+      const s2 = new Set(lv.sel);
+      for (const x of lvRange(lv.anchor, n)) s2.add(x);
+      lvSetSel(s2);
+    } else if (!lv.selecting) { lvSetSel(new Set([lv.rows[n].slug])); lv.anchor = n; }
+    const list = $(".lbs-library .lbs-lv-list", root);
+    if (n * LV_ROW < list.scrollTop) list.scrollTop = n * LV_ROW;
+    else if ((n + 1) * LV_ROW > list.scrollTop + list.clientHeight) list.scrollTop = (n + 1) * LV_ROW - list.clientHeight;
+    lvRefreshSel();
+  }
+
+  // Move to…: every folder in the store, filterable, one click to file the selection there.
+  function openMovePick(films) {
+    closeMovePick();
+    if (!films.length) return;
+    const box = h("div", "lbs-mvpick",
+      `<div class="lbs-mvpick-top"><b>Move ${films.length === 1 ? `‘${esc(titleOf(films[0][1]))}’` : `${fmt(films.length)} films`} to…</b><button type="button" class="lbs-lib-x -small" data-act="mv-close" aria-label="Close">${ICON_CLOSE}</button></div>` +
+      `<input type="search" class="lbs-mvpick-q" placeholder="Find a folder" autocomplete="off" spellcheck="false"><ul class="lbs-mvpick-list"></ul>` +
+      (edit.on ? "" : `<p class="lbs-lv-note">Not in Edit store: this moves them on your own shelves.</p>`));
+    box._films = films;
+    $(".lbs-library", root).append(box);
+    const all = [];
+    for (const g of lib.genres.values()) {
+      all.push([g.id, 0]);
+      for (const c of g.cats) { all.push([c, 1]); for (const sId of lib.cats.get(c).subs) { all.push([sId, 2]); for (const n of lib.subs.get(sId).niches || []) all.push([n, 3]); } }
+    }
+    box._all = all;
+    const paint = () => {
+      const q = box.querySelector(".lbs-mvpick-q").value.trim().toLowerCase();
+      const rec = (mine.recent || []).filter((x) => lib.subs.has(x));
+      const items = q ? all.filter(([id]) => pathOf(id).join(" › ").toLowerCase().includes(q)).map(([id]) => [id, 0, true]) : all;
+      box.querySelector(".lbs-mvpick-list").innerHTML =
+        (!q && rec.length ? `<li class="lbs-mvpick-h">Recent</li>` + rec.map((id) => `<li data-act="mv-to" data-id="${esc(id)}" class="-d0">${esc(pathOf(id).join(" › "))}</li>`).join("") + `<li class="lbs-mvpick-h">All folders</li>` : "") +
+        items.slice(0, 400).map(([id, d, full]) => `<li data-act="mv-to" data-id="${esc(id)}" class="-d${d}">${esc(full ? pathOf(id).join(" › ") : nameOf(id))}<small>${fmt(lib.count.get(id) || 0)}</small></li>`).join("");
+    };
+    box.querySelector(".lbs-mvpick-q").addEventListener("input", (e) => { e.stopPropagation(); paint(); });
+    paint();
+    box.querySelector(".lbs-mvpick-q").focus();
+  }
+  function closeMovePick() { root && root.querySelectorAll(".lbs-mvpick").forEach((x) => x.remove()); }
+
   // Old name, same tool now: "Sort" opens the Library on the film.
   const openSort = (slug, name) => openLibraryAt(slug, name);
   const renderSortPanel = () => renderLibrary();
@@ -4312,7 +4794,7 @@
       `<ol class="lbs-fr-list">` +
       fr.films.map(([s, n], i) => {
         const sec = filmSection(s), home = filmSection(fr.films[0][0]);
-        return `<li draggable="true" data-i="${i}"${i && sec && sec !== home ? ' class="-other"' : ""}><img data-poster="${esc(s)}" alt="" draggable="false"><b>${i + 1}</b>${yearOf(n) ? `<i>${yearOf(n)}</i>` : ""}<span>${esc(titleOf(n))}<small>${sec ? esc(nameOf(sec)) : ""}${i && sec && sec !== home ? ` · moves to ${esc(nameOf(home))}` : ""}</small></span><button type="button" data-act="fr-drop" data-i="${i}" aria-label="Remove">${ICON_CLOSE}</button></li>`;
+        return `<li data-dnd="fr" data-i="${i}"${i && sec && sec !== home ? ' class="-other"' : ""}><img data-poster="${esc(s)}" alt="" draggable="false"><b>${i + 1}</b>${yearOf(n) ? `<i>${yearOf(n)}</i>` : ""}<span>${esc(titleOf(n))}<small>${sec ? esc(nameOf(sec)) : ""}${i && sec && sec !== home ? ` · moves to ${esc(nameOf(home))}` : ""}</small></span><button type="button" data-act="fr-drop" data-i="${i}" aria-label="Remove">${ICON_CLOSE}</button></li>`;
       }).join("") +
       `</ol>` +
       `<label class="lbs-fr-find">${ICON_SEARCH}<input type="search" class="lbs-fr-q" placeholder="Add a film from anywhere in the store…" autocomplete="off"></label><ul class="lbs-fr-results" hidden></ul>` +
@@ -4332,7 +4814,7 @@
     const cur = fr.logo || logoPath(lead[0]);
     return (
       `<div class="lbs-fr-sticker"><b>Sticker</b>` +
-      `<label class="lbs-fcolor">Colour <input type="color" class="lbs-fr-color" value="#${esc(own.replace("#", ""))}"></label>` +
+      `<label class="lbs-fcolor">Colour ${swatchHTML("lbs-fr-color", `#${own.replace("#", "")}`)}</label>` +
       `<div class="lbs-flogos">` +
       (list ? list.map((pth) => `<button type="button" data-act="fr-logo" data-path="${esc(pth)}" class="${cur === pth ? "-on" : ""}"><img src="${TMDB_IMG}w185/${esc(pth)}" alt="" loading="lazy"></button>`).join("") : `<p class="lbs-fwait">Fetching ${esc(titleOf(lead[1]))}'s logos…</p>`) +
       `</div></div>`
@@ -4767,6 +5249,7 @@
   window.addEventListener("mousemove", (e) => {
     const d = grab;
     if (!d) return;
+    if (!(e.buttons & 1)) return cancelAllDrags(); // released outside the window
     if (!d.live) {
       if (Math.abs(e.clientX - d.x) + Math.abs(e.clientY - d.y) < 5) return;
       d.live = true;
@@ -4784,6 +5267,8 @@
         d.ghost = h("div", "lbs-piece lbs-piece-ghost", `<b>${esc(nameOf(cid))}</b>`);
         d.ghost.style.setProperty("--h", hueOfBlock(cid));
         d.ghost.style.width = `${Math.max(30, Math.min(CAP, grabSize(d)) * wall.cam.z)}px`;
+      } else if (d.films && d.films.length > 1) {
+        d.ghost = h("div", "lbs-ghost", `${fmt(d.films.length)} films`);
       } else {
         // The box itself, cover facing you, follows the pointer.
         d.ghost = h("div", "lbs-box-ghost", boxHTML(d.slug, d.name, false));
@@ -4793,8 +5278,9 @@
       document.body.append(d.ghost);
       showTip(null);
     }
-    d.ghost.style.left = `${e.clientX + (d.kind === "dvd" ? -40 : 8)}px`;
-    d.ghost.style.top = `${e.clientY + (d.kind === "dvd" ? -60 : 8)}px`;
+    const big = d.kind === "dvd" && !(d.films && d.films.length > 1);
+    d.ghost.style.left = `${e.clientX + (big ? -40 : 12)}px`;
+    d.ghost.style.top = `${e.clientY + (big ? -60 : 10)}px`;
     const c = wall.canvas, r = c.getBoundingClientRect();
     const over = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
     wall.dropHint = over ? (d.kind === "piece" ? (d.pour ? pourTarget(d, e.clientX - r.left, e.clientY - r.top) : d.group ? groupTarget(d, e.clientX - r.left, e.clientY - r.top) : dropTarget(d, e.clientX - r.left, e.clientY - r.top)) : dvdTarget(d.slug, e.clientX - r.left, e.clientY - r.top)) : null;
@@ -4848,13 +5334,15 @@
       if (hint) toast("No room on that shelf.");
       return drawSoon();
     }
-    // A DVD
-    if (toTray) { if (d.from === "wall" || d.from === "lib") holdFilms([[d.slug, d.name]]); return drawSoon(); }
+    // A DVD (or several, from the Library's list)
+    const many = d.films && d.films.length > 1 ? d.films : null;
+    if (toTray) { if (d.from === "wall" || d.from === "lib") holdFilms(many || [[d.slug, d.name]]); return drawSoon(); }
     const folder = el && el.closest && el.closest(".lbs-folder[data-drop], .lbs-crumb[data-drop]");
     if (folder && folder.dataset.drop) {
       if (d.from === "tray") releaseFilm(d.slug);
-      return moveFilms([[d.slug, d.name]], folder.dataset.drop);
+      return moveFilms(many || [[d.slug, d.name]], folder.dataset.drop);
     }
+    if (many) { toast("Drop a group onto a folder or your inventory, or use Move to…"); return drawSoon(); }
     if (!edit.on) { if (hint) return browseDrop(d.slug, d.name, hint); return drawSoon(); }
     if (hint && hint.ok) return dropDvd(d.slug, d.name, hint);
     if (hint && !hint.ok) toast(`To arrange ${nameOf(hint.cid)} by hand, click its sign and choose “Index”.`);
@@ -4998,7 +5486,8 @@
       });
     }
     const before = films.map(([slug]) => [slug, mine.place[slug]]);
-    for (const [slug] of films) shareEdit("place", slug, sub);
+    // (a big batch stays yours: sharing each move would be thousands of posts)
+    if (films.length <= 25) for (const [slug] of films) shareEdit("place", slug, sub);
     const prevView = mine.view;
     for (const [slug, name] of films) mine.place[slug] = [sub, name];
     mine.recent = [sub, ...(mine.recent || []).filter((x) => x !== sub)].slice(0, 6);
@@ -5054,7 +5543,7 @@
   function onDragStart(e) {
     const fl = e.target.closest && e.target.closest(".lbs-fr-list li");
     if (fl) { frDrag = +fl.dataset.i; e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", "x"); return; }
-    const frow = edit.on && e.target.closest && e.target.closest(".lbs-folder[draggable=true]");
+    const frow = edit.on && e.target.closest && e.target.closest(".lbs-folder[data-dnd=folder]");
     if (frow) {
       dragFolder = frow.dataset.id;
       e.dataTransfer.effectAllowed = "move";
@@ -5196,6 +5685,13 @@
 
   // Right-click a film: Move to…
   function onContextMenu(e) {
+    const any = e.target.closest && e.target.closest(".lbs-lib-film, .lbs-lv-row, .lbs-pk, .lbs-find-list li[data-slug], .lbs-sp-chip, .lbs-dvd");
+    if (any && any.dataset.slug) {
+      e.preventDefault();
+      // In the list, a right-click on a selected row acts on the whole selection.
+      if (any.classList.contains("lbs-lv-row") && lv.sel.has(any.dataset.slug) && lv.sel.size > 1) return openFilmMenu(null, null, e.clientX, e.clientY, true);
+      return openFilmMenu(any.dataset.slug, any.dataset.name || lib.names.get(any.dataset.slug) || any.dataset.slug, e.clientX, e.clientY);
+    }
     const src = e.target.closest && e.target.closest(".lbs-item, .lbs-row");
     if (!src || !src.dataset.slug) return;
     e.preventDefault();
@@ -5206,9 +5702,219 @@
     if (f) f.focus();
   }
 
+  // Right-click a film (a spine, a row, a cover): what you can do with it.
+  function openFilmMenu(slug, name, x, y, many) {
+    closeFilmMenu();
+    const b = (act, label, extra = "") => `<button type="button" role="menuitem" data-act="${act}"${slug ? ` data-slug="${esc(slug)}" data-name="${esc(name)}"` : ""}${extra}>${label}</button>`;
+    const held = slug && (mine.held || []).some(([s2]) => s2 === slug);
+    const inStore = slug && lib.place.has(slug);
+    const html = many
+      ? `<b>${fmt(lv.sel.size)} films</b>` + b("lv-move", "Move to…") + b("lv-hold", "Add to inventory") + b("lv-clear", "Deselect all")
+      : `<b>${esc(titleOf(name))}</b>` +
+        b("f-open", "Details") +
+        (held ? b("f-return", "Take out of inventory") : b("f-hold", "Add to inventory", inStore ? "" : " disabled")) +
+        b("f-jump", "Jump to section", inStore ? "" : " disabled") +
+        b("f-editx", "Edit") +
+        b("f-sort", "Sort") +
+        b("f-fr", franchiseOf(slug) ? "Franchise" : "Add to franchise", inStore ? "" : " disabled");
+    const m = h("div", "lbs-ctx", html);
+    m.setAttribute("role", "menu");
+    root.append(m);
+    const rr = root.getBoundingClientRect();
+    m.style.left = `${Math.min(x - rr.left, rr.width - m.offsetWidth - 6)}px`;
+    m.style.top = `${Math.min(y - rr.top, rr.height - m.offsetHeight - 6)}px`;
+    m.querySelector("button:not([disabled])")?.focus({ preventScroll: true });
+  }
+  function closeFilmMenu() { root && root.querySelectorAll(".lbs-ctx").forEach((m) => m.remove()); }
+  window.addEventListener("mousedown", (e) => { if (!e.target.closest || !e.target.closest(".lbs-ctx")) closeFilmMenu(); }, true);
+  window.addEventListener("wheel", () => closeFilmMenu(), { passive: true, capture: true });
+  window.addEventListener("keydown", (e) => {
+    const m = root && $(".lbs-ctx", root);
+    if (!m) return;
+    if (e.key === "Escape") { e.stopPropagation(); return closeFilmMenu(); }
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      const items = [...m.querySelectorAll("button:not([disabled])")];
+      const i = items.indexOf(document.activeElement);
+      items[(i + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length]?.focus();
+    }
+  }, true);
+
+  /* Colour pickers are drawn in the page. (The system picker on macOS is a
+   * separate window whose eyedropper can capture every click on the screen
+   * if the page redraws under it.) A hidden input keeps the value and gets
+   * the same "input" events the old colour inputs did. */
+  function swatchHTML(cls, value, attrs = "", disabled = false) {
+    const v = /^#[0-9a-f]{6}$/i.test(value) ? value : "#2c3440";
+    return `<input type="hidden" class="${cls}" value="${esc(v)}" ${attrs}${disabled ? " disabled" : ""}><button type="button" class="lbs-swatch" data-act="cpick" style="--c:${esc(v)}"${disabled ? " disabled" : ""} aria-label="Pick a colour"></button>`;
+  }
+  const hexToRgb = (hx) => [1, 3, 5].map((i) => parseInt(hx.slice(i, i + 2), 16));
+  const rgbToHex = (r, g, b) => "#" + [r, g, b].map((v) => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, "0")).join("");
+  function rgbToHsv([r, g, b]) {
+    r /= 255; g /= 255; b /= 255;
+    const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
+    let hh = 0;
+    if (d) hh = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+    return [(hh * 60 + 360) % 360, mx ? d / mx : 0, mx];
+  }
+  function hsvToRgb(hh, sv, v) {
+    const c = v * sv, x = c * (1 - Math.abs(((hh / 60) % 2) - 1)), m = v - c;
+    const [r, g, b] = hh < 60 ? [c, x, 0] : hh < 120 ? [x, c, 0] : hh < 180 ? [0, c, x] : hh < 240 ? [0, x, c] : hh < 300 ? [x, 0, c] : [c, 0, x];
+    return [(r + m) * 255, (g + m) * 255, (b + m) * 255];
+  }
+  const CPICK_PRESETS = ["#17191c", "#2c3440", "#f0e6cf", "#ffffff", "#e23b2e", "#f08a24", "#f5c518", "#3fa34d", "#2f80c2", "#40bcf4", "#7b4bb8", "#c2185b"];
+  let cpick = null; // { input, btn, h, s, v, box }
+  function openColorPicker(btn) {
+    closeColorPicker();
+    const input = btn.previousElementSibling;
+    if (!input || input.disabled) return;
+    const [hh, ss, v] = rgbToHsv(hexToRgb(/^#[0-9a-f]{6}$/i.test(input.value) ? input.value : "#2c3440"));
+    const box = h("div", "lbs-cpick",
+      `<div class="lbs-cpick-sv"><i></i></div>` +
+      `<input type="range" class="lbs-cpick-hue" min="0" max="359" step="1" aria-label="Hue">` +
+      `<div class="lbs-cpick-row"><span class="lbs-cpick-now"></span><input type="text" class="lbs-cpick-hex" maxlength="7" spellcheck="false" aria-label="Hex colour"><button type="button" class="lbs-cpick-done">Done</button></div>` +
+      `<div class="lbs-cpick-presets">${CPICK_PRESETS.map((c) => `<button type="button" data-c="${c}" style="--c:${c}" aria-label="${c}"></button>`).join("")}</div>`);
+    root.append(box);
+    cpick = { input, btn, h: hh, s: ss, v, box, cls: input.className, slug: input.dataset.slug };
+    // keep its own events to itself
+    box.addEventListener("input", (e) => e.stopPropagation());
+    box.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const p = e.target.closest("[data-c]");
+      if (p) return setPickHex(p.dataset.c);
+      if (e.target.closest(".lbs-cpick-done")) closeColorPicker();
+    });
+    box.querySelector(".lbs-cpick-hue").addEventListener("input", (e) => { cpick.h = +e.target.value; pickChanged(); });
+    box.querySelector(".lbs-cpick-hex").addEventListener("input", (e) => { const t = e.target.value.trim(); if (/^#?[0-9a-f]{6}$/i.test(t)) setPickHex(t[0] === "#" ? t : "#" + t, true); });
+    box.querySelector(".lbs-cpick-hex").addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Enter" || e.key === "Escape") closeColorPicker(); });
+    const sv = box.querySelector(".lbs-cpick-sv");
+    const svAt = (e) => { const r = sv.getBoundingClientRect(); cpick.s = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)); cpick.v = 1 - Math.max(0, Math.min(1, (e.clientY - r.top) / r.height)); pickChanged(); };
+    sv.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      svAt(e);
+      const move = (ev) => { if (!(ev.buttons & 1) || !cpick) return up(); svAt(ev); };
+      const up = () => { window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", up); };
+      window.addEventListener("mousemove", move);
+      window.addEventListener("mouseup", up);
+    });
+    const r = btn.getBoundingClientRect(), rr = root.getBoundingClientRect();
+    box.style.left = `${Math.max(8, Math.min(r.left - rr.left, rr.width - 236))}px`;
+    box.style.top = `${r.bottom - rr.top + 6 + 260 > rr.height ? Math.max(8, r.top - rr.top - 266) : r.bottom - rr.top + 6}px`;
+    paintPick(false);
+  }
+  function setPickHex(hx, fromField) {
+    [cpick.h, cpick.s, cpick.v] = rgbToHsv(hexToRgb(hx));
+    pickChanged(fromField);
+  }
+  function paintPick(fromField) {
+    const { box, h: hh, s: sv, v } = cpick;
+    const hex = rgbToHex(...hsvToRgb(hh, sv, v));
+    box.querySelector(".lbs-cpick-sv").style.setProperty("--hue", `hsl(${hh} 100% 50%)`);
+    const k = box.querySelector(".lbs-cpick-sv i");
+    k.style.left = `${sv * 100}%`; k.style.top = `${(1 - v) * 100}%`;
+    box.querySelector(".lbs-cpick-hue").value = Math.round(hh);
+    box.querySelector(".lbs-cpick-now").style.background = hex;
+    if (!fromField) box.querySelector(".lbs-cpick-hex").value = hex;
+    return hex;
+  }
+  function pickChanged(fromField) {
+    if (!cpick) return;
+    // The panel behind it may have been redrawn: find its new swatch.
+    if (!root.contains(cpick.input)) {
+      const fresh = [...root.querySelectorAll(`input.${cpick.cls}`)].find((x) => (x.dataset.slug || "") === (cpick.slug || ""));
+      if (!fresh) return closeColorPicker();
+      cpick.input = fresh; cpick.btn = fresh.nextElementSibling;
+    }
+    const hex = paintPick(fromField);
+    cpick.input.value = hex;
+    cpick.btn.style.setProperty("--c", hex);
+    cpick.input.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+  function closeColorPicker() {
+    if (!cpick) return;
+    cpick.box.remove();
+    cpick = null;
+  }
+  window.addEventListener("mousedown", (e) => { if (cpick && !e.target.closest(".lbs-cpick, .lbs-swatch")) closeColorPicker(); }, true);
+
+  /* Drags of rows, folders and franchise films, done with the mouse rather
+   * than the browser's drag and drop (which can hang macOS when it goes
+   * wrong). It feeds the same handlers the native events used to. */
+  let mdnd = null; // { src, x, y, live, ghost, under }
+  let swallowClick = false;
+  const fakeDT = { setData() {}, setDragImage() {}, effectAllowed: "", dropEffect: "" };
+  const dndEvent = (target, e) => ({ target, relatedTarget: null, clientX: e.clientX, clientY: e.clientY, dataTransfer: fakeDT, preventDefault() {} });
+  function mouseDndDown(e) {
+    if (e.button !== 0 || e.target.closest("button, a, input, textarea, select, label")) return;
+    const src = e.target.closest("[data-dnd]");
+    if (!src || !root.contains(src)) return;
+    mdnd = { src, x: e.clientX, y: e.clientY, live: false };
+  }
+  function mouseDndCancel() {
+    if (!mdnd) return;
+    if (mdnd.ghost) mdnd.ghost.remove();
+    if (mdnd.live) onDragEnd();
+    mdnd = null;
+  }
+  window.addEventListener("mousemove", (e) => {
+    const d = mdnd;
+    if (!d) return;
+    if (!(e.buttons & 1)) return mouseDndCancel(); // the button came up somewhere we didn't hear
+    if (!d.live) {
+      if (Math.abs(e.clientX - d.x) + Math.abs(e.clientY - d.y) < 5) return;
+      let stopped = false;
+      onDragStart({ ...dndEvent(d.src, e), preventDefault() { stopped = true; } });
+      if (stopped || !(dragging || dragFolder || frDrag != null)) { mdnd = null; return; }
+      d.live = true;
+      const label = dragFolder ? nameOf(dragFolder) : frDrag != null ? "" : dragging.length > 1 ? `${fmt(dragging.length)} films` : titleOf(dragging[0][1]);
+      d.ghost = h("div", "lbs-ghost", esc(label || "↕"));
+      document.body.append(d.ghost);
+    }
+    e.preventDefault();
+    d.ghost.style.left = `${e.clientX + 12}px`;
+    d.ghost.style.top = `${e.clientY + 10}px`;
+    const under = document.elementFromPoint(e.clientX, e.clientY);
+    if (!under) return;
+    if (d.under && d.under !== under) onDragLeave({ ...dndEvent(d.under, e), relatedTarget: under });
+    d.under = under;
+    onDragOver(dndEvent(under, e));
+  });
+  window.addEventListener("mouseup", (e) => {
+    const d = mdnd;
+    if (!d) return;
+    mdnd = null;
+    if (!d.live) return;
+    if (d.ghost) d.ghost.remove();
+    swallowClick = true;
+    setTimeout(() => (swallowClick = false), 0);
+    const under = document.elementFromPoint(e.clientX, e.clientY);
+    if (under && root.contains(under)) onDrop(dndEvent(under, e));
+    onDragEnd();
+  });
+  // Escape, or the window losing focus, drops whatever is being carried.
+  function cancelAllDrags() {
+    mouseDndCancel();
+    if (grab) {
+      if (grab.ghost) grab.ghost.remove();
+      grab = null;
+      wall.dropHint = null;
+      if (wall.lifted) wall.lifted = null;
+      root && root.querySelectorAll(".-over").forEach((el) => el.classList.remove("-over"));
+      drawSoon();
+    }
+  }
+  window.addEventListener("blur", cancelAllDrags);
+  window.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    if (cpick) { e.stopPropagation(); e.preventDefault(); return closeColorPicker(); }
+    if (mdnd || grab) { e.stopPropagation(); e.preventDefault(); cancelAllDrags(); }
+  }, true);
+
   /* ---------------- clicks, typing ---------------- */
 
   function onClick(e) {
+    if (swallowClick) { swallowClick = false; e.preventDefault(); return; }
+    if (e.target.closest(".lbs-ctx")) setTimeout(closeFilmMenu, 0);
     const pick = $(".lbs-logopick", root);
     if (pick && !pick.hidden && !e.target.closest(".lbs-logopick")) pick.hidden = true;
     const sp = $(".lbs-sortpick", root);
@@ -5217,6 +5923,8 @@
     root.querySelectorAll(".lbs-menu:not([hidden])").forEach((m) => {
       if (!e.target.closest(".lbs-menu, [data-act=settings], [data-act=find-type], [data-act=lb-more]")) m.hidden = true;
     });
+    const lvr = e.target.closest(".lbs-lv-row");
+    if (lvr) { $(".lbs-lv-list", root)?.focus({ preventScroll: true }); return lvClickRow(lvr, e); }
     const row = e.target.closest(".lbs-row");
     if (row && !e.target.closest("a, button")) return selectRow(row, e);
     const btn = e.target.closest("[data-act], [data-coll], [data-scope], [data-view], [data-mode]");
@@ -5280,7 +5988,42 @@
         libUI.focus = libUI.sel ? { film: libUI.sel } : null;
         return renderLibrary();
       }
-      if (act === "lib-unsel") { libUI.sel = null; return renderLibrary(); }
+      if (act === "lib-unsel") { libUI.sel = null; lv.sel = new Set(); return renderLibrary(); }
+      if (act === "lib-mode") { lv.mode = btn.dataset.v; closeMovePick(); saveLv(); return renderLibrary(); }
+      if (act === "lv-selmode") { lv.selecting = !lv.selecting; if (!lv.selecting) lvSetSel(libUI.sel ? new Set([libUI.sel[0]]) : new Set()); return lvRefreshSel(); }
+      if (act === "lv-all") { lvSetSel(new Set([...lv.sel, ...lv.rows.map((r) => r.slug)])); return lvRefreshSel(); }
+      if (act === "lv-none") { const s2 = new Set(lv.sel); for (const r of lv.rows) s2.delete(r.slug); lvSetSel(s2); return lvRefreshSel(); }
+      if (act === "lv-clear") { lv.selecting = false; lvSetSel(new Set()); return lvRefreshSel(); }
+      if (act === "lv-sort") { lv.sort = btn.dataset.v; saveLv(); return renderLibrary(); }
+      if (act === "lv-filters") { lv.showFilters = !lv.showFilters; saveLv(); return renderLibrary(); }
+      if (act === "lv-chip") {
+        const g = btn.dataset.g, v = btn.dataset.v, st = (lv.f[g] = lv.f[g] || {});
+        const next = st[v] === 1 ? -1 : st[v] === -1 ? 0 : 1;
+        if (next) st[v] = next; else delete st[v];
+        // narrowing a store genre resets its categories below
+        if (g === "sgenre") { delete lv.f.scat; delete lv.f.ssub; }
+        if (g === "scat") delete lv.f.ssub;
+        if (!Object.keys(st).length) delete lv.f[g];
+        saveLv();
+        return renderLibrary();
+      }
+      if (act === "lv-clear-g") { delete lv.f[btn.dataset.g]; if (btn.dataset.g === "decade") { lv.y0 = lv.y1 = ""; } saveLv(); return renderLibrary(); }
+      if (act === "lv-more") { lv.more[btn.dataset.g] = !lv.more[btn.dataset.g]; return renderLibrary(); }
+      if (act === "lv-reset") { lv.f = {}; lv.y0 = lv.y1 = ""; lv.q = ""; const qi = $(".lbs-lv-q", root); if (qi) qi.value = ""; saveLv(); return renderLibrary(); }
+      if (act === "lv-move") return openMovePick(lv.sel.size ? lvFilms() : libUI.sel ? [libUI.sel] : []);
+      if (act === "lv-hold") {
+        const films = lvFilms().filter(([x]) => lib.place.has(x));
+        holdFilms(films); ui.pocket = true; renderPocket();
+        return toast(`${fmt(films.length)} film${films.length === 1 ? "" : "s"} in your inventory.`);
+      }
+      if (act === "mv-close") return closeMovePick();
+      if (act === "mv-to") {
+        const pk = btn.closest(".lbs-mvpick"), films = pk && pk._films;
+        closeMovePick();
+        if (!films) return;
+        lv.selecting = false; lvSetSel(new Set());
+        return moveFilms(films, id);
+      }
       if (act === "lib-new") { libUI.adding = libUI.path[libUI.path.length - 1]; return renderLibrary(); }
       if (act === "lib-move") {
         const right = libUI.path[libUI.path.length - 1];
@@ -5303,6 +6046,8 @@
       if (act === "lb-watch" || act === "lb-like" || act === "lb-wl" || act === "lb-block") return lbAction(act, btn);
       if (act === "lb-more") { const m = btn.parentElement.querySelector(".lbs-lb-menu"); if (m) { const was = m.hidden; root.querySelectorAll(".lbs-menu").forEach((x) => (x.hidden = true)); m.hidden = !was; } return; }
       if (act === "f-jump") return jumpTo(fs, fn);
+      if (act === "f-fr") { closeFilm(); return openFranchise(fs, fn); }
+      if (act === "f-editx") { openFilm(fs, fn); ui.pane = "edit"; return renderFilm(); }
       if (act === "f-edit") { if (!ui.film || ui.film.slug !== fs) { ui.film = { slug: fs, name: fn }; filmDetails(fs).then((d) => ui.film && ui.film.slug === fs && renderFilm(d)); } ui.pane = ui.pane === "edit" ? null : "edit"; return renderFilm(); }
       if (act === "f-sort") { closeFilm(); $(".lbs-card", root).hidden = true; return openSort(fs, fn); }
       if (act === "f-return") { releaseFilm(fs); renderPocket(); drawSoon(); return toast(`‘${titleOf(fn)}’ is back on the shelf.`); }
@@ -5360,16 +6105,23 @@
     if (act === "h-discard") {
       houseLocal = null;
       edit.undo = [];
-      try { localStorage.removeItem(HOUSE_KEY); } catch {}
+      persist(HOUSE_KEY, null);
       refresh();
       return toast("Discarded your unpublished changes.");
     }
 
+    if (act === "cpick") return cpick && cpick.btn === btn ? closeColorPicker() : openColorPicker(btn);
     if (act === "cat-build") return openCatBuild();
     if (act === "cat-close") { $(".lbs-catbuild", root).hidden = true; return; }
     if (act === "cat-stop") { catJob.running = false; catJob.msg = "pausing after the requests in flight…"; return renderCatBuild(); }
     if (act === "cat-start") { runCatJob(); return; }
     if (act === "cat-save") return downloadCatalogue();
+    if (act === "cat-details") {
+      if (!catJob.st) return;
+      if (catJob.st.info) catJob.st.info = catJob.st.info.map((x) => (x ? [x[0]] : null)); // read them again
+      catJob.st.phase = catJob.st.info && catJob.st.info.some(Boolean) ? "details" : "lids";
+      return runCatJob();
+    }
     if (act === "cat-try") {
       // Stock the store from the finished job, in this tab only (nothing published).
       useCatalogue(JSON.parse(JSON.stringify(catalogueJSON())));
@@ -5462,6 +6214,9 @@
   }
 
   function onInput(e) {
+    if (e.target.classList.contains("lbs-lv-q")) { lv.q = e.target.value; lv.cursor = null; const l = $(".lbs-lv-list", root); if (l) l.scrollTop = 0; return renderLibrary(); }
+    if (e.target.classList.contains("lbs-lv-gq")) { lv.more[e.target.dataset.g + ":q"] = e.target.value; return renderLibrary(); }
+    if (e.target.classList.contains("lbs-lv-y")) { lv[e.target.dataset.y] = e.target.value.length === 4 || !e.target.value ? e.target.value : lv[e.target.dataset.y]; saveLv(); return renderLibrary(); }
     if (e.target.classList.contains("lbs-tray-filter")) { edit.filter = e.target.value || null; return renderTray(); }
     if (e.target.dataset && e.target.dataset.fmt) return setFormat(e.target.dataset.fmt, { on: e.target.checked });
     if (e.target.dataset && e.target.dataset.fmtTo) {
@@ -5484,6 +6239,8 @@
       const on = pane.querySelector(".lbs-f-wash").checked, col = pane.querySelector(".lbs-f-washc").value;
       if (on) mine.wash[ws] = col; else delete mine.wash[ws];
       pane.querySelector(".lbs-f-washc").disabled = !on;
+      const sw = pane.querySelector(".lbs-f-washc + .lbs-swatch");
+      if (sw) sw.disabled = !on;
       saveMine();
       drawSoon();
       const fb = $(".lbs-filmview .lbs-fbox", root);
