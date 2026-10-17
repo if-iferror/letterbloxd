@@ -62,7 +62,10 @@
   ];
   // Which aisle wins when a film fits several: the most specific first.
   const AISLE_PRIORITY = ["giallo", "jhorror", "vampires", "zombies", "madsci", "extreme", "creature", "slashers", "gothic", "haunted", "creepy", "eighties", "comedy"];
-  const EVERYTHING = { id: "rest", name: "Everything Else", q: "genre/horror", one: "Horror", many: "Horror" };
+  const EVERYTHING = { id: "rest", name: "General", q: "genre/horror", one: "Horror", many: "Horror" };
+  // Every film starts Uncategorized: one folder at the top of the Library,
+  // shown on the wall as a pile in the corner. Filing a film takes it out.
+  const UNCAT = "uncat", UNCAT_CAT = "uncat/pile", UNCAT_SUB = "uncat/pile/general";
 
   // Tags read for every film, used to split aisles into shelves.
   const WORLD = ["japan", "south-korea", "france", "italy", "spain", "germany", "mexico", "india", "thailand", "hong-kong", "china", "taiwan", "indonesia", "philippines", "brazil", "argentina", "sweden", "norway", "denmark", "finland", "poland", "russia", "turkey", "iran", "belgium", "netherlands"];
@@ -341,7 +344,7 @@
   const house = () => fullHouse(houseLocal || houseShared);
   // grab: "one" moves a single piece; "group" moves every piece of that section, keeping its shape.
   const edit = { on: false, sel: null, renaming: null, deleting: null, undo: [], grab: "one" };
-  const isFixed = (id) => !id || lib.genres.has(id) || /\/(rest|general)$/.test(id);
+  const isFixed = (id) => !id || lib.genres.has(id) || id === UNCAT_CAT || /\/general$/.test(id);
   const slugify = (name) => name.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "folder";
   function freshId(base) {
     let id = base;
@@ -476,7 +479,8 @@
   function houseDefaults() {
     const out = new Map();
     const tagSets = Object.entries(stock.tags || {}).map(([t, list]) => [t, new Set(list)]);
-    for (const a of [...AISLES, EVERYTHING]) {
+    for (const i of stock.aisles.rest || []) out.set(stock.films[i][0], UNCAT_SUB);
+    for (const a of AISLES) {
       const films = (stock.aisles[a.id] || []).map((i) => {
         const [slug, name] = stock.films[i];
         const tags = new Set();
@@ -495,7 +499,7 @@
     }
     for (const [i, g] of Object.entries(stock.homes || {})) {
       const slug = stock.films[i][0];
-      if (!out.has(slug)) out.set(slug, `${g}/rest/general`);
+      if (!out.has(slug)) out.set(slug, UNCAT_SUB);
     }
     return out;
   }
@@ -520,15 +524,18 @@
       cats.get(s.cat).subs.push(s.id);
     };
 
+    genres.set(UNCAT, { id: UNCAT, name: "Uncategorized", cats: [], uncat: true });
+    addCat({ id: UNCAT_CAT, genre: UNCAT, name: "Uncategorized" });
     for (const [id, name] of GENRES) genres.set(id, { id, name, cats: [] });
-    // Every genre has "Everything Else", and every category has "General".
+    // Every genre has a "General" category (an ordinary one: nothing lands
+    // there unless you put it there), and every category has a "General" subcat.
     for (const [g] of GENRES) {
       if (g === STOCKED) continue;
-      addCat({ id: `${g}/rest`, genre: g, name: "Everything Else", order: 2 });
+      addCat({ id: `${g}/rest`, genre: g, name: "General", order: 1 });
     }
     for (const a of [...AISLES, EVERYTHING]) {
       const id = `${STOCKED}/${a.id}`;
-      addCat({ id, genre: STOCKED, name: a.name, aisle: a, order: a === EVERYTHING ? 2 : 1 });
+      addCat({ id, genre: STOCKED, name: a.name, aisle: a, order: 1 });
       for (const r of SHELF_RULES) addSub({ id: `${id}/${r.id}`, cat: id, name: r.name(a), order: r.order });
     }
     const H = house();
@@ -546,9 +553,9 @@
         }
       }
     }
-    // Deleted folders (never a genre, "Everything Else" or "General").
+    // Deleted folders (never a genre, Uncategorized, or a "General" subcat).
     for (const id of H.hidden) {
-      if (genres.has(id) || /\/(rest|general)$/.test(id)) continue;
+      if (genres.has(id) || id === UNCAT_CAT || /\/general$/.test(id)) continue;
       if (cats.has(id)) {
         const c = cats.get(id);
         for (const sid of c.subs) subs.delete(sid);
@@ -589,7 +596,7 @@
       for (const [s, n] of fr.films) { place.set(s, at); if (!names.has(s)) names.set(s, n); }
     }
     // A film whose folder was deleted drops one level: to its category's
-    // General, or to the genre's Everything Else.
+    // General; a deleted category's films go back to Uncategorized.
     const home = (sub) => {
       if (subs.has(sub)) return sub;
       // A deleted niche's films go back to its subcat.
@@ -597,7 +604,7 @@
       if (up.split("/").length >= 3 && subs.has(up)) return up;
       const parts = String(sub).split("/");
       const cat = parts.slice(0, 2).join("/");
-      return cats.has(cat) ? `${cat}/general` : `${parts[0]}/rest/general`;
+      return cats.has(cat) ? `${cat}/general` : UNCAT_SUB;
     };
     const inSub = new Map([...subs.keys()].map((k) => [k, []]));
     for (const [slug, sub] of place) {
@@ -653,10 +660,12 @@
   const nameOf = (id) => (lib.genres.get(id) || lib.cats.get(id) || lib.subs.get(id) || {}).name || "";
   function pathOf(id) {
     const p = partsOf(id);
+    if (p.genre === UNCAT) return ["Uncategorized"];
     return [p.genre, p.cat, p.sub, p.niche].filter(Boolean).map(nameOf);
   }
   // A drop on a genre files under its Everything Else; on a category, under General.
   function landingSub(id) {
+    if (id === UNCAT || id === UNCAT_CAT) return UNCAT_SUB;
     const p = partsOf(id);
     if (p.niche) return p.niche;
     if (p.sub) return p.sub;
@@ -1284,7 +1293,7 @@
     if (edit.on && edit.renaming === id) return `<li class="lbs-adding"><input type="text" class="lbs-rename" maxlength="40" value="${esc(nameOf(id))}"></li>`;
     if (edit.on && edit.deleting === id) {
       const n = lib.count.get(id) || 0;
-      return `<li class="lbs-confirm">Delete <b>${esc(nameOf(id))}</b>?${n ? ` Its ${fmt(n)} film${n === 1 ? "" : "s"} go to ${lib.cats.has(id) ? "Everything Else" : "General"}.` : ""} <button type="button" data-act="del-yes" data-id="${esc(id)}">Delete</button><button type="button" data-act="del-no">Keep</button></li>`;
+      return `<li class="lbs-confirm">Delete <b>${esc(nameOf(id))}</b>?${n ? ` Its ${fmt(n)} film${n === 1 ? "" : "s"} go to ${lib.cats.has(id) ? "Uncategorized" : "General"}.` : ""} <button type="button" data-act="del-yes" data-id="${esc(id)}">Delete</button><button type="button" data-act="del-no">Keep</button></li>`;
     }
     const tools = !edit.on || lib.genres.has(id) ? "" :
       `<span class="lbs-tools">` +
@@ -1391,6 +1400,7 @@
   const HANG_H = 216, HANG_DROP = 18; // the hanging category boards over each bay
   const AISLE_W = 900, AISLE_GAP = 90; // the big aisle sign at the start of each row of bays
   const ROW_H = WU.sign + WU.shelves * WU.shelfH + 150; // a row of bays plus the floor between rows
+  const PILE_W = 2600, PILE_H = 1500, PILE_GAP = 900; // the uncategorized pile, in the corner
   const RUN_GAP = 700, GENRE_GAP = 400; // between runs of aisles, and between genres in a run
   const FAR = 0.09, NEAR = 0.45, TEXT = 0.8, ZMIN = 0.02, ZMAX = 6;
   const DEPTH_X = 4, DEPTH_Y = 5; // the sliver of top and side we see
@@ -1971,8 +1981,16 @@
     // Edit mode keeps an empty bay at the end to drop pieces into.
     const roomBays = regions.reduce((n, R) => n + R.rows * perRow, 0);
     const bays = edit.on ? Math.max(maxBay + 1, roomBays) : maxBay + 1;
-    const width = rowPos ? roomW : Math.min(bays, perRow) * (WU.bayW + WU.gap);
-    const height = rowPos ? Math.max(roomH, ...Array.from({ length: Math.ceil(bays / perRow) }, (_, r) => origin(r * perRow).y + ROW_H)) : Math.ceil(bays / perRow) * ROW_H;
+    let width = rowPos ? roomW : Math.min(bays, perRow) * (WU.bayW + WU.gap);
+    let height = rowPos ? Math.max(roomH, ...Array.from({ length: Math.ceil(bays / perRow) }, (_, r) => origin(r * perRow).y + ROW_H)) : Math.ceil(bays / perRow) * ROW_H;
+    // The uncategorized films: a pile on the floor in the far corner.
+    const unc = (lib.inSub.get(UNCAT_SUB) || []).length;
+    let pile = null;
+    if (unc) {
+      pile = { x: width + PILE_GAP, y: Math.max(0, height - PILE_H), w: PILE_W, h: PILE_H, n: unc };
+      width = pile.x + PILE_W;
+      height = Math.max(height, PILE_H);
+    }
     // Each row of bays is an aisle; its sign names the categories along it.
     const aisles = [];
     for (const r of [...runs].sort((a, c) => a.bay - c.bay || a.shelf - c.shelf || a.x0 - c.x0)) {
@@ -1982,7 +2000,7 @@
     }
     // Aisles are numbered within their genre.
     { const seen = new Map(); for (const a of aisles.filter(Boolean)) { const n = (seen.get(a.genre) || 0) + 1; seen.set(a.genre, n); a.num = n; } }
-    wall.lay = { films, chunks, secs, runs, bookends, stickers, hang, aisles: aisles.filter(Boolean), left: -AISLE_W - AISLE_GAP, faces: [], idx, bucket, held: H.held, width, height, bays, k: perRow, origin, rowPos };
+    wall.lay = { films, chunks, secs, runs, bookends, stickers, hang, aisles: aisles.filter(Boolean), left: -AISLE_W - AISLE_GAP, faces: [], idx, bucket, held: H.held, width, height, bays, k: perRow, origin, rowPos, pile };
     recolourSections();
     renderTray();
   }
@@ -3559,6 +3577,8 @@
       ctx.textAlign = "left";
     }
 
+    if (L.pile && L.pile.x < x1 && L.pile.x + L.pile.w > x0 && L.pile.y < y1 && L.pile.y + L.pile.h > y0) drawPile(ctx, L.pile, px);
+
     // Hanging from the ceiling over each bay: tall wooden boards naming the
     // categories on it, stacked.
     if (L.hang) {
@@ -3641,6 +3661,84 @@
     if (wall.slow > 6 && !wall.lite) { wall.lite = true; toast("Simplified the shelves to keep things smooth on this computer."); drawSoon(); }
     renderStagePath();
   }
+
+  // The pile: a heap of boxes, drawn once into a picture (redrawn when the
+  // count changes), with a sign. Click it to open Uncategorized in the
+  // Library; drop films on it to uncategorize them.
+  function pileImage(P) {
+    const key = `${P.n}|${paintVer}`;
+    if (wall.pileImg && wall.pileImg.key === key) return wall.pileImg.cv;
+    const S = 0.5, W = P.w * S, Hh = P.h * S;
+    const cv = (wall.pileImg && wall.pileImg.cv) || document.createElement("canvas");
+    cv.width = W; cv.height = Hh;
+    const g = cv.getContext("2d");
+    g.clearRect(0, 0, W, Hh);
+    let seed = 7;
+    const rnd = () => ((seed = (seed * 16807) % 2147483647) - 1) / 2147483646;
+    const films = (lib.inSub.get(UNCAT_SUB) || []).slice(0, 700);
+    const cx = W / 2, base = Hh * 0.97, top = Hh * 0.42, half = W * 0.47;
+    // floor shadow
+    g.fillStyle = "rgba(0,0,0,0.45)";
+    g.beginPath(); g.ellipse(cx, base, half * 1.02, Hh * 0.05, 0, 0, Math.PI * 2); g.fill();
+    const boxes = [];
+    const n = Math.min(650, 120 + Math.round(Math.sqrt(P.n) * 3));
+    for (let k = 0; k < n; k++) {
+      const u = (rnd() + rnd() + rnd()) / 3 * 2 - 1; // mostly towards the middle
+      const x = cx + u * half;
+      const surf = base - (base - top) * Math.max(0, 1 - u * u * 1.05);
+      const y = surf + (base - surf) * Math.pow(rnd(), 0.55);
+      const f = films[k % Math.max(1, films.length)];
+      boxes.push({ x, y, a: (rnd() - 0.5) * 1.6, w: 34 + rnd() * 20, h: 50 + rnd() * 22, slug: f ? f[0] : "", year: f ? yearOf(f[1]) : 2000 });
+    }
+    boxes.sort((a, b) => a.y - b.y);
+    for (const b of boxes) {
+      g.save();
+      g.translate(b.x, b.y);
+      g.rotate(b.a);
+      const own = b.slug && colorOf(b.slug);
+      const hv = b.slug ? hash(b.slug) : 0;
+      g.fillStyle = own ? `#${own.slice(0, 6)}` : `hsl(${hv % 360} ${20 + (hv % 30)}% ${18 + (hv % 18)}%)`;
+      g.fillRect(-b.w / 2, -b.h / 2, b.w, b.h);
+      g.fillStyle = isCan(b.year) ? "rgba(200,205,210,0.5)" : fmtOf(b.year) === "bluray" ? "rgba(40,110,200,0.55)" : "rgba(10,12,14,0.55)";
+      g.fillRect(-b.w / 2, -b.h / 2, b.w, 4);
+      g.fillRect(-b.w / 2, b.h / 2 - 4, b.w, 4);
+      g.fillStyle = "rgba(255,255,255,0.10)";
+      g.fillRect(-b.w / 2, -b.h / 2, 3, b.h);
+      g.strokeStyle = "rgba(0,0,0,0.5)";
+      g.lineWidth = 1;
+      g.strokeRect(-b.w / 2, -b.h / 2, b.w, b.h);
+      g.restore();
+    }
+    wall.pileImg = { key, cv };
+    return cv;
+  }
+  function drawPile(ctx, P, px) {
+    ctx.drawImage(pileImage(P), P.x, P.y, P.w, P.h);
+    // a sign stuck in the top of the heap
+    const sw = 1100, sh = 300, sx = P.x + P.w / 2 - sw / 2, sy = P.y + P.h * 0.42 - sh - 140;
+    ctx.fillStyle = "#3a2c20";
+    ctx.fillRect(P.x + P.w / 2 - 12, sy + sh, 24, 220);
+    ctx.fillStyle = "rgba(0,0,0,0.5)";
+    ctx.fillRect(sx + 14, sy + 18, sw, sh);
+    ctx.fillStyle = "#17191c";
+    ctx.fillRect(sx, sy, sw, sh);
+    ctx.fillStyle = "#e23b2e";
+    ctx.fillRect(sx + 24, sy + 24, sw - 48, sh - 48);
+    ctx.fillStyle = "#f0e6cf";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = `800 110px "Helvetica Neue", Arial, sans-serif`;
+    ctx.fillText("UNCATEGORIZED", sx + sw / 2, sy + 125, sw - 90);
+    ctx.font = `700 58px "Helvetica Neue", Arial, sans-serif`;
+    ctx.fillText(`${fmt(P.n)} film${P.n === 1 ? "" : "s"}`, sx + sw / 2, sy + 225, sw - 90);
+    ctx.textAlign = "left";
+    if (wall.dropHint && wall.dropHint.pile) {
+      ctx.strokeStyle = "#40bcf4";
+      ctx.lineWidth = Math.max(6, 3 * px);
+      ctx.strokeRect(P.x, P.y, P.w, P.h);
+    }
+  }
+  const inPile = (p) => { const P = wall.lay && wall.lay.pile; return P && p.x >= P.x && p.x <= P.x + P.w && p.y >= P.y - 400 && p.y <= P.y + P.h; };
 
   function bayAt(p) {
     const L = wall.lay;
@@ -3815,7 +3913,7 @@
     c.addEventListener("mousemove", (e) => {
       if (pan) return;
       const i = filmAt(e.offsetX, e.offsetY);
-      c.style.cursor = i != null ? "grab" : wall.cam.z < NEAR ? "zoom-in" : "default";
+      c.style.cursor = i != null ? "grab" : inPile(toWall(e.offsetX, e.offsetY)) ? "pointer" : wall.cam.z < NEAR ? "zoom-in" : "default";
       if (i !== wall.hover) { wall.hover = i; drawSoon(); }
       showTip(i, e.offsetX, e.offsetY);
     });
@@ -3837,6 +3935,8 @@
         openFilm(wall.lay.films[i].slug, wall.lay.films[i].name);
         return;
       }
+      // The pile of uncategorized films: open them in the Library.
+      if (inPile(toWall(e.offsetX, e.offsetY))) return openUncategorized();
       // A franchise sticker on the back wall: edit its colour and title art.
       const p = toWall(e.offsetX, e.offsetY);
       const st = (wall.lay.stickers || []).find((q) => p.x >= q.x0 - 2 && p.x <= q.x1 + 2 && p.y <= q.y && p.y >= q.y - (WU.shelfH - WU.lip));
@@ -4234,6 +4334,12 @@
     rd.readAsText(file);
   }
 
+  function openUncategorized() {
+    libUI.path = [UNCAT];
+    libUI.sel = null;
+    if (lv.mode === "list") { lv.f = { sgenre: { [UNCAT]: 1 } }; saveLv(); }
+    setLibrary(true);
+  }
   // Fly to a film on the wall and make it blink.
   function jumpTo(slug, name) {
     closeFilm();
@@ -4242,6 +4348,7 @@
     if (wall.level !== "wall") { wall.level = "wall"; showStage(); }
     requestAnimationFrame(() => {
       const L = wall.lay, i = L && L.idx.get(slug);
+      if (i == null && L && L.pile && lib.place.get(slug) === UNCAT_SUB) { const P = L.pile; return flyTo(P.x + P.w / 2, P.y + P.h / 2, 0.35); }
       if (i == null) return toast(`‘${titleOf(name || slug)}’ isn't on the shelves yet.`);
       const f = L.films[i];
       flyTo(f.x + f.w / 2, f.y - f.h / 2, 1.3);
@@ -4265,6 +4372,7 @@
   const libUI = { open: !!mine.libOpen, path: [STOCKED], sel: null, focus: null, adding: null };
   function kidsOf(id) {
     if (!id) return { folders: [...lib.genres.keys()], films: [] };
+    if (id === UNCAT) return { folders: [], films: lib.inSub.get(UNCAT_SUB) || [] };
     const p = partsOf(id);
     if (p.niche) return { folders: [], films: lib.inSub.get(id) || [] };
     if (p.sub) return { folders: (lib.subs.get(id).niches || []).slice(), films: lib.inSub.get(id) || [] };
@@ -4272,7 +4380,7 @@
     if (p.genre) return { folders: lib.genres.get(id).cats.slice(), films: [] };
     return { folders: [], films: [] };
   }
-  const childLevel = (id) => { if (!id) return null; const p = partsOf(id); return p.niche ? null : p.sub ? "niche" : p.cat ? "sub" : p.genre ? "cat" : null; };
+  const childLevel = (id) => { if (!id || id === UNCAT) return null; const p = partsOf(id); return p.niche ? null : p.sub ? "niche" : p.cat ? "sub" : p.genre ? "cat" : null; };
   const LEVEL_WORD = { cat: "category", sub: "subcat", niche: "niche" };
   let libIo = null;
 
@@ -4332,7 +4440,7 @@
         `</ul></div>`
       );
     };
-    const target = right && !lib.genres.has(right) ? landingSub(right) : null;
+    const target = right && (!lib.genres.has(right) || right === UNCAT) ? landingSub(right) : null;
     // Jump to: the last thing you clicked (a film, or a folder), else the open folder.
     const focus = libUI.focus && (libUI.focus.film ? (lib.place.has(libUI.focus.film[0]) ? libUI.focus : null) : path.includes(libUI.focus.folder) ? libUI.focus : null) || (right ? { folder: right } : null);
     const jumpOk = focus && (focus.film || inRoom(partsOf(focus.folder).genre));
@@ -4437,9 +4545,9 @@
   function lvBase() {
     const H = house();
     const heldList = edit.on ? [] : mine.held || [];
-    const off = new Set(H.held.map(([x]) => x)); // unshelved: off the wall, in the store's workspace
-    const key = `${lib.place.size}|${heldList.length}|${H.held.length}|${edit.on}`;
-    if (lv.base && lv.baseLib === lib && lv.baseKey === key) return lv.base;
+    const key = `${lib.place.size}|${heldList.length}|${edit.on}`;
+    if (lv.base && lv.baseLib === lib && lv.baseLay === wall.lay && lv.baseKey === key) return lv.base;
+    const onWall = wall.lay ? wall.lay.idx : null;
     const F = buildFacts();
     const held = new Set(heldList.map(([x]) => x));
     const byHand = new Set([...Object.keys(H.place), ...(mine.view === "mine" && !edit.on ? Object.keys(mine.place) : [])]);
@@ -4458,9 +4566,8 @@
       if (gm & gBit.documentary) type.push("doc");
       if ((gm & gBit["tv-movie"]) || (i != null && F.cat.info && F.cat.info[i] && F.cat.info[i][5])) type.push("tv");
       if (gm & gBit.animation) type.push("anim");
-      const status = [byHand.has(slug) ? "sorted" : "auto"];
-      if (p.cat && /\/rest$/.test(p.cat)) status.push("uncat");
-      status.push(off.has(slug) ? "unshelved" : "shelved");
+      const status = [p.genre === UNCAT ? "uncat" : "cat"];
+      if (onWall && p.genre !== UNCAT) status.push(onWall.has(slug) ? "wall" : "nowall");
       if (held.has(slug)) status.push("held");
       out.push({
         slug, name, year, i: i == null ? 1e9 : i, key: fileKey(name),
@@ -4473,7 +4580,7 @@
         },
       });
     }
-    lv.base = out; lv.baseLib = lib; lv.baseKey = key;
+    lv.base = out; lv.baseLib = lib; lv.baseLay = wall.lay; lv.baseKey = key;
     return out;
   }
   // The groups shown: store location narrows level by level.
@@ -4481,13 +4588,14 @@
     const F = buildFacts();
     const inc = (g) => Object.entries(lv.f[g] || {}).filter(([, s]) => s === 1).map(([v]) => v);
     const gs = [
-      { id: "status", label: "Store", vals: [["shelved", "Shelved"], ["unshelved", "Unshelved"], ["sorted", "Hand-sorted"], ["auto", "Auto-placed"], ["uncat", "Uncategorized"], ...(edit.on ? [] : [["held", "In inventory"]])] },
-      { id: "sgenre", label: "Store genre", vals: [...lib.genres.values()].filter((g) => (lib.count.get(g.id) || 0) > 0).map((g) => [g.id, g.name]) },
+      { id: "status", label: "Store", vals: [["uncat", "Uncategorized"], ["cat", "Categorized"], ["wall", "On the wall"], ["nowall", "Not on the wall"], ...(edit.on ? [] : [["held", "In inventory"]])] },
+      { id: "sgenre", label: "Store genre", vals: [...lib.genres.values()].map((g) => [g.id, g.name]) },
     ];
-    const sg = inc("sgenre");
-    if (sg.length === 1) gs.push({ id: "scat", label: `${nameOf(sg[0])} categories`, vals: lib.genres.get(sg[0]).cats.map((c) => [c, nameOf(c)]) });
-    const sc = inc("scat");
-    if (sc.length === 1 && lib.cats.has(sc[0])) gs.push({ id: "ssub", label: `${nameOf(sc[0])} subcats`, vals: lib.cats.get(sc[0]).subs.flatMap((s) => [[s, nameOf(s)], ...(lib.subs.get(s).niches || []).map((n) => [n, `↳ ${nameOf(n)}`])]) });
+    // Pick store genres and their categories appear; pick categories and their subcats appear.
+    const sg = inc("sgenre").filter((g) => g !== UNCAT && lib.genres.has(g));
+    if (sg.length) gs.push({ id: "scat", label: "Store category", vals: sg.flatMap((g) => lib.genres.get(g).cats.map((c) => [c, sg.length > 1 ? `${nameOf(g)} › ${nameOf(c)}` : nameOf(c)])) });
+    const sc = inc("scat").filter((c) => lib.cats.has(c));
+    if (sc.length) gs.push({ id: "ssub", label: "Store subcat", vals: sc.flatMap((c) => lib.cats.get(c).subs.flatMap((s2) => [[s2, sc.length > 1 ? `${nameOf(c)} › ${nameOf(s2)}` : nameOf(s2)], ...(lib.subs.get(s2).niches || []).map((n) => [n, `↳ ${nameOf(n)}`])])) });
     gs.push({ id: "genre", label: "Genre", vals: GENRES.map(([g, n]) => [g, n]) });
     gs.push({ id: "type", label: "Type", vals: LV_TYPES, note: F && F.runtime ? "" : "Feature and Short need film details (Catalogue builder › Film details)" });
     const decs = [];
@@ -4642,13 +4750,13 @@
     let html = "";
     for (let n = first; n < last; n++) {
       const r = lv.rows[n], on = lv.sel.has(r.slug);
-      const tail = r.path.slice(1).map(nameOf).join(" › ") || nameOf(r.path[0]);
+      const tail = r.path[0] === UNCAT ? "" : r.path.slice(1).map(nameOf).join(" › ");
       html +=
         `<div class="lbs-lv-row${on ? " -sel" : ""}${lv.cursor === n ? " -cur" : ""}" style="top:${n * LV_ROW}px" data-n="${n}" data-slug="${esc(r.slug)}" data-name="${esc(r.name)}" role="option" aria-selected="${on}">` +
         (lv.selecting ? `<span class="lbs-lv-bub${on ? " -on" : ""}" data-bub="1"></span>` : "") +
         `<img data-lvp="${esc(r.slug)}" src="${posterCache.has(r.slug) ? esc(posterCache.get(r.slug)[0]) : EMPTY}" alt="">` +
         `<span class="lbs-lv-t">${esc(titleOf(r.name))} <i>${r.year || ""}</i></span>` +
-        (r.v.status.includes("held") ? `<em class="-inv">Inv</em>` : "") + (r.v.status.includes("unshelved") ? `<em class="-inv -off">Off</em>` : "") +
+        (r.v.status.includes("held") ? `<em class="-inv">Inv</em>` : "") + 
         `<small title="${esc([nameOf(r.path[0]), tail].join(" › "))}"><b>${esc(nameOf(r.path[0]))}</b> ${esc(r.path.length > 1 ? tail : "")}</small></div>`;
     }
     sp.innerHTML = html;
@@ -4665,7 +4773,6 @@
       foot.innerHTML = `<div class="lbs-lib-acts"><b class="lbs-lv-n">${fmt(n)} selected</b>` +
         `<button type="button" class="-go" data-act="lv-move">Move to…</button>` +
         `<button type="button" data-act="lv-hold">Add to inventory</button>` +
-        `<button type="button" data-act="lv-unshelf">Unshelve</button><button type="button" data-act="lv-reshelf">Reshelve</button>` +
         `<button type="button" class="-link" data-act="lv-clear">Deselect</button></div>`;
       return;
     }
@@ -4755,6 +4862,7 @@
     const all = [];
     for (const g of lib.genres.values()) {
       all.push([g.id, 0]);
+      if (g.id === UNCAT) continue;
       for (const c of g.cats) { all.push([c, 1]); for (const sId of lib.cats.get(c).subs) { all.push([sId, 2]); for (const n of lib.subs.get(sId).niches || []) all.push([n, 3]); } }
     }
     box._all = all;
@@ -4769,18 +4877,6 @@
     box.querySelector(".lbs-mvpick-q").addEventListener("input", (e) => { e.stopPropagation(); paint(); });
     paint();
     box.querySelector(".lbs-mvpick-q").focus();
-  }
-  // Unshelve: off the wall into the store's workspace (house plan; Edit store only). Reshelve: back.
-  function setShelved(films, back) {
-    films = films.filter(([x]) => lib.place.has(x));
-    if (!films.length) return;
-    if (!edit.on) return toast("Unshelving changes the store for everyone: turn on Edit store first.");
-    const set = new Set(films.map(([x]) => x));
-    const label = films.length === 1 ? `‘${titleOf(films[0][1])}’` : `${fmt(films.length)} films`;
-    houseEdit(back ? `${label} back on the shelves.` : `${label} unshelved.`, (H) => {
-      H.held = H.held.filter(([x]) => !set.has(x));
-      if (!back) H.held.push(...films);
-    });
   }
   function closeMovePick() { root && root.querySelectorAll(".lbs-mvpick").forEach((x) => x.remove()); }
 
@@ -5298,7 +5394,8 @@
     d.ghost.style.top = `${e.clientY + (big ? -60 : 10)}px`;
     const c = wall.canvas, r = c.getBoundingClientRect();
     const over = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
-    wall.dropHint = over ? (d.kind === "piece" ? (d.pour ? pourTarget(d, e.clientX - r.left, e.clientY - r.top) : d.group ? groupTarget(d, e.clientX - r.left, e.clientY - r.top) : dropTarget(d, e.clientX - r.left, e.clientY - r.top)) : dvdTarget(d.slug, e.clientX - r.left, e.clientY - r.top)) : null;
+    const onPile = over && d.kind === "dvd" && inPile(toWall(e.clientX - r.left, e.clientY - r.top));
+    wall.dropHint = onPile ? { pile: true } : over ? (d.kind === "piece" ? (d.pour ? pourTarget(d, e.clientX - r.left, e.clientY - r.top) : d.group ? groupTarget(d, e.clientX - r.left, e.clientY - r.top) : dropTarget(d, e.clientX - r.left, e.clientY - r.top)) : dvdTarget(d.slug, e.clientX - r.left, e.clientY - r.top)) : null;
     root.querySelectorAll(".lbs-folder.-over").forEach((el) => el.classList.remove("-over"));
     const under = document.elementFromPoint(e.clientX, e.clientY);
     // Pulling a box down off the shelf (or over the tab) opens the inventory to drop it in.
@@ -5357,6 +5454,7 @@
       if (d.from === "tray") releaseFilm(d.slug);
       return moveFilms(many || [[d.slug, d.name]], folder.dataset.drop);
     }
+    if (hint && hint.pile) return moveFilms(many || [[d.slug, d.name]], UNCAT);
     if (many) { toast("Drop a group onto a folder or your inventory, or use Move to…"); return drawSoon(); }
     if (!edit.on) { if (hint) return browseDrop(d.slug, d.name, hint); return drawSoon(); }
     if (hint && hint.ok) return dropDvd(d.slug, d.name, hint);
@@ -5724,14 +5822,14 @@
     const held = slug && (mine.held || []).some(([s2]) => s2 === slug);
     const inStore = slug && lib.place.has(slug);
     const html = many
-      ? `<b>${fmt(lv.sel.size)} films</b>` + b("lv-move", "Move to…") + b("lv-hold", "Add to inventory") + b("lv-unshelf", "Unshelve") + b("lv-reshelf", "Reshelve") + b("lv-clear", "Deselect all")
+      ? `<b>${fmt(lv.sel.size)} films</b>` + b("lv-move", "Move to…") + b("lv-hold", "Add to inventory")+ b("lv-uncat", "Uncategorize") + b("lv-clear", "Deselect all")
       : `<b>${esc(titleOf(name))}</b>` +
         b("f-open", "Details") +
         (held ? b("f-return", "Take out of inventory") : b("f-hold", "Add to inventory", inStore ? "" : " disabled")) +
         b("f-jump", "Jump to section", inStore ? "" : " disabled") +
         b("f-editx", "Edit") +
         b("f-sort", "Sort") +
-        (house().held.some(([x]) => x === slug) ? b("f-reshelf", "Reshelve") : b("f-unshelf", "Unshelve", inStore ? "" : " disabled")) +
+        (inStore && lib.place.get(slug) !== UNCAT_SUB ? b("f-uncat", "Uncategorize") : "") +
         b("f-fr", franchiseOf(slug) ? "Franchise" : "Add to franchise", inStore ? "" : " disabled");
     const m = h("div", "lbs-ctx", html);
     m.setAttribute("role", "menu");
@@ -6016,9 +6114,10 @@
         const g = btn.dataset.g, v = btn.dataset.v, st = (lv.f[g] = lv.f[g] || {});
         const next = st[v] === 1 ? -1 : st[v] === -1 ? 0 : 1;
         if (next) st[v] = next; else delete st[v];
-        // narrowing a store genre resets its categories below
-        if (g === "sgenre") { delete lv.f.scat; delete lv.f.ssub; }
-        if (g === "scat") delete lv.f.ssub;
+        // categories and subcats below follow what's still picked above
+        const incl = (k) => Object.entries(lv.f[k] || {}).filter(([, x]) => x === 1).map(([x]) => x);
+        if (lv.f.scat) { const gs2 = new Set(incl("sgenre")); for (const c of Object.keys(lv.f.scat)) if (!lib.cats.has(c) || !gs2.has(lib.cats.get(c).genre)) delete lv.f.scat[c]; if (!Object.keys(lv.f.scat).length) delete lv.f.scat; }
+        if (lv.f.ssub) { const cs2 = new Set(incl("scat")); for (const x of Object.keys(lv.f.ssub)) if (!lib.subs.has(x) || !cs2.has(lib.subs.get(x).cat)) delete lv.f.ssub[x]; if (!Object.keys(lv.f.ssub).length) delete lv.f.ssub; }
         if (!Object.keys(st).length) delete lv.f[g];
         saveLv();
         return renderLibrary();
@@ -6032,7 +6131,7 @@
         holdFilms(films); ui.pocket = true; renderPocket();
         return toast(`${fmt(films.length)} film${films.length === 1 ? "" : "s"} in your inventory.`);
       }
-      if (act === "lv-unshelf" || act === "lv-reshelf") return setShelved(lvFilms(), act === "lv-reshelf");
+      if (act === "lv-uncat") { const films = lvFilms(); lv.selecting = false; lvSetSel(new Set()); return moveFilms(films, UNCAT); }
       if (act === "mv-close") return closeMovePick();
       if (act === "mv-to") {
         const pk = btn.closest(".lbs-mvpick"), films = pk && pk._films;
@@ -6064,7 +6163,7 @@
       if (act === "lb-more") { const m = btn.parentElement.querySelector(".lbs-lb-menu"); if (m) { const was = m.hidden; root.querySelectorAll(".lbs-menu").forEach((x) => (x.hidden = true)); m.hidden = !was; } return; }
       if (act === "f-jump") return jumpTo(fs, fn);
       if (act === "f-fr") { closeFilm(); return openFranchise(fs, fn); }
-      if (act === "f-unshelf" || act === "f-reshelf") return setShelved([[fs, fn]], act === "f-reshelf");
+      if (act === "f-uncat") return moveFilms([[fs, fn]], UNCAT);
       if (act === "f-editx") { openFilm(fs, fn); ui.pane = "edit"; return renderFilm(); }
       if (act === "f-edit") { if (!ui.film || ui.film.slug !== fs) { ui.film = { slug: fs, name: fn }; filmDetails(fs).then((d) => ui.film && ui.film.slug === fs && renderFilm(d)); } ui.pane = ui.pane === "edit" ? null : "edit"; return renderFilm(); }
       if (act === "f-sort") { closeFilm(); $(".lbs-card", root).hidden = true; return openSort(fs, fn); }
