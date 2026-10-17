@@ -2758,6 +2758,37 @@
           st.info[i] = [lid, (j && j.runTime) || 0, (pl && pl.code) || "", (ol && ol.code) || "", ((j && j.directors) || []).map((d) => d.name).filter(Boolean), j && j.type && j.type !== "Film" ? j.type : 0];
           if (++n % 200 === 0) { await catSave(); tick(); }
         })()));
+        st.phase = "origin";
+        await catSave();
+      }
+      // 6 (with film details). Country of origin, from TMDB (where a film
+      //    comes from, not every country that helped make it). Uses the TMDB
+      //    match the logo builder made and your TMDB key; films without a
+      //    match are worked out in the store from their countries and language.
+      if (st.phase === "origin") {
+        const key = readJSON(TMDB_KEY, "");
+        await logoReady; await loadSharedLogos();
+        st.origin = st.origin || {};
+        const todo = [];
+        st.films.forEach(([slug], i) => { const e = logoEntry(slug); if (e && e[0] && !(i in st.origin)) todo.push([i, e[0]]); });
+        if (key && todo.length) {
+          const bearer = key.length > 40, lane = limiter(8);
+          let n = 0;
+          await Promise.all(todo.map(([i, tid]) => lane(async () => {
+            if (!catJob.running) throw new Error("paused");
+            for (let tries = 0; tries < 5; tries++) {
+              const u = new URL(`https://api.themoviedb.org/3/movie/${tid}`);
+              if (!bearer) u.searchParams.set("api_key", key);
+              const r = await fetch(u, bearer ? { headers: { Authorization: `Bearer ${key}` } } : {});
+              if (r.status === 429) { await new Promise((ok) => setTimeout(ok, 1500 * (tries + 1))); continue; }
+              if (r.status === 401) throw new Error("TMDB didn't accept your key (Logo builder › Forget key, then paste it again).");
+              const j = r.ok ? await r.json() : null;
+              st.origin[i] = (j && j.origin_country) || [];
+              break;
+            }
+            if (++n % 300 === 0) { catJob.msg = `Country of origin: ${fmt(Object.keys(st.origin).length)} / ${fmt(todo.length + Object.keys(st.origin).length - n)}`; await catSave(); tick(); }
+          })));
+        } else if (!key) catJob.msg = "No TMDB key here, so country of origin is worked out from countries and language instead.";
         st.phase = "done";
         await catSave();
       }
@@ -2781,6 +2812,7 @@
     if (st.phase === "lists") return `Reading lists: ${fmt(done)} / ${fmt(lists.length)}`;
     if (st.phase === "types") return "Reading Letterboxd's Short and TV marks…";
     if (st.phase === "lids") return `Film details: matching IDs, page ${fmt(st.lidPage || 0)} / ${fmt(st.cutPage)}`;
+    if (st.phase === "origin") return `Country of origin from TMDB: ${fmt(Object.keys(st.origin || {}).length)} films so far`;
     if (st.phase === "details") { const got = (st.info || []).filter((x) => x && x.length > 1).length; return `Film details: ${fmt(got)} / ${fmt((st.info || []).filter(Boolean).length)} read`; }
     return `Done: ${fmt(st.films.length)} films · ${fmt(lists.length)} lists${st.info ? ` · details for ${fmt(st.info.filter((x) => x && x.length > 1).length)}` : ""}`;
   }
@@ -2819,7 +2851,8 @@
       // [lid, runtime, primary language, original language, [director index], type]
       const people = [], at = new Map();
       const pid = (n) => { if (!at.has(n)) { at.set(n, people.length); people.push(n); } return at.get(n); };
-      out.info = st.info.map((x) => (x && x.length > 1 ? [x[0], x[1], x[2], x[3], (x[4] || []).map(pid), x[5] || 0] : x ? [x[0]] : 0));
+      const og = st.origin || {};
+      out.info = st.info.map((x, i) => (x && x.length > 1 ? [x[0], x[1], x[2], x[3], (x[4] || []).map(pid), x[5] || 0, og[i] || 0] : x ? [x[0]] : 0));
       out.people = people;
       out.langNames = st.langNames || {};
     }
@@ -4635,6 +4668,35 @@
       return { keys, names, per };
     };
     const country = multi("country/");
+    // Country of origin: TMDB's when we have it; otherwise a film with one
+    // production country is from there, and a co-production goes to the
+    // country that speaks its primary language (else it keeps them all).
+    const origin = { keys: country.keys.slice(), names: country.names.slice(), per: new Array(N), exact: false };
+    const at = new Map(origin.keys.map((k, n) => [k, n]));
+    const keyFor = (slug, name) => { if (!at.has(slug)) { at.set(slug, origin.keys.length); origin.keys.push(slug); origin.names.push(name); } return at.get(slug); };
+    const ALIAS = { us: "usa", gb: "uk", kr: "south-korea", kp: "north-korea", ru: "russia", ir: "iran", cz: "czechia", va: "vatican-city", tw: "taiwan", hk: "hong-kong", mo: "macao", ps: "palestine", bo: "bolivia", ve: "venezuela", tz: "tanzania", sy: "syria", la: "laos", vn: "vietnam", md: "moldova", mk: "north-macedonia" };
+    let regionName = null;
+    try { regionName = new Intl.DisplayNames(["en"], { type: "region" }); } catch {}
+    const isoSlug = (iso) => {
+      const lo = iso.toLowerCase();
+      if (ALIAS[lo] && at.has(ALIAS[lo])) return keyFor(ALIAS[lo]);
+      const nm = regionName ? regionName.of(iso.toUpperCase()) : iso;
+      const sl = slugify(nm);
+      return at.has(sl) ? at.get(sl) : keyFor(ALIAS[lo] || sl, nm);
+    };
+    const LANG_HOME = { en: ["usa", "uk", "canada", "australia", "ireland", "new-zealand"], fr: ["france", "belgium", "canada", "switzerland"], es: ["spain", "mexico", "argentina", "colombia", "chile", "cuba", "peru"], de: ["germany", "austria", "switzerland"], it: ["italy"], ja: ["japan"], ko: ["south-korea"], zh: ["china", "taiwan", "hong-kong"], cn: ["hong-kong", "china"], hi: ["india"], ta: ["india"], te: ["india"], ml: ["india"], kn: ["india"], bn: ["india", "bangladesh"], mr: ["india"], pa: ["india"], pt: ["brazil", "portugal"], ru: ["russia"], sv: ["sweden"], da: ["denmark"], no: ["norway"], nb: ["norway"], fi: ["finland"], pl: ["poland"], tr: ["turkey"], fa: ["iran"], th: ["thailand"], id: ["indonesia"], tl: ["philippines"], nl: ["netherlands", "belgium"], el: ["greece"], hu: ["hungary"], cs: ["czechia", "czech-republic"], ro: ["romania"], he: ["israel"], ar: ["egypt", "lebanon", "saudi-arabia", "tunisia", "morocco"], uk: ["ukraine"], sr: ["serbia"], hr: ["croatia"], is: ["iceland"], et: ["estonia"], ka: ["georgia"] };
+    let exact = 0;
+    for (let i = 0; i < N; i++) {
+      const row = C.info && C.info[i];
+      if (row && Array.isArray(row[6]) && row[6].length) { origin.per[i] = row[6].map(isoSlug); exact++; continue; }
+      const prod = country.per[i];
+      if (!prod || prod.length <= 1) { origin.per[i] = prod; continue; }
+      const lang = row && (row[2] || row[3]);
+      const pref = lang && LANG_HOME[lang];
+      const pick = pref && pref.map((sl) => at.get(sl)).find((n) => n != null && prod.includes(n));
+      origin.per[i] = pick != null ? [pick] : prod;
+    }
+    origin.exact = exact > 0;
     let lang, primary = false;
     if (C.info) {
       // one primary language per film (what Letterboxd shows as "Primary Language")
@@ -4650,7 +4712,7 @@
     } else lang = multi("language/");
     // Letterboxd's own Short and TV marks (its "show only shorts / TV" filters)
     const short = (C.lists.get("type/short") || {}).set || null, tv = (C.lists.get("type/tv") || {}).set || null;
-    facts = { cat: C, idx, genre, country, lang, primary, short, tv, runtime: C.info ? (i) => (C.info[i] && C.info[i][1]) || 0 : null };
+    facts = { cat: C, idx, genre, country, origin, lang, primary, short, tv, runtime: C.info ? (i) => (C.info[i] && C.info[i][1]) || 0 : null };
     return facts;
   }
 
@@ -4692,7 +4754,8 @@
           name, year, i: i == null ? 1e9 : i, key: fileKey(name),
           genre: GENRES.filter(([g]) => gm & gBit[g]).map(([g]) => g), type, decade: year ? [decadeOf(year)] : [],
           lang: i != null && F.lang.per[i] ? F.lang.per[i].map(String) : [],
-          country: i != null && F.country.per[i] ? F.country.per[i].map(String) : [],
+          country: i != null && F.origin.per[i] ? F.origin.per[i].map(String) : [],
+          pcountry: i != null && F.country.per[i] ? F.country.per[i].map(String) : [],
         };
         stat.set(slug, S);
       }
@@ -4702,7 +4765,7 @@
       out.push({
         slug, name: S.name, year: S.year, i: S.i, key: S.key,
         path: [p.genre, p.cat, p.sub, p.niche].filter(Boolean),
-        v: { status, sgenre: [p.genre], scat: p.cat ? [p.cat] : [], ssub: [p.sub, p.niche].filter(Boolean), genre: S.genre, type: S.type, decade: S.decade, lang: S.lang, country: S.country },
+        v: { status, sgenre: [p.genre], scat: p.cat ? [p.cat] : [], ssub: [p.sub, p.niche].filter(Boolean), genre: S.genre, type: S.type, decade: S.decade, lang: S.lang, country: S.country, pcountry: S.pcountry },
       });
     }
     lv.base = out; lv.baseLib = lib; lv.baseLay = wall.lay; lv.baseKey = key;
@@ -4729,7 +4792,8 @@
     gs.push({ id: "decade", label: "Decade", vals: decs, years: true });
     if (F) {
       gs.push({ id: "lang", label: F.primary ? "Primary language" : "Language (spoken anywhere in the film)", vals: F.lang.keys.map((k, n) => [String(n), F.lang.names[n]]), many: true });
-      gs.push({ id: "country", label: "Country", vals: F.country.keys.map((k, n) => [String(n), F.country.names[n]]), many: true });
+      gs.push({ id: "country", label: "Country of origin", vals: F.origin.keys.map((k, n) => [String(n), F.origin.names[n]]), many: true, note: F.origin.exact ? "" : F.primary ? "Co-productions go to the country that speaks their language" : "Co-productions count for each of their countries until film details are read" });
+      gs.push({ id: "pcountry", label: "Any production country", vals: F.country.keys.map((k, n) => [String(n), F.country.names[n]]), many: true });
     }
     return gs;
   }
