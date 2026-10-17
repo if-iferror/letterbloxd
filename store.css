@@ -4625,3 +4625,74 @@ html.lbs-open {
   background: #3a2424;
   color: #f0a090;
 }
+
+/* ================= Franchises ================= */
+.lbs-frbadge {
+  all: unset;
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 7px;
+  border-radius: 9px;
+  background: #3b2f5c;
+  color: #d9ccff;
+  font: 700 10.5px Arial, sans-serif;
+  vertical-align: middle;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.lbs-frbadge:hover {
+  background: #5a4a7a;
+  color: #fff;
+}
+.lbs-lv-row.-fr .lbs-lv-t b {
+  color: #fff;
+}
+.lbs-lv-row.-member {
+  padding-left: 38px;
+}
+.lbs-lv-row.-dim {
+  opacity: 0.45;
+}
+.lbs-lv-row.-part {
+  background: #1a2a35;
+}
+.lbs-lv-bub.-part {
+  background: radial-gradient(circle, #40bcf4 0 4px, transparent 4.5px);
+}
+.lbs-lv-twist {
+  all: unset;
+  flex: none;
+  width: 16px;
+  color: #9ab;
+  text-align: center;
+  cursor: pointer;
+}
+.lbs-lib-row.-fr .-frtag {
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: #3b2f5c;
+  color: #d9ccff;
+  font: 700 9.5px Arial, sans-serif;
+  font-style: normal;
+  text-transform: uppercase;
+}
+.lbs-lib-col h5 .lbs-frbadge {
+  float: right;
+}
+.lbs-find-list li.-fr b {
+  color: #d9ccff;
+}
+.lbs-find-list li.-sub {
+  padding-left: 28px;
+}
+.lbs-tip small.-fr {
+  color: #d9ccff;
+}
+.lbs-ask-col {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.lbs-ask-col button {
+  width: 100%;
+}

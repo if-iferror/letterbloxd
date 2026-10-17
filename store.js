@@ -588,8 +588,10 @@
         if (!names.has(slug)) names.set(slug, name);
       }
     }
-    // Franchises: every film sits where #1 sits.
-    for (const fr of Object.values(allFranchises())) {
+    // Franchises: every film sits where #1 sits. frOf: film -> its franchise.
+    const frs = allFranchises(), frOf = new Map();
+    for (const [fid, fr] of Object.entries(frs)) for (const [s2] of fr.films) if (!frOf.has(s2)) frOf.set(s2, fid);
+    for (const fr of Object.values(frs)) {
       const lead = fr.films.find(([s]) => place.has(s));
       if (!lead) continue;
       const at = place.get(lead[0]);
@@ -642,7 +644,7 @@
       for (const sid of c.subs) { const o2 = H.subOrder[sid]; const k2 = (id) => { const i = o2 ? o2.indexOf(id) : -1; return i < 0 ? 1e6 : i; }; subs.get(sid).niches.sort((a, b) => k2(a) - k2(b) || byName(subs)(a, b)); }
     }
     const rank = (lib && lib.rank) || new Map(stock.films.map(([slug], i) => [slug, i]));
-    lib = { genres, cats, subs, place, names, inSub, count, rank };
+    lib = { genres, cats, subs, place, names, inSub, count, rank, frs, frOf };
     return lib;
   }
 
@@ -657,7 +659,11 @@
     }
     return {};
   }
-  const nameOf = (id) => (lib.genres.get(id) || lib.cats.get(id) || lib.subs.get(id) || {}).name || "";
+  const nameOf = (id) => (String(id).startsWith("fr:") ? (lib.frs[id.slice(3)] || {}).name : (lib.genres.get(id) || lib.cats.get(id) || lib.subs.get(id) || {}).name) || "";
+  // A film's franchise ({ id, name, films }), and the badge that opens it.
+  const frFor = (slug) => { const fid = lib && lib.frOf && lib.frOf.get(slug); return fid ? { id: fid, ...lib.frs[fid] } : null; };
+  const frBadge = (slug) => { const f = frFor(slug); return f ? `<button type="button" class="lbs-frbadge" data-act="fr-open" data-fr="${esc(f.id)}" title="Open the ${esc(f.name)} franchise">Franchise · ${esc(f.name)}</button>` : ""; };
+  const openFranchiseById = (fid) => { const fr = lib.frs[fid]; if (fr && fr.films.length) openFranchise(fr.films[0][0], fr.films[0][1]); };
   function pathOf(id) {
     const p = partsOf(id);
     if (p.genre === UNCAT) return ["Uncategorized"];
@@ -790,13 +796,19 @@
         if (pc) { e.preventDefault(); return grabDown({ kind: "piece", cid: pc.dataset.cid, from: "tray" }, e); }
         const lr = e.target.closest(".lbs-lv-row");
         if (lr && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey) {
-          const many = lv.sel.has(lr.dataset.slug) && lv.sel.size > 1;
-          return grabDown({ kind: "dvd", slug: lr.dataset.slug, name: lr.dataset.name, films: many ? lvFilms() : null, from: "lib" }, e);
+          const r = lv.rows[+lr.dataset.n];
+          if (!r || e.target.closest("button")) return;
+          const xs = rowSlugs(r);
+          const inSel = xs.every((x) => lv.sel.has(x));
+          const films = inSel && lv.sel.size > 1 ? lvFilms() : xs.map((x) => [x, lib.names.get(x) || x]);
+          return grabDown({ kind: "dvd", slug: films[0][0], name: films[0][1], films: films.length > 1 ? films : null, from: "lib" }, e);
         }
         const dv = e.target.closest(".lbs-tray .lbs-dvd, .lbs-pk, .lbs-sp-chip, .lbs-lib-film");
         if (dv && !e.target.closest("button")) { e.preventDefault(); grabDown({ kind: "dvd", slug: dv.dataset.slug, name: dv.dataset.name, from: dv.classList.contains("lbs-lib-film") ? "lib" : dv.classList.contains("lbs-sp-chip") ? "card" : "tray" }, e); }
       });
       root.addEventListener("dblclick", (e) => {
+        const fro = e.target.closest(".lbs-lv-row.-fr");
+        if (fro) return openFranchiseById(fro.dataset.slug.slice(3));
         const lf = e.target.closest(".lbs-lib-film, .lbs-lv-row");
         if (lf) return openFilm(lf.dataset.slug, lf.dataset.name);
         const row = edit.on && e.target.closest(".lbs-folder");
@@ -3813,7 +3825,7 @@
     const cached = posterCache.get(f.slug);
     tip.innerHTML =
       `<img src="${cached ? esc(cached[0]) : EMPTY}" alt="" width="70" height="105">` +
-      `<div><b>${esc(titleOf(f.name))}</b><span>${f.year || ""}</span><small>${esc(pathOf(f.sub).join(" › "))}</small>` +
+      `<div><b>${esc(titleOf(f.name))}</b><span>${f.year || ""}</span><small>${esc(pathOf(f.sub).join(" › "))}</small>${frFor(f.slug) ? `<small class="-fr">Franchise · ${esc(frFor(f.slug).name)}</small>` : ""}` +
       `<a href="/film/${esc(f.slug)}/" target="_blank" rel="noopener">Open on Letterboxd ↗</a><em>Drag to a folder to re-file${logoEntry(f.slug)?.[0] ? " · right-click for other logos" : ""}</em></div>`;
     if (!cached) posterFor(f.slug).then(([u]) => { const im = tip.querySelector("img"); if (im && wall.hover === i) im.src = u; }).catch(() => {});
     const st = $(".lbs-stage", root).getBoundingClientRect();
@@ -4112,7 +4124,7 @@
       (det.tagline ? `<p class="lbs-ftag">${esc(det.tagline)}</p>` : "") +
       (det.synopsis ? `<p class="lbs-fsyn">${esc(det.synopsis)}</p>` : !ui.film.det ? `<p class="lbs-fsyn -wait">Loading details…</p>` : "") +
       (det.cast && det.cast.length ? `<p class="lbs-fcast">With ${det.cast.map(esc).join(", ")}</p>` : "") +
-      `<p class="lbs-fwhere">${path ? `On the shelf in <b>${path.map(esc).join(" › ")}</b>` : "Not in the store yet"}</p>` +
+      `<p class="lbs-fwhere">${path ? (path[0] === "Uncategorized" ? "In the <b>Uncategorized</b> pile" : `On the shelf in <b>${path.map(esc).join(" › ")}</b>`) : "Not in the store yet"}${frBadge(slug)}</p>` +
       lbRowHTML(slug, name, det) +
       filmActs(slug, name) +
       pane +
@@ -4373,6 +4385,7 @@
   function kidsOf(id) {
     if (!id) return { folders: [...lib.genres.keys()], films: [] };
     if (id === UNCAT) return { folders: [], films: lib.inSub.get(UNCAT_SUB) || [] };
+    if (String(id).startsWith("fr:")) { const fr = lib.frs[id.slice(3)]; return { folders: [], films: fr ? fr.films.filter(([x]) => lib.place.has(x)).map(([x, n]) => [x, lib.names.get(x) || n]) : [] }; }
     const p = partsOf(id);
     if (p.niche) return { folders: [], films: lib.inSub.get(id) || [] };
     if (p.sub) return { folders: (lib.subs.get(id).niches || []).slice(), films: lib.inSub.get(id) || [] };
@@ -4410,7 +4423,7 @@
     if (!libUI.open) return;
     if (lv.mode === "list") return renderListView(box);
     box.dataset.mode = "folders";
-    libUI.path = libUI.path.filter((id) => lib.genres.has(id) || lib.cats.has(id) || lib.subs.has(id));
+    libUI.path = libUI.path.filter((id) => lib.genres.has(id) || lib.cats.has(id) || lib.subs.has(id) || (String(id).startsWith("fr:") && lib.frs[id.slice(3)]));
     const path = libUI.path;
     const right = path.length ? path[path.length - 1] : null;
     const left = path.length >= 2 ? path[path.length - 2] : null;
@@ -4427,15 +4440,32 @@
       `<li class="lbs-lib-row lbs-lib-film${sel && sel[0] === slug ? " -sel" : ""}" data-act="lib-film" data-film="${esc(slug)}" data-slug="${esc(slug)}" data-name="${esc(name)}" title="Drag onto a folder, the wall or your inventory">` +
       `<img data-lp="${esc(slug)}" src="${posterCache.has(slug) ? esc(posterCache.get(slug)[0]) : EMPTY}" alt="" draggable="false"><span>${esc(titleOf(name))}</span><small>${yearOf(name) || ""}</small>` +
       (held.has(slug) ? `<em class="-inv">In inventory</em>` : "") + `</li>`;
+    // A franchise is a folder of its own, where its films sit, in franchise order.
+    const frRow = (fid, side) => {
+      const fr = lib.frs[fid], fidp = `fr:${fid}`;
+      return `<li class="lbs-lib-row lbs-folder -fr${path.includes(fidp) ? " -on" : ""}" data-act="lib-open" data-side="${side}" data-id="${esc(fidp)}">` +
+        `${ICON_FOLDER}<span>${esc(fr.name)}</span><em class="-frtag">Franchise</em><small>${fmt(fr.films.length)}</small><b>›</b></li>`;
+    };
+    const filmItems = (id, films, side) => {
+      if (String(id).startsWith("fr:")) return films.map(filmRow).join("");
+      const seen = new Set();
+      return films.map((f) => {
+        const fid = lib.frOf.get(f[0]);
+        if (!fid) return filmRow(f);
+        if (seen.has(fid)) return "";
+        seen.add(fid);
+        return frRow(fid, side);
+      }).join("");
+    };
     const column = (id, side) => {
       const k = kidsOf(id);
       const lvl = side === "right" ? childLevel(id) : null;
       const adding = lvl && libUI.adding === id;
       return (
-        `<div class="lbs-lib-col -${side}"><h5>${id ? esc(nameOf(id)) : "Genres"}${id ? `<small>${fmt(lib.count.get(id) || 0)} films</small>` : ""}</h5><ul>` +
+        `<div class="lbs-lib-col -${side}"><h5>${id ? esc(nameOf(id)) : "Genres"}${id ? `<small>${fmt(String(id).startsWith("fr:") ? k.films.length : lib.count.get(id) || 0)} films</small>` : ""}${String(id).startsWith("fr:") ? `<button type="button" class="lbs-frbadge" data-act="fr-open" data-fr="${esc(id.slice(3))}">Edit franchise</button>` : ""}</h5><ul>` +
         k.folders.map((f) => folderRow(f, side)).join("") +
         (lvl ? (adding ? `<li class="lbs-lib-new"><input type="text" class="lbs-lib-new-name" data-level="${lvl}" maxlength="40" placeholder="Name the new ${LEVEL_WORD[lvl]}"></li>` : `<li class="lbs-lib-add"><button type="button" data-act="lib-new">+ New ${LEVEL_WORD[lvl]}</button></li>`) : "") +
-        (k.films.length ? (k.folders.length || lvl ? `<li class="lbs-lib-sep">${fmt(k.films.length)} film${k.films.length === 1 ? "" : "s"}</li>` : "") + k.films.map(filmRow).join("") : "") +
+        (k.films.length ? (k.folders.length || lvl ? `<li class="lbs-lib-sep">${fmt(k.films.length)} film${k.films.length === 1 ? "" : "s"}</li>` : "") + filmItems(id, k.films, side) : "") +
         (!k.folders.length && !k.films.length && !lvl ? `<li class="lbs-lib-empty">Empty</li>` : "") +
         `</ul></div>`
       );
@@ -4495,7 +4525,7 @@
     f: (mine.lv && mine.lv.f) || {}, // group -> { value: 1 | -1 }
     y0: (mine.lv && mine.lv.y0) || "", y1: (mine.lv && mine.lv.y1) || "",
     sort: (mine.lv && mine.lv.sort) || "pop",
-    q: "", showFilters: !(mine.lv && mine.lv.hideFilters), more: {},
+    q: "", showFilters: !(mine.lv && mine.lv.hideFilters), more: {}, open: new Set(),
     sel: new Set(), selecting: false, anchor: null, cursor: null,
     base: null, baseKey: null, rows: [], pos: new Map(),
   };
@@ -4581,6 +4611,7 @@
       });
     }
     lv.base = out; lv.baseLib = lib; lv.baseLay = wall.lay; lv.baseKey = key;
+    lv.baseMap = new Map(out.map((r) => [r.slug, r]));
     return out;
   }
   // The groups shown: store location narrows level by level.
@@ -4641,8 +4672,24 @@
     }
     const cmp = lv.sort === "title" ? (a, b) => collator.compare(a.key, b.key) || a.year - b.year : lv.sort === "year" ? (a, b) => (b.year || 0) - (a.year || 0) || a.i - b.i : (a, b) => a.i - b.i;
     rows.sort(cmp);
-    lv.rows = rows;
-    lv.pos = new Map(rows.map((r, n) => [r.slug, n]));
+    // A franchise is one row (it shows when any of its films match); open
+    // it to see all its films beneath, the ones that don't match dimmed.
+    lv.nFilms = rows.length;
+    const matched = new Set(rows.map((r) => r.slug));
+    const out = [], done = new Set();
+    for (const r of rows) {
+      const fid = lib.frOf.get(r.slug);
+      if (!fid) { out.push(r); continue; }
+      if (done.has(fid)) continue;
+      done.add(fid);
+      const fr = lib.frs[fid];
+      const members = fr.films.map(([x]) => x).filter((x) => lv.baseMap.has(x));
+      const lead = lv.baseMap.get(members[0]) || r;
+      out.push({ fr: fid, slug: `fr:${fid}`, name: fr.name, members, path: lead.path, v: lead.v, year: 0 });
+      if (lv.open.has(fid)) for (const x of members) out.push({ ...lv.baseMap.get(x), member: true, dim: !matched.has(x) });
+    }
+    lv.rows = out;
+    lv.pos = new Map(out.map((r, n) => [r.slug, n]));
     lv.groups = groups;
     lv.counts = counts;
   }
@@ -4715,12 +4762,12 @@
   }
   // The parts that follow the selection (cheap: no filtering, no redraw of rows).
   function lvChrome(box) {
-    const allSel = lv.rows.length > 0 && lv.rows.every((r) => lv.sel.has(r.slug));
+    const allSel = lv.rows.length > 0 && lv.rows.every((r) => rowSel(r) === 2);
     const nAct = lvActive();
     $(".lbs-lv-headbtns", box).innerHTML =
       `<button type="button" class="lbs-lv-check${lv.selecting ? " -on" : ""}" data-act="lv-selmode" aria-pressed="${lv.selecting}" title="Select films (Shift- or Option-click also starts this)">✓</button>` +
       (lv.selecting ? `<button type="button" class="lbs-lv-all" data-act="${allSel ? "lv-none" : "lv-all"}">${allSel ? "Deselect all in list" : "Select all in list"}</button>` : "");
-    $(".lbs-lv-meta", box).innerHTML = `<b>${fmt(lv.rows.length)}</b> film${lv.rows.length === 1 ? "" : "s"}${lv.sel.size ? ` · ${fmt(lv.sel.size)} selected` : ""}${nAct || lv.q ? ` · <button type="button" data-act="lv-reset">Clear all filters</button>` : ""}`;
+    $(".lbs-lv-meta", box).innerHTML = `<b>${fmt(lv.nFilms)}</b> film${lv.nFilms === 1 ? "" : "s"}${lv.sel.size ? ` · ${fmt(lv.sel.size)} selected` : ""}${nAct || lv.q ? ` · <button type="button" data-act="lv-reset">Clear all filters</button>` : ""}`;
     lvFoot(box);
   }
   function lvRefreshSel() {
@@ -4728,11 +4775,14 @@
     if (!box || box.dataset.mode !== "list") return renderLibrary();
     if (box._selecting !== lv.selecting) { box._selecting = lv.selecting; lvPaint(); }
     else box.querySelectorAll(".lbs-lv-row").forEach((el) => {
-      const on = lv.sel.has(el.dataset.slug);
+      const r = lv.rows[+el.dataset.n];
+      const st = r ? rowSel(r) : 0, on = st === 2;
       el.classList.toggle("-sel", on);
+      el.classList.toggle("-part", st === 1);
       el.classList.toggle("-cur", +el.dataset.n === lv.cursor);
       el.setAttribute("aria-selected", on);
-      el.querySelector(".lbs-lv-bub")?.classList.toggle("-on", on);
+      const bub = el.querySelector(".lbs-lv-bub");
+      if (bub) { bub.classList.toggle("-on", on); bub.classList.toggle("-part", st === 1); }
     });
     lvChrome(box);
   }
@@ -4749,13 +4799,17 @@
     const last = Math.min(lv.rows.length, Math.ceil((list.scrollTop + list.clientHeight) / LV_ROW) + 8);
     let html = "";
     for (let n = first; n < last; n++) {
-      const r = lv.rows[n], on = lv.sel.has(r.slug);
+      const r = lv.rows[n], st = rowSel(r), on = st === 2;
       const tail = r.path[0] === UNCAT ? "" : r.path.slice(1).map(nameOf).join(" › ");
+      const pslug = r.fr ? r.members[0] : r.slug;
       html +=
-        `<div class="lbs-lv-row${on ? " -sel" : ""}${lv.cursor === n ? " -cur" : ""}" style="top:${n * LV_ROW}px" data-n="${n}" data-slug="${esc(r.slug)}" data-name="${esc(r.name)}" role="option" aria-selected="${on}">` +
-        (lv.selecting ? `<span class="lbs-lv-bub${on ? " -on" : ""}" data-bub="1"></span>` : "") +
-        `<img data-lvp="${esc(r.slug)}" src="${posterCache.has(r.slug) ? esc(posterCache.get(r.slug)[0]) : EMPTY}" alt="">` +
-        `<span class="lbs-lv-t">${esc(titleOf(r.name))} <i>${r.year || ""}</i></span>` +
+        `<div class="lbs-lv-row${on ? " -sel" : st ? " -part" : ""}${r.fr ? " -fr" : ""}${r.member ? " -member" : ""}${r.dim ? " -dim" : ""}${lv.cursor === n ? " -cur" : ""}" style="top:${n * LV_ROW}px" data-n="${n}" data-slug="${esc(r.slug)}" data-name="${esc(r.name)}" role="option" aria-selected="${on}">` +
+        (lv.selecting ? `<span class="lbs-lv-bub${on ? " -on" : st ? " -part" : ""}" data-bub="1"></span>` : "") +
+        (r.fr ? `<button type="button" class="lbs-lv-twist" data-act="lv-fr-toggle" data-fr="${esc(r.fr)}" aria-label="Show its films">${lv.open.has(r.fr) ? "▾" : "▸"}</button>` : "") +
+        `<img data-lvp="${esc(pslug)}" src="${posterCache.has(pslug) ? esc(posterCache.get(pslug)[0]) : EMPTY}" alt="">` +
+        (r.fr
+          ? `<span class="lbs-lv-t"><b>${esc(r.name)}</b> <button type="button" class="lbs-frbadge" data-act="fr-open" data-fr="${esc(r.fr)}">Franchise · ${fmt(r.members.length)}</button></span>`
+          : `<span class="lbs-lv-t">${esc(titleOf(r.name))} <i>${r.year || ""}</i></span>`) +
         (r.v.status.includes("held") ? `<em class="-inv">Inv</em>` : "") + 
         `<small title="${esc([nameOf(r.path[0]), tail].join(" › "))}"><b>${esc(nameOf(r.path[0]))}</b> ${esc(r.path.length > 1 ? tail : "")}</small></div>`;
     }
@@ -4765,7 +4819,9 @@
       sp.querySelectorAll("img[data-lvp]").forEach((im) => { if (!posterCache.has(im.dataset.lvp)) posterFor(im.dataset.lvp).then(([u]) => (im.src = u)).catch(() => {}); });
     }, 150);
   }
-  const lvFilms = () => lv.rows.filter((r) => lv.sel.has(r.slug)).map((r) => [r.slug, r.name]);
+  const rowSlugs = (r) => (r.fr ? r.members : [r.slug]);
+  const rowSel = (r) => { const xs = rowSlugs(r); const n = xs.filter((x) => lv.sel.has(x)).length; return n === 0 ? 0 : n === xs.length ? 2 : 1; };
+  const lvFilms = () => [...lv.sel].filter((x) => lib.place.has(x)).map((x) => [x, lib.names.get(x) || x]);
   function lvFoot(box) {
     const foot = $(".lbs-lib-foot", box);
     const n = lv.sel.size;
@@ -4794,21 +4850,23 @@
     libUI.sel = one ? [one, lib.names.get(one) || one] : null;
     libUI.focus = libUI.sel ? { film: libUI.sel } : null;
   }
-  function lvRange(a, b) { const out = []; for (let n = Math.min(a, b); n <= Math.max(a, b); n++) if (lv.rows[n]) out.push(lv.rows[n].slug); return out; }
+  function lvRange(a, b) { const out = []; for (let n = Math.min(a, b); n <= Math.max(a, b); n++) if (lv.rows[n]) out.push(...rowSlugs(lv.rows[n])); return out; }
   function lvClickRow(row, e) {
-    const n = +row.dataset.n, slug = row.dataset.slug;
+    const n = +row.dataset.n, r = lv.rows[n];
+    if (!r) return;
+    const xs = rowSlugs(r);
     if (e.shiftKey || e.altKey || e.metaKey || e.ctrlKey) lv.selecting = true;
     if (e.shiftKey && lv.anchor != null) {
       const s2 = new Set(lv.sel);
       for (const x of lvRange(lv.anchor, n)) s2.add(x);
       lvSetSel(s2);
     } else if (lv.selecting) {
-      const s2 = new Set(lv.sel);
-      if (s2.has(slug)) s2.delete(slug); else s2.add(slug);
+      const s2 = new Set(lv.sel), all = rowSel(r) === 2;
+      for (const x of xs) if (all) s2.delete(x); else s2.add(x);
       lvSetSel(s2);
       lv.anchor = n;
     } else {
-      lvSetSel(new Set([slug]));
+      lvSetSel(new Set(xs));
       lv.anchor = n;
     }
     lv.cursor = n;
@@ -4819,14 +4877,19 @@
     const N = lv.rows.length;
     if (!N) return;
     const mod = e.metaKey || e.ctrlKey;
-    if (mod && e.key.toLowerCase() === "a") { e.preventDefault(); lv.selecting = true; lvSetSel(new Set(lv.rows.map((r) => r.slug))); return lvRefreshSel(); }
+    if (mod && e.key.toLowerCase() === "a") { e.preventDefault(); lv.selecting = true; lvSetSel(new Set(lv.rows.flatMap(rowSlugs))); return lvRefreshSel(); }
     if (e.key === "Escape") { if (lv.selecting || lv.sel.size) { e.stopPropagation(); lv.selecting = false; lvSetSel(new Set()); lvRefreshSel(); } return; }
-    if (e.key === "Enter" && lv.cursor != null) { const r = lv.rows[lv.cursor]; return openFilm(r.slug, r.name); }
+    if (e.key === "Enter" && lv.cursor != null) { const r = lv.rows[lv.cursor]; return r.fr ? openFranchiseById(r.fr) : openFilm(r.slug, r.name); }
+    if ((e.key === "ArrowRight" || e.key === "ArrowLeft") && lv.cursor != null && lv.rows[lv.cursor].fr) {
+      const fid = lv.rows[lv.cursor].fr;
+      if (e.key === "ArrowRight") lv.open.add(fid); else lv.open.delete(fid);
+      return renderLibrary();
+    }
     if (e.key === " " && lv.cursor != null) {
       e.preventDefault();
       lv.selecting = true;
-      const s2 = new Set(lv.sel), x = lv.rows[lv.cursor].slug;
-      if (s2.has(x)) s2.delete(x); else s2.add(x);
+      const r = lv.rows[lv.cursor], s2 = new Set(lv.sel), all = rowSel(r) === 2;
+      for (const x of rowSlugs(r)) if (all) s2.delete(x); else s2.add(x);
       lvSetSel(s2);
       return lvRefreshSel();
     }
@@ -4842,7 +4905,7 @@
       const s2 = new Set(lv.sel);
       for (const x of lvRange(lv.anchor, n)) s2.add(x);
       lvSetSel(s2);
-    } else if (!lv.selecting) { lvSetSel(new Set([lv.rows[n].slug])); lv.anchor = n; }
+    } else if (!lv.selecting) { lvSetSel(new Set(rowSlugs(lv.rows[n]))); lv.anchor = n; }
     const list = $(".lbs-library .lbs-lv-list", root);
     if (n * LV_ROW < list.scrollTop) list.scrollTop = n * LV_ROW;
     else if ((n + 1) * LV_ROW > list.scrollTop + list.clientHeight) list.scrollTop = (n + 1) * LV_ROW - list.clientHeight;
@@ -4888,7 +4951,7 @@
    * They all sit where the first one would, as one block, with a sticker
    * on the back wall behind them. */
   const franchises = () => mine.franchises || (mine.franchises = {});
-  const franchiseOf = (slug) => { for (const [id, f] of Object.entries(franchises())) if (f.films.some(([s]) => s === slug)) return { id, ...f }; return null; };
+  const franchiseOf = (slug) => { for (const [id, f] of Object.entries(allFranchises())) if (f.films.some(([s]) => s === slug)) return { id, ...f }; return null; };
   function openFranchise(slug, name) {
     const fr = franchiseOf(slug);
     ui.fr = fr ? { id: fr.id, name: fr.name, films: fr.films.slice(), color: fr.color, logo: fr.logo } : { id: null, name: `${titleOf(name)} series`, films: [[slug, name]] };
@@ -5040,6 +5103,40 @@
     box._no = no || null;
   }
 
+  function askFranchiseMove(films, target, partial) {
+    const box = $(".lbs-ask", root);
+    const inSet = new Set(films.map(([x]) => x));
+    const extra = [];
+    for (const fr of partial.values()) for (const f of fr.films) if (!inSet.has(f[0]) && !extra.some(([x]) => x === f[0])) extra.push(f);
+    const frs = [...partial.values()];
+    const mine1 = films.filter(([x]) => lib.frOf.get(x));
+    const one = films.length === 1 && frs.length === 1;
+    const where = pathOf(landingSub(target)).join(" › ");
+    const text = one
+      ? `‘${esc(titleOf(films[0][1]))}’ is part of <b>${esc(frs[0].name)}</b> (${frs[0].films.length} films).`
+      : `${fmt(mine1.length)} of these film${mine1.length === 1 ? " is" : "s are"} in ${frs.length === 1 ? `<b>${esc(frs[0].name)}</b>` : `${frs.length} franchises (${frs.slice(0, 3).map((f) => `<b>${esc(f.name)}</b>`).join(", ")}${frs.length > 3 ? "…" : ""})`}, which ${frs.length === 1 ? "has" : "have"} ${fmt(extra.length)} more film${extra.length === 1 ? "" : "s"} not in this move.`;
+    box.innerHTML =
+      `<div class="lbs-ask-card"><p>${text}<br><small>Moving to ${esc(where)}.</small></p><div class="lbs-ask-col">` +
+      `<button type="button" class="-go" data-act="frm-all">${one ? `Move all ${frs[0].films.length}` : `Move the whole franchise${frs.length === 1 ? "" : "s"} (+${fmt(extra.length)})`}</button>` +
+      `<button type="button" data-act="frm-out">${one ? "Take it out of the franchise and move just this one" : "Take them out of their franchises and move just these"}</button>` +
+      `<button type="button" data-act="ask-no">Cancel</button></div></div>`;
+    box.hidden = false;
+    box._yes = box._no = null;
+    box._frm = { films, target, extra, partial };
+  }
+  // Take films out of whatever franchises they're in (a franchise left with one film is undone).
+  function franchiseRemove(slugs) {
+    const out = new Set(slugs);
+    for (const [fid, fr] of Object.entries(allFranchises())) {
+      if (!fr.films.some(([x]) => out.has(x))) continue;
+      const films = fr.films.filter(([x]) => !out.has(x));
+      if (films.length < 2) { delete franchises()[fid]; shareEdit("franchise", fid, null); continue; }
+      franchises()[fid] = { name: fr.name, films, ...(fr.color ? { color: fr.color } : {}), ...(fr.logo ? { logo: fr.logo } : {}) };
+      shareEdit("franchise", fid, { name: fr.name, films: films.map(([x]) => x), color: fr.color || null, logo: fr.logo || null });
+    }
+    saveMine();
+  }
+
   // A film from your inventory dropped on the wall.
   function browseDrop(slug, name, t) {
     const from = filmSection(slug);
@@ -5067,12 +5164,23 @@
       if (local.length > 400) break;
     }
     local.sort((a, b) => a[0] - b[0]);
-    const item = (slug, name, inStore) => {
+    const where = (path) => (path[0] === "Uncategorized" ? "Uncategorized" : path.slice(1).join(" › "));
+    const item = (slug, name, inStore, sub) => {
       const path = inStore ? whereIs(slug) : null;
-      return `<li data-act="find-pick" data-slug="${esc(slug)}" data-name="${esc(name)}"><img data-poster="${esc(slug)}" alt=""><div><b>${esc(titleOf(name))}</b> <span>${yearOf(name) || ""}</span><small>${path ? esc(path.slice(1).join(" › ")) : "Not in the store"}</small></div>${path ? "" : `<button type="button" class="lbs-find-req" data-act="req-add" data-slug="${esc(slug)}" data-name="${esc(name)}">Request addition</button>`}</li>`;
+      return `<li data-act="find-pick" data-slug="${esc(slug)}" data-name="${esc(name)}"${sub ? ' class="-sub"' : ""}><img data-poster="${esc(slug)}" alt=""><div><b>${esc(titleOf(name))}</b> <span>${yearOf(name) || ""}</span><small>${path ? esc(where(path)) : "Not in the store"}</small>${inStore && !sub ? frBadge(slug) : ""}</div>${path ? "" : `<button type="button" class="lbs-find-req" data-act="req-add" data-slug="${esc(slug)}" data-name="${esc(name)}">Request addition</button>`}</li>`;
     };
+    // Franchises whose name matches, each with its matching films beneath it.
+    const frHits = Object.entries(lib.frs || {}).filter(([, f]) => f.name.toLowerCase().includes(nq)).slice(0, 4);
+    const frItem = ([fid, f]) => `<li class="-fr" data-act="fr-open" data-fr="${esc(fid)}"><img data-poster="${esc(f.films[0][0])}" alt=""><div><b>${esc(f.name)}</b> <span>Franchise · ${f.films.length} films</span><small>${esc(where(whereIs(f.films[0][0]) || []))}</small></div><button type="button" class="lbs-find-req" data-act="fr-open" data-fr="${esc(fid)}">View</button></li>`;
     const top = local.slice(0, 8);
-    list.innerHTML = (top.length ? top.map(([, s, n]) => item(s, n, true)).join("") : `<li class="-none">Nothing in the store matches yet.</li>`) + `<li class="-more">Searching all of Letterboxd…</li>`;
+    const used = new Set();
+    let html = "";
+    for (const h of frHits) {
+      html += frItem(h);
+      for (const [, sl, nm] of top) if (lib.frOf.get(sl) === h[0]) { html += item(sl, nm, true, true); used.add(sl); }
+    }
+    html += top.filter(([, sl]) => !used.has(sl)).map(([, sl, nm]) => item(sl, nm, true)).join("");
+    list.innerHTML = (html || `<li class="-none">Nothing in the store matches yet.</li>`) + `<li class="-more">Searching all of Letterboxd…</li>`;
     list.hidden = false;
     fillPosters(list, false);
     const seq = ++ui.findSeq;
@@ -5587,9 +5695,16 @@
   /* ---------------- moving films ---------------- */
 
   // `films` = [[slug, name]]; `target` = any folder id.
-  function moveFilms(films, target) {
+  function moveFilms(films, target, opts = {}) {
     const sub = landingSub(target);
     if (!sub || !films.length) return;
+    // Moving part of a franchise: ask (move all of it, or take these out of it).
+    if (!opts.fr && lib.frOf) {
+      const inSet = new Set(films.map(([x]) => x));
+      const partial = new Map();
+      for (const [x] of films) { const fid = lib.frOf.get(x); if (fid && lib.frs[fid].films.some(([y]) => !inSet.has(y))) partial.set(fid, lib.frs[fid]); }
+      if (partial.size) return askFranchiseMove(films, target, partial);
+    }
     if (edit.on) {
       const label = films.length === 1 ? `‘${titleOf(films[0][1])}’` : `${films.length} films`;
       return houseEdit(`${label} → ${pathOf(sub).join(" › ")}`, (H) => {
@@ -5802,7 +5917,11 @@
     if (any && any.dataset.slug) {
       e.preventDefault();
       // In the list, a right-click on a selected row acts on the whole selection.
-      if (any.classList.contains("lbs-lv-row") && lv.sel.has(any.dataset.slug) && lv.sel.size > 1) return openFilmMenu(null, null, e.clientX, e.clientY, true);
+      if (any.classList.contains("lbs-lv-row")) {
+        const r = lv.rows[+any.dataset.n];
+        if (r && r.fr) { if (rowSel(r) !== 2) { lvSetSel(new Set(r.members)); lvRefreshSel(); } return openFilmMenu(null, null, e.clientX, e.clientY, true, r.fr); }
+        if (lv.sel.has(any.dataset.slug) && lv.sel.size > 1) return openFilmMenu(null, null, e.clientX, e.clientY, true);
+      }
       return openFilmMenu(any.dataset.slug, any.dataset.name || lib.names.get(any.dataset.slug) || any.dataset.slug, e.clientX, e.clientY);
     }
     const src = e.target.closest && e.target.closest(".lbs-item, .lbs-row");
@@ -5816,13 +5935,13 @@
   }
 
   // Right-click a film (a spine, a row, a cover): what you can do with it.
-  function openFilmMenu(slug, name, x, y, many) {
+  function openFilmMenu(slug, name, x, y, many, frId) {
     closeFilmMenu();
     const b = (act, label, extra = "") => `<button type="button" role="menuitem" data-act="${act}"${slug ? ` data-slug="${esc(slug)}" data-name="${esc(name)}"` : ""}${extra}>${label}</button>`;
     const held = slug && (mine.held || []).some(([s2]) => s2 === slug);
     const inStore = slug && lib.place.has(slug);
     const html = many
-      ? `<b>${fmt(lv.sel.size)} films</b>` + b("lv-move", "Move to…") + b("lv-hold", "Add to inventory")+ b("lv-uncat", "Uncategorize") + b("lv-clear", "Deselect all")
+      ? `<b>${frId ? `${esc(lib.frs[frId].name)} · ` : ""}${fmt(lv.sel.size)} films</b>` + (frId ? `<button type="button" role="menuitem" data-act="fr-open" data-fr="${esc(frId)}">Open franchise</button>` : "") + b("lv-move", "Move to…") + b("lv-hold", "Add to inventory")+ b("lv-uncat", "Uncategorize") + b("lv-clear", "Deselect all")
       : `<b>${esc(titleOf(name))}</b>` +
         b("f-open", "Details") +
         (held ? b("f-return", "Take out of inventory") : b("f-hold", "Add to inventory", inStore ? "" : " disabled")) +
@@ -5830,7 +5949,7 @@
         b("f-editx", "Edit") +
         b("f-sort", "Sort") +
         (inStore && lib.place.get(slug) !== UNCAT_SUB ? b("f-uncat", "Uncategorize") : "") +
-        b("f-fr", franchiseOf(slug) ? "Franchise" : "Add to franchise", inStore ? "" : " disabled");
+        b("f-fr", frFor(slug) ? `Franchise · ${esc(frFor(slug).name)}` : "Add to franchise", inStore ? "" : " disabled");
     const m = h("div", "lbs-ctx", html);
     m.setAttribute("role", "menu");
     root.append(m);
@@ -6037,7 +6156,7 @@
     root.querySelectorAll(".lbs-menu:not([hidden])").forEach((m) => {
       if (!e.target.closest(".lbs-menu, [data-act=settings], [data-act=find-type], [data-act=lb-more]")) m.hidden = true;
     });
-    const lvr = e.target.closest(".lbs-lv-row");
+    const lvr = !e.target.closest("button") && e.target.closest(".lbs-lv-row");
     if (lvr) { $(".lbs-lv-list", root)?.focus({ preventScroll: true }); return lvClickRow(lvr, e); }
     const row = e.target.closest(".lbs-row");
     if (row && !e.target.closest("a, button")) return selectRow(row, e);
@@ -6105,8 +6224,9 @@
       if (act === "lib-unsel") { libUI.sel = null; lv.sel = new Set(); return renderLibrary(); }
       if (act === "lib-mode") { lv.mode = btn.dataset.v; closeMovePick(); saveLv(); return renderLibrary(); }
       if (act === "lv-selmode") { lv.selecting = !lv.selecting; if (!lv.selecting) lvSetSel(libUI.sel ? new Set([libUI.sel[0]]) : new Set()); return lvRefreshSel(); }
-      if (act === "lv-all") { lvSetSel(new Set([...lv.sel, ...lv.rows.map((r) => r.slug)])); return lvRefreshSel(); }
-      if (act === "lv-none") { const s2 = new Set(lv.sel); for (const r of lv.rows) s2.delete(r.slug); lvSetSel(s2); return lvRefreshSel(); }
+      if (act === "lv-all") { lvSetSel(new Set([...lv.sel, ...lv.rows.flatMap(rowSlugs)])); return lvRefreshSel(); }
+      if (act === "lv-none") { const s2 = new Set(lv.sel); for (const r of lv.rows) for (const x of rowSlugs(r)) s2.delete(x); lvSetSel(s2); return lvRefreshSel(); }
+      if (act === "lv-fr-toggle") { const fid = btn.dataset.fr; if (lv.open.has(fid)) lv.open.delete(fid); else lv.open.add(fid); return renderLibrary(); }
       if (act === "lv-clear") { lv.selecting = false; lvSetSel(new Set()); return lvRefreshSel(); }
       if (act === "lv-sort") { lv.sort = btn.dataset.v; saveLv(); return renderLibrary(); }
       if (act === "lv-filters") { lv.showFilters = !lv.showFilters; saveLv(); return renderLibrary(); }
@@ -6194,13 +6314,21 @@
         return add();
       }
       if (act === "fr-save") return saveFranchise();
+      if (act === "frm-all" || act === "frm-out") {
+        const box = $(".lbs-ask", root), m = box._frm;
+        box.hidden = true; box._frm = null;
+        if (!m) return;
+        if (act === "frm-out") { franchiseRemove(m.films.map(([x]) => x)); buildLibrary(); return moveFilms(m.films, m.target, { fr: true }); }
+        return moveFilms([...m.films, ...m.extra], m.target, { fr: true });
+      }
+      if (act === "fr-open") { closeFilm(); $(".lbs-find-list", root).hidden = true; $(".lbs-card", root).hidden = true; return openFranchiseById(btn.dataset.fr); }
       if (act === "fr-logo") { ui.fr.logo = btn.dataset.path; return renderFranchise(); }
       if (act === "fr-delete") { delete franchises()[ui.fr.id]; saveMine(); shareEdit("franchise", ui.fr.id, null); ui.fr = null; renderFranchise(); refresh(); return toast("Franchise undone."); }
       if (act === "req-remove-film") return requestRemoval("film", ui.sortFilm[0], titleOf(ui.sortFilm[1]));
       if (act === "req-remove-this") return requestRemoval("film", fs, titleOf(fn));
       if (act === "req-remove") { $(".lbs-sortpick", root).hidden = true; return requestRemoval("section", id, nameOf(id)); }
       if (act === "req-add") { e.stopPropagation(); return requestAddition(fs, fn, btn); }
-      if (act === "ask-no" || act === "ask-yes") { const box = $(".lbs-ask", root); box.hidden = true; const y = box._yes, n = box._no; box._yes = box._no = null; if (act === "ask-yes" && y) y(); else if (act === "ask-no" && n) n(); return; }
+      if (act === "ask-no" || act === "ask-yes") { const box = $(".lbs-ask", root); box.hidden = true; box._frm = null; const y = box._yes, n = box._no; box._yes = box._no = null; if (act === "ask-yes" && y) y(); else if (act === "ask-no" && n) n(); return; }
     }
     if (act === "sort") return setSort(id, btn.dataset.v);
     if (act === "grab") { edit.grab = btn.dataset.v; return renderTray(); }
