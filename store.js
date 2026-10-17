@@ -4436,8 +4436,9 @@
   // Each film once, with every value each filter group can see.
   function lvBase() {
     const H = house();
-    const heldList = edit.on ? H.held : mine.held || [];
-    const key = `${lib.place.size}|${heldList.length}|${edit.on}`;
+    const heldList = edit.on ? [] : mine.held || [];
+    const off = new Set(H.held.map(([x]) => x)); // unshelved: off the wall, in the store's workspace
+    const key = `${lib.place.size}|${heldList.length}|${H.held.length}|${edit.on}`;
     if (lv.base && lv.baseLib === lib && lv.baseKey === key) return lv.base;
     const F = buildFacts();
     const held = new Set(heldList.map(([x]) => x));
@@ -4459,6 +4460,7 @@
       if (gm & gBit.animation) type.push("anim");
       const status = [byHand.has(slug) ? "sorted" : "auto"];
       if (p.cat && /\/rest$/.test(p.cat)) status.push("uncat");
+      status.push(off.has(slug) ? "unshelved" : "shelved");
       if (held.has(slug)) status.push("held");
       out.push({
         slug, name, year, i: i == null ? 1e9 : i, key: fileKey(name),
@@ -4479,7 +4481,7 @@
     const F = buildFacts();
     const inc = (g) => Object.entries(lv.f[g] || {}).filter(([, s]) => s === 1).map(([v]) => v);
     const gs = [
-      { id: "status", label: "Store", vals: [["sorted", "Hand-sorted"], ["auto", "Auto-placed"], ["uncat", "Uncategorized"], ["held", "In inventory"]] },
+      { id: "status", label: "Store", vals: [["shelved", "Shelved"], ["unshelved", "Unshelved"], ["sorted", "Hand-sorted"], ["auto", "Auto-placed"], ["uncat", "Uncategorized"], ...(edit.on ? [] : [["held", "In inventory"]])] },
       { id: "sgenre", label: "Store genre", vals: [...lib.genres.values()].filter((g) => (lib.count.get(g.id) || 0) > 0).map((g) => [g.id, g.name]) },
     ];
     const sg = inc("sgenre");
@@ -4646,7 +4648,7 @@
         (lv.selecting ? `<span class="lbs-lv-bub${on ? " -on" : ""}" data-bub="1"></span>` : "") +
         `<img data-lvp="${esc(r.slug)}" src="${posterCache.has(r.slug) ? esc(posterCache.get(r.slug)[0]) : EMPTY}" alt="">` +
         `<span class="lbs-lv-t">${esc(titleOf(r.name))} <i>${r.year || ""}</i></span>` +
-        (r.v.status.includes("held") ? `<em class="-inv">Inv</em>` : "") +
+        (r.v.status.includes("held") ? `<em class="-inv">Inv</em>` : "") + (r.v.status.includes("unshelved") ? `<em class="-inv -off">Off</em>` : "") +
         `<small title="${esc([nameOf(r.path[0]), tail].join(" › "))}"><b>${esc(nameOf(r.path[0]))}</b> ${esc(r.path.length > 1 ? tail : "")}</small></div>`;
     }
     sp.innerHTML = html;
@@ -4663,6 +4665,7 @@
       foot.innerHTML = `<div class="lbs-lib-acts"><b class="lbs-lv-n">${fmt(n)} selected</b>` +
         `<button type="button" class="-go" data-act="lv-move">Move to…</button>` +
         `<button type="button" data-act="lv-hold">Add to inventory</button>` +
+        `<button type="button" data-act="lv-unshelf">Unshelve</button><button type="button" data-act="lv-reshelf">Reshelve</button>` +
         `<button type="button" class="-link" data-act="lv-clear">Deselect</button></div>`;
       return;
     }
@@ -4766,6 +4769,18 @@
     box.querySelector(".lbs-mvpick-q").addEventListener("input", (e) => { e.stopPropagation(); paint(); });
     paint();
     box.querySelector(".lbs-mvpick-q").focus();
+  }
+  // Unshelve: off the wall into the store's workspace (house plan; Edit store only). Reshelve: back.
+  function setShelved(films, back) {
+    films = films.filter(([x]) => lib.place.has(x));
+    if (!films.length) return;
+    if (!edit.on) return toast("Unshelving changes the store for everyone: turn on Edit store first.");
+    const set = new Set(films.map(([x]) => x));
+    const label = films.length === 1 ? `‘${titleOf(films[0][1])}’` : `${fmt(films.length)} films`;
+    houseEdit(back ? `${label} back on the shelves.` : `${label} unshelved.`, (H) => {
+      H.held = H.held.filter(([x]) => !set.has(x));
+      if (!back) H.held.push(...films);
+    });
   }
   function closeMovePick() { root && root.querySelectorAll(".lbs-mvpick").forEach((x) => x.remove()); }
 
@@ -5709,13 +5724,14 @@
     const held = slug && (mine.held || []).some(([s2]) => s2 === slug);
     const inStore = slug && lib.place.has(slug);
     const html = many
-      ? `<b>${fmt(lv.sel.size)} films</b>` + b("lv-move", "Move to…") + b("lv-hold", "Add to inventory") + b("lv-clear", "Deselect all")
+      ? `<b>${fmt(lv.sel.size)} films</b>` + b("lv-move", "Move to…") + b("lv-hold", "Add to inventory") + b("lv-unshelf", "Unshelve") + b("lv-reshelf", "Reshelve") + b("lv-clear", "Deselect all")
       : `<b>${esc(titleOf(name))}</b>` +
         b("f-open", "Details") +
         (held ? b("f-return", "Take out of inventory") : b("f-hold", "Add to inventory", inStore ? "" : " disabled")) +
         b("f-jump", "Jump to section", inStore ? "" : " disabled") +
         b("f-editx", "Edit") +
         b("f-sort", "Sort") +
+        (house().held.some(([x]) => x === slug) ? b("f-reshelf", "Reshelve") : b("f-unshelf", "Unshelve", inStore ? "" : " disabled")) +
         b("f-fr", franchiseOf(slug) ? "Franchise" : "Add to franchise", inStore ? "" : " disabled");
     const m = h("div", "lbs-ctx", html);
     m.setAttribute("role", "menu");
@@ -6016,6 +6032,7 @@
         holdFilms(films); ui.pocket = true; renderPocket();
         return toast(`${fmt(films.length)} film${films.length === 1 ? "" : "s"} in your inventory.`);
       }
+      if (act === "lv-unshelf" || act === "lv-reshelf") return setShelved(lvFilms(), act === "lv-reshelf");
       if (act === "mv-close") return closeMovePick();
       if (act === "mv-to") {
         const pk = btn.closest(".lbs-mvpick"), films = pk && pk._films;
@@ -6047,6 +6064,7 @@
       if (act === "lb-more") { const m = btn.parentElement.querySelector(".lbs-lb-menu"); if (m) { const was = m.hidden; root.querySelectorAll(".lbs-menu").forEach((x) => (x.hidden = true)); m.hidden = !was; } return; }
       if (act === "f-jump") return jumpTo(fs, fn);
       if (act === "f-fr") { closeFilm(); return openFranchise(fs, fn); }
+      if (act === "f-unshelf" || act === "f-reshelf") return setShelved([[fs, fn]], act === "f-reshelf");
       if (act === "f-editx") { openFilm(fs, fn); ui.pane = "edit"; return renderFilm(); }
       if (act === "f-edit") { if (!ui.film || ui.film.slug !== fs) { ui.film = { slug: fs, name: fn }; filmDetails(fs).then((d) => ui.film && ui.film.slug === fs && renderFilm(d)); } ui.pane = ui.pane === "edit" ? null : "edit"; return renderFilm(); }
       if (act === "f-sort") { closeFilm(); $(".lbs-card", root).hidden = true; return openSort(fs, fn); }

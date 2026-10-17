@@ -4621,3 +4621,7 @@ html.lbs-open {
 .lbs-root:not(.lbs-browsing).lbs-lib-open .lbs-library {
   top: 0;
 }
+.lbs-lv-row em.-inv.-off {
+  background: #3a2424;
+  color: #f0a090;
+}
