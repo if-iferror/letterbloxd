@@ -2595,7 +2595,7 @@
       // Lists the store needs are always read, found on a film page or not.
       const seed = () => { for (const k of neededLists()) if (!st.lists[k]) st.lists[k] = { name: k.split("/")[1].replace(/-/g, " "), ids: null }; };
       if (st.themeV !== 2 && (st.phase === "lists" || st.phase === "done")) { st.sampled = 0; st.quiet = 0; st.phase = "themes"; }
-      if (st.phase === "done") { seed(); if (Object.values(st.lists).some((l) => !l.ids)) st.phase = "lists"; }
+      if (st.phase === "done") { seed(); if (Object.values(st.lists).some((l) => !l.ids)) st.phase = "lists"; else if (!st.lists["type/short"] || !st.lists["type/tv"]) st.phase = "types"; }
       const tick = () => { catJob.msg = ""; renderCatBuild(); };
 
       // 1. The cutoff: the last page whose sampled films have a median of MIN watches.
@@ -2695,6 +2695,31 @@
           if (++since % 10 === 0) await catSave();
           tick();
         })()));
+        st.phase = "types";
+        await catSave();
+      }
+
+      // 4b. Shorts and TV, by Letterboxd's own marks: its "show only shorts"
+      //     and "show only TV" browse filters (a cookie, so one at a time).
+      if (st.phase === "types") {
+        const index = new Map(st.films.map((f, i) => [f[0], i]));
+        for (const [kind, key, name] of [["shorts", "type/short", "Short"], ["tv", "type/tv", "TV"]]) {
+          if (st.lists[key] && st.lists[key].ids) continue;
+          const ids = [];
+          document.cookie = `filmFilter=show-${kind}; path=/`;
+          try {
+            for (let p = 1; p <= 2000; p++) {
+              const t = await lbGet(`/csi/films/films-browser-list/by/popular/${p > 1 ? `page/${p}/` : ""}?esiAllowFilters=true`);
+              const list = [...parse(t).querySelectorAll("[data-item-slug]")].map((el) => el.dataset.itemSlug);
+              const hits = list.map((x) => index.get(x)).filter((i) => i != null);
+              ids.push(...hits);
+              if (!hits.length || list.length < PER_PAGE) break;
+            }
+          } finally { document.cookie = "filmFilter=; path=/; max-age=0"; }
+          st.lists[key] = { name, ids: [...new Set(ids)].sort((a, b) => a - b) };
+          await catSave();
+          tick();
+        }
         st.phase = "done";
         await catSave();
       }
@@ -2754,6 +2779,7 @@
     if (st.phase === "films") return `Reading films: page ${fmt(st.page)} / ${fmt(st.cutPage)} · ${fmt(st.films.length)} films`;
     if (st.phase === "themes") return `Finding themes: ${fmt(st.sampled)} film pages read · ${fmt(Object.keys(st.lists).filter((k) => /theme\//.test(k)).length)} themes so far`;
     if (st.phase === "lists") return `Reading lists: ${fmt(done)} / ${fmt(lists.length)}`;
+    if (st.phase === "types") return "Reading Letterboxd's Short and TV marks…";
     if (st.phase === "lids") return `Film details: matching IDs, page ${fmt(st.lidPage || 0)} / ${fmt(st.cutPage)}`;
     if (st.phase === "details") { const got = (st.info || []).filter((x) => x && x.length > 1).length; return `Film details: ${fmt(got)} / ${fmt((st.info || []).filter(Boolean).length)} read`; }
     return `Done: ${fmt(st.films.length)} films · ${fmt(lists.length)} lists${st.info ? ` · details for ${fmt(st.info.filter((x) => x && x.length > 1).length)}` : ""}`;
@@ -4622,7 +4648,9 @@
       lang = { keys, names, per };
       primary = true;
     } else lang = multi("language/");
-    facts = { cat: C, idx, genre, country, lang, primary, runtime: C.info ? (i) => (C.info[i] && C.info[i][1]) || 0 : null };
+    // Letterboxd's own Short and TV marks (its "show only shorts / TV" filters)
+    const short = (C.lists.get("type/short") || {}).set || null, tv = (C.lists.get("type/tv") || {}).set || null;
+    facts = { cat: C, idx, genre, country, lang, primary, short, tv, runtime: C.info ? (i) => (C.info[i] && C.info[i][1]) || 0 : null };
     return facts;
   }
 
@@ -4653,9 +4681,12 @@
         const gm = i != null ? F.genre[i] : 0;
         const type = [];
         const rt = i != null && F.runtime ? F.runtime(i) : 0;
-        if (rt) type.push(rt < 40 ? "short" : "feature");
+        const isShort = i != null && (F.short ? F.short.has(i) : rt > 0 && rt < 40);
+        const isTv = i != null && ((F.tv && F.tv.has(i)) || !!(gm & gBit["tv-movie"]) || !!(F.cat.info && F.cat.info[i] && F.cat.info[i][5]));
+        if (isShort) type.push("short");
+        else if (i != null && !isTv && (F.short || rt)) type.push("feature");
         if (gm & gBit.documentary) type.push("doc");
-        if ((gm & gBit["tv-movie"]) || (i != null && F.cat.info && F.cat.info[i] && F.cat.info[i][5])) type.push("tv");
+        if (isTv) type.push("tv");
         if (gm & gBit.animation) type.push("anim");
         S = {
           name, year, i: i == null ? 1e9 : i, key: fileKey(name),
@@ -4692,7 +4723,7 @@
     const sc = inc("scat").filter((c) => lib.cats.has(c));
     if (sc.length) gs.push({ id: "ssub", label: "Store subcat", vals: sc.flatMap((c) => lib.cats.get(c).subs.flatMap((s2) => [[s2, sc.length > 1 ? `${nameOf(c)} › ${nameOf(s2)}` : nameOf(s2)], ...(lib.subs.get(s2).niches || []).map((n) => [n, `↳ ${nameOf(n)}`])])) });
     gs.push({ id: "genre", label: "Genre", vals: GENRES.map(([g, n]) => [g, n]) });
-    gs.push({ id: "type", label: "Type", vals: LV_TYPES, note: F && F.runtime ? "" : "Feature and Short need film details (Catalogue builder › Film details)" });
+    gs.push({ id: "type", label: "Type", vals: LV_TYPES, note: F && (F.short || F.runtime) ? "" : "Feature and Short need film details (Catalogue builder › Film details)" });
     const decs = [];
     for (let d = 1890; d <= 2020; d += 10) decs.push([`${d}s`, `${d}s`]);
     gs.push({ id: "decade", label: "Decade", vals: decs, years: true });
