@@ -227,7 +227,14 @@
   const yearOf = (name) => +((String(name).match(/\((\d{4})\)\s*$/) || [])[1] || 0);
   const titleOf = (name) => String(name).replace(/\s*\(\d{4}\)\s*$/, "");
   // "The Shining" files under S. Accents ignored, numbers before A.
-  const fileKey = (name) =>
+  // (remembered: sorting tens of thousands of titles asks for each one many times)
+  const fileKeys = new Map();
+  const fileKey = (name) => {
+    let k = fileKeys.get(name);
+    if (k === undefined) { k = fileKey0(name); if (fileKeys.size > 300000) fileKeys.clear(); fileKeys.set(name, k); }
+    return k;
+  };
+  const fileKey0 = (name) =>
     titleOf(name)
       .normalize("NFD")
       .replace(/[̀-ͯ]/g, "")
@@ -251,7 +258,7 @@
   // The room: every genre that has films, in genre order, each in its own run
   // of aisles. (For now only Horror is stocked; the others join as the
   // catalogue grows.)
-  const roomGenres = () => (lib ? GENRES.map(([id]) => id).filter((g) => lib.genres.has(g) && (lib.count.get(g) || 0) > 0) : [STOCKED]);
+  const roomGenres = () => (lib ? [...lib.genres.keys()].filter((g) => g !== UNCAT && (lib.count.get(g) || 0) > 0) : [STOCKED]);
   const inRoom = (genreId) => roomGenres().includes(genreId);
   const roomCats = () => roomGenres().flatMap((g) => lib.genres.get(g).cats);
   // For now the Store opens straight into the Sorting Desk; the walkable
@@ -329,7 +336,7 @@
   // index: a section's hand-made order (slugs); sort: each section's default
   // order ("title" | "year" | "index"); held: films taken off the wall into
   // the moderator's workspace.
-  const blankHouse = () => ({ v: 1, names: {}, hidden: [], cats: {}, subs: {}, place: {}, order: [], subOrder: {}, index: {}, sort: {}, held: [], wall: null, walls: {} });
+  const blankHouse = () => ({ v: 1, names: {}, hidden: [], genres: {}, cats: {}, subs: {}, place: {}, order: [], subOrder: {}, index: {}, sort: {}, held: [], wall: null, walls: {} });
   const fullHouse = (x) => ({ ...blankHouse(), ...(x || {}) });
   let houseShared = null;
   let houseLocal = readJSON(HOUSE_KEY, null);
@@ -369,18 +376,47 @@
   }
 
   // Every edit goes through here: snapshot for undo, apply, save, redraw.
+  /* Undo keeps only what an edit changed (the house plan can hold tens of
+   * thousands of placements; whole copies of it per step used up memory). */
+  const clone = (x) => (typeof structuredClone === "function" ? structuredClone(x) : JSON.parse(JSON.stringify(x)));
+  function houseDiff(prev, next, wasNull) {
+    const d = { wasNull, keys: {}, place: null };
+    for (const k of new Set([...Object.keys(prev), ...Object.keys(next)])) {
+      if (k === "_at") continue;
+      if (k === "place") {
+        const a = prev.place || {}, b = next.place || {}, ch = {};
+        let n = 0;
+        for (const x in b) if (a[x] !== b[x] && JSON.stringify(a[x]) !== JSON.stringify(b[x])) { ch[x] = a[x] === undefined ? null : a[x]; n++; }
+        for (const x in a) if (!(x in b)) { ch[x] = a[x]; n++; }
+        if (n) d.place = ch;
+        continue;
+      }
+      if (JSON.stringify(prev[k]) !== JSON.stringify(next[k])) d.keys[k] = prev[k] === undefined ? null : clone(prev[k]);
+    }
+    return d;
+  }
   function houseEdit(label, fn) {
-    edit.undo.push(JSON.stringify(houseLocal));
-    if (edit.undo.length > 30) edit.undo.shift();
-    houseLocal = fullHouse(JSON.parse(JSON.stringify(house())));
+    const prev = house(), wasNull = !houseLocal;
+    houseLocal = fullHouse(clone(prev));
     fn(houseLocal);
+    edit.undo.push(houseDiff(prev, houseLocal, wasNull));
+    // at most 40 steps, and no more than ~150,000 remembered placements in all
+    const size = (d) => (d.place ? Object.keys(d.place).length : 0) + 1;
+    while (edit.undo.length > 1 && (edit.undo.length > 40 || edit.undo.reduce((n, d) => n + size(d), 0) > 150000)) edit.undo.shift();
     persist(HOUSE_KEY, houseLocal);
     refresh();
     if (label) toast(label, undoHouse);
   }
   function undoHouse() {
     if (!edit.undo.length) return;
-    houseLocal = JSON.parse(edit.undo.pop());
+    const d = edit.undo.pop();
+    if (d.wasNull) houseLocal = null;
+    else {
+      const H = fullHouse(clone(house()));
+      for (const [k, v] of Object.entries(d.keys)) { if (v === null) delete H[k]; else H[k] = v; }
+      if (d.place) for (const [x, v] of Object.entries(d.place)) { if (v === null) delete H.place[x]; else H.place[x] = v; }
+      houseLocal = H;
+    }
     persist(HOUSE_KEY, houseLocal);
     refresh();
   }
@@ -526,11 +562,14 @@
 
     genres.set(UNCAT, { id: UNCAT, name: "Uncategorized", cats: [], uncat: true });
     addCat({ id: UNCAT_CAT, genre: UNCAT, name: "Uncategorized" });
+    const H0 = house();
     for (const [id, name] of GENRES) genres.set(id, { id, name, cats: [] });
+    // Genres made in dev mode, after Letterboxd's.
+    for (const [id, g] of Object.entries(H0.genres || {}).sort((a, b) => collator.compare(a[1].name, b[1].name))) if (!genres.has(id)) genres.set(id, { id, name: g.name, cats: [], house: true });
     // Every genre has a "General" category (an ordinary one: nothing lands
     // there unless you put it there), and every category has a "General" subcat.
-    for (const [g] of GENRES) {
-      if (g === STOCKED) continue;
+    for (const g of genres.keys()) {
+      if (g === STOCKED || g === UNCAT) continue;
       addCat({ id: `${g}/rest`, genre: g, name: "General", order: 1 });
     }
     for (const a of [...AISLES, EVERYTHING]) {
@@ -555,7 +594,13 @@
     }
     // Deleted folders (never a genre, Uncategorized, or a "General" subcat).
     for (const id of H.hidden) {
-      if (genres.has(id) || id === UNCAT_CAT || /\/general$/.test(id)) continue;
+      if (id === UNCAT || id === UNCAT_CAT || /\/general$/.test(id)) continue;
+      if (genres.has(id)) {
+        // a deleted genre: its folders go with it, its films back to Uncategorized
+        for (const cid of genres.get(id).cats) { for (const sid of cats.get(cid)?.subs || []) { for (const nid of subs.get(sid)?.niches || []) subs.delete(nid); subs.delete(sid); } cats.delete(cid); }
+        genres.delete(id);
+        continue;
+      }
       if (cats.has(id)) {
         const c = cats.get(id);
         for (const sid of c.subs) subs.delete(sid);
@@ -635,7 +680,7 @@
       const w = WALL_ORDER.indexOf(id.split("/")[1]);
       return 1000 + (w >= 0 ? w : WALL_ORDER.length - 1.5);
     };
-    genres.get(STOCKED).cats.sort((a, b) => wallKey(a) - wallKey(b));
+    genres.get(STOCKED)?.cats.sort((a, b) => wallKey(a) - wallKey(b));
     for (const g of genres.values()) if (g.id !== STOCKED && g.cats.some((c) => H.order.includes(c))) g.cats.sort((a, b) => wallKey(a) - wallKey(b));
     for (const c of cats.values()) {
       const o = H.subOrder[c.id];
@@ -860,7 +905,7 @@
         `${c.name} <span>${fmt(c.id === "main" ? total : c.count)}</span>${c.open ? "" : "<em>soon</em>"}</button>`
       ).join("") +
       `</nav>` +
-      (DEV_TOOLS ? `<button type="button" class="lbs-edit-toggle" data-act="edit" aria-pressed="false">Edit store</button>` : "") +
+      (DEV_TOOLS ? `<button type="button" class="lbs-edit-toggle" data-act="edit" aria-pressed="false">Dev mode</button>` : "") +
       `<button type="button" class="lbs-close" data-act="close" aria-label="Leave the store">${ICON_CLOSE}</button>` +
       `</header>` +
       `<div class="lbs-hall"></div>`;
@@ -1369,6 +1414,14 @@
   function addFolder(level, parent, name) {
     name = name.trim().replace(/\s+/g, " ");
     if (!name) return;
+    if (level === "genre") {
+      if (!edit.on) return toast("New genres are made in Dev mode.");
+      let gid = `g-${slugify(name)}`;
+      for (let n = 2; lib.genres.has(gid); n++) gid = `g-${slugify(name)}-${n}`;
+      houseEdit(`Added the genre “${name}”.`, (H) => { H.genres = { ...(H.genres || {}), [gid]: { name } }; H.hidden = H.hidden.filter((x) => x !== gid); });
+      libUI.path = [gid];
+      return renderLibrary();
+    }
     const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "folder";
     let id = `${parent}/u-${slug}`;
     for (let n = 2; lib.cats.has(id) || lib.subs.has(id); n++) id = `${parent}/u-${slug}-${n}`;
@@ -2012,6 +2065,7 @@
     }
     // Aisles are numbered within their genre.
     { const seen = new Map(); for (const a of aisles.filter(Boolean)) { const n = (seen.get(a.genre) || 0) + 1; seen.set(a.genre, n); a.num = n; } }
+    wall.bayCache.clear(); // (each cached bay points at its layout: keep only this one)
     wall.lay = { films, chunks, secs, runs, bookends, stickers, hang, aisles: aisles.filter(Boolean), left: -AISLE_W - AISLE_GAP, faces: [], idx, bucket, held: H.held, width, height, bays, k: perRow, origin, rowPos, pile };
     recolourSections();
     renderTray();
@@ -4394,7 +4448,7 @@
     return { folders: [], films: [] };
   }
   const childLevel = (id) => { if (!id || id === UNCAT) return null; const p = partsOf(id); return p.niche ? null : p.sub ? "niche" : p.cat ? "sub" : p.genre ? "cat" : null; };
-  const LEVEL_WORD = { cat: "category", sub: "subcat", niche: "niche" };
+  const LEVEL_WORD = { genre: "genre", cat: "category", sub: "subcat", niche: "niche" };
   let libIo = null;
 
   function setLibrary(open) {
@@ -4431,11 +4485,14 @@
     const sel = libUI.sel;
     const selAt = sel ? lib.place.get(sel[0]) : null;
     const selPath = selAt ? (() => { const p = partsOf(selAt); return [p.genre, p.cat, p.sub, p.niche].filter(Boolean); })() : [];
+    const canDel = (id) => edit.on && id !== UNCAT && id !== UNCAT_CAT && !/\/general$/.test(id);
     const folderRow = (id, side) =>
       `<li class="lbs-lib-row lbs-folder${path.includes(id) ? " -on" : ""}" data-act="lib-open" data-side="${side}" data-id="${esc(id)}" data-drop="${esc(id)}">` +
       `${ICON_FOLDER}<span>${esc(nameOf(id))}</span>` +
       (selPath.includes(id) ? `<em>here</em>` : "") +
-      `<small>${fmt(lib.count.get(id) || 0)}</small><b>›</b></li>`;
+      `<small>${fmt(lib.count.get(id) || 0)}</small>` +
+      (canDel(id) ? `<button type="button" class="lbs-lib-del" data-act="lib-del" data-id="${esc(id)}" aria-label="Delete ${esc(nameOf(id))}" title="Delete">${ICON_CLOSE}</button>` : "") +
+      `<b>›</b></li>`;
     const filmRow = ([slug, name]) =>
       `<li class="lbs-lib-row lbs-lib-film${sel && sel[0] === slug ? " -sel" : ""}" data-act="lib-film" data-film="${esc(slug)}" data-slug="${esc(slug)}" data-name="${esc(name)}" title="Drag onto a folder, the wall or your inventory">` +
       `<img data-lp="${esc(slug)}" src="${posterCache.has(slug) ? esc(posterCache.get(slug)[0]) : EMPTY}" alt="" draggable="false"><span>${esc(titleOf(name))}</span><small>${yearOf(name) || ""}</small>` +
@@ -4459,8 +4516,8 @@
     };
     const column = (id, side) => {
       const k = kidsOf(id);
-      const lvl = side === "right" ? childLevel(id) : null;
-      const adding = lvl && libUI.adding === id;
+      const lvl = side === "right" || (!id && edit.on) ? (id ? childLevel(id) : edit.on ? "genre" : null) : null;
+      const adding = lvl && (id ? libUI.adding === id : libUI.adding === "@root");
       return (
         `<div class="lbs-lib-col -${side}"><h5>${id ? esc(nameOf(id)) : "Genres"}${id ? `<small>${fmt(String(id).startsWith("fr:") ? k.films.length : lib.count.get(id) || 0)} films</small>` : ""}${String(id).startsWith("fr:") ? `<button type="button" class="lbs-frbadge" data-act="fr-open" data-fr="${esc(id.slice(3))}">Edit franchise</button>` : ""}</h5><ul>` +
         k.folders.map((f) => folderRow(f, side)).join("") +
@@ -4582,32 +4639,39 @@
     const held = new Set(heldList.map(([x]) => x));
     const byHand = new Set([...Object.keys(H.place), ...(mine.view === "mine" && !edit.on ? Object.keys(mine.place) : [])]);
     const gBit = Object.fromEntries(GENRES.map(([g], b) => [g, 1 << b]));
+    if (lv.statFacts !== F) { lv.stat = new Map(); lv.statFacts = F; }
+    const stat = lv.stat;
     const out = [];
     for (const [slug, sub] of lib.place) {
       const p = partsOf(sub);
       if (!p.genre) continue;
-      const name = lib.names.get(slug) || slug, year = yearOf(name);
-      const i = F ? F.idx.get(slug) : undefined;
-      const gm = i != null ? F.genre[i] : 0;
-      const genres = GENRES.filter(([g]) => gm & gBit[g]).map(([g]) => g);
-      const rt = i != null && F.runtime ? F.runtime(i) : 0;
-      const type = [];
-      if (rt) type.push(rt < 40 ? "short" : "feature");
-      if (gm & gBit.documentary) type.push("doc");
-      if ((gm & gBit["tv-movie"]) || (i != null && F.cat.info && F.cat.info[i] && F.cat.info[i][5])) type.push("tv");
-      if (gm & gBit.animation) type.push("anim");
+      // What never changes about a film is worked out once and kept.
+      let S = stat.get(slug);
+      if (!S) {
+        const name = lib.names.get(slug) || slug, year = yearOf(name);
+        const i = F ? F.idx.get(slug) : undefined;
+        const gm = i != null ? F.genre[i] : 0;
+        const type = [];
+        const rt = i != null && F.runtime ? F.runtime(i) : 0;
+        if (rt) type.push(rt < 40 ? "short" : "feature");
+        if (gm & gBit.documentary) type.push("doc");
+        if ((gm & gBit["tv-movie"]) || (i != null && F.cat.info && F.cat.info[i] && F.cat.info[i][5])) type.push("tv");
+        if (gm & gBit.animation) type.push("anim");
+        S = {
+          name, year, i: i == null ? 1e9 : i, key: fileKey(name),
+          genre: GENRES.filter(([g]) => gm & gBit[g]).map(([g]) => g), type, decade: year ? [decadeOf(year)] : [],
+          lang: i != null && F.lang.per[i] ? F.lang.per[i].map(String) : [],
+          country: i != null && F.country.per[i] ? F.country.per[i].map(String) : [],
+        };
+        stat.set(slug, S);
+      }
       const status = [p.genre === UNCAT ? "uncat" : "cat"];
       if (onWall && p.genre !== UNCAT) status.push(onWall.has(slug) ? "wall" : "nowall");
       if (held.has(slug)) status.push("held");
       out.push({
-        slug, name, year, i: i == null ? 1e9 : i, key: fileKey(name),
+        slug, name: S.name, year: S.year, i: S.i, key: S.key,
         path: [p.genre, p.cat, p.sub, p.niche].filter(Boolean),
-        v: {
-          status, sgenre: [p.genre], scat: p.cat ? [p.cat] : [], ssub: [p.sub, p.niche].filter(Boolean),
-          genre: genres, type, decade: year ? [decadeOf(year)] : [],
-          lang: i != null && F.lang.per[i] ? F.lang.per[i].map(String) : [],
-          country: i != null && F.country.per[i] ? F.country.per[i].map(String) : [],
-        },
+        v: { status, sgenre: [p.genre], scat: p.cat ? [p.cat] : [], ssub: [p.sub, p.niche].filter(Boolean), genre: S.genre, type: S.type, decade: S.decade, lang: S.lang, country: S.country },
       });
     }
     lv.base = out; lv.baseLib = lib; lv.baseLay = wall.lay; lv.baseKey = key;
@@ -4919,7 +4983,7 @@
     const box = h("div", "lbs-mvpick",
       `<div class="lbs-mvpick-top"><b>Move ${films.length === 1 ? `‘${esc(titleOf(films[0][1]))}’` : `${fmt(films.length)} films`} to…</b><button type="button" class="lbs-lib-x -small" data-act="mv-close" aria-label="Close">${ICON_CLOSE}</button></div>` +
       `<input type="search" class="lbs-mvpick-q" placeholder="Find a folder" autocomplete="off" spellcheck="false"><ul class="lbs-mvpick-list"></ul>` +
-      (edit.on ? "" : `<p class="lbs-lv-note">Not in Edit store: this moves them on your own shelves.</p>`));
+      (edit.on ? "" : `<p class="lbs-lv-note">Not in dev mode: this moves them on your own shelves.</p>`));
     box._films = films;
     $(".lbs-library", root).append(box);
     const all = [];
@@ -5225,7 +5289,7 @@
     root.classList.toggle("lbs-browsing", !on);
     if (!on) { desk.mode = "store"; closeFilm(); }
     const b = $(".lbs-edit-toggle", root);
-    if (b) { b.setAttribute("aria-pressed", on); b.textContent = on ? "Done editing" : "Edit store"; }
+    if (b) { b.setAttribute("aria-pressed", on); b.textContent = on ? "Leave dev mode" : "Dev mode"; }
     refresh();
     if (on) toast("Editing the house plan: what everyone sees. Zoom out to move sections between the shelves and your inventory.");
   }
@@ -5237,7 +5301,7 @@
     if (!edit.on) return;
     const pending = !!houseLocal;
     bar.innerHTML =
-      `<b>Editing the store</b><span>${pending ? "Unpublished changes in this browser" : "No changes yet"}</span>` +
+      `<b>Dev mode</b><span>${pending ? "Unpublished changes in this browser" : "No changes yet"}</span>` +
       `<button type="button" data-act="h-undo"${edit.undo.length ? "" : " disabled"}>Undo</button>` +
       `<button type="button" data-act="h-save"${pending ? "" : " disabled"}>Download plan</button>` +
       `<button type="button" data-act="h-discard"${pending ? "" : " disabled"}>Discard</button>`;
@@ -5631,8 +5695,10 @@
     edit.deleting = null;
     if (edit.sel === id) edit.sel = null;
     if (desk.folder === id || (p.cat === id && desk.folder && desk.folder.startsWith(id + "/"))) desk.folder = p.sub ? p.cat : p.genre;
+    if (libUI.path.some((x) => x === id || String(x).startsWith(id + "/"))) libUI.path = libUI.path.slice(0, libUI.path.findIndex((x) => x === id || String(x).startsWith(id + "/")));
     houseEdit(`Deleted “${was}”.`, (H) => {
-      if (H.cats[id]) delete H.cats[id];
+      if (H.genres && H.genres[id]) delete H.genres[id];
+      else if (H.cats[id]) delete H.cats[id];
       else if (H.subs[id]) delete H.subs[id];
       else if (!H.hidden.includes(id)) H.hidden.push(id);
       H.order = H.order.filter((x) => x !== id);
@@ -5704,6 +5770,11 @@
       const partial = new Map();
       for (const [x] of films) { const fid = lib.frOf.get(x); if (fid && lib.frs[fid].films.some(([y]) => !inSet.has(y))) partial.set(fid, lib.frs[fid]); }
       if (partial.size) return askFranchiseMove(films, target, partial);
+    }
+    // A big batch: say so first, then do it on the next frame.
+    if (films.length > 1500 && !opts.now) {
+      toast(`Moving ${fmt(films.length)} films…`);
+      return setTimeout(() => moveFilms(films, target, { ...opts, fr: true, now: true }), 40);
     }
     if (edit.on) {
       const label = films.length === 1 ? `‘${titleOf(films[0][1])}’` : `${films.length} films`;
@@ -6260,7 +6331,13 @@
         lv.selecting = false; lvSetSel(new Set());
         return moveFilms(films, id);
       }
-      if (act === "lib-new") { libUI.adding = libUI.path[libUI.path.length - 1]; return renderLibrary(); }
+      if (act === "lib-new") { const col = btn.closest(".lbs-lib-col"); libUI.adding = col && col.classList.contains("-left") && libUI.path.length < 2 ? "@root" : libUI.path[libUI.path.length - 1] || "@root"; return renderLibrary(); }
+      if (act === "lib-del") {
+        e.stopPropagation();
+        const did = btn.dataset.id, n = lib.count.get(did) || 0;
+        const where = lib.genres.has(did) || lib.cats.has(did) ? "Uncategorized" : `${nameOf(lib.subs.get(did)?.parent || lib.subs.get(did)?.cat)}${lib.subs.get(did)?.parent ? "" : " › General"}`;
+        return ask(`Delete <b>${esc(nameOf(did))}</b>${lib.genres.has(did) ? " and every folder in it" : lib.cats.has(did) ? " and its subcats" : ""}?${n ? ` Its ${fmt(n)} film${n === 1 ? "" : "s"} go to ${esc(where)}.` : ""}`, () => deleteFolder(did), "Delete");
+      }
       if (act === "lib-move") {
         const right = libUI.path[libUI.path.length - 1];
         if (!libUI.sel || !right) return;
