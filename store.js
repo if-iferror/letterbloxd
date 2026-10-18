@@ -4953,7 +4953,7 @@
     ["robots", "Robots & AI", "robot|robots|android|artificial intelligence|artificial intelligence \\(a\\.i\\.\\)|cyborg|humanoid robot"],
     ["dystopia", "Dystopias", "dystopia|dystopian|totalitarianism|totalitarian regime|police state"],
     ["postapoc", "Post-Apocalyptic", "post-apocalyptic future|post-apocalyptic|apocalypse|end of the world|nuclear war|nuclear holocaust|wasteland"],
-    ["cyberpunk", "Cyberpunk", "cyberpunk"],
+    ["cyberpunk", "Cyberpunk", "cyberpunk|tech noir"],
     ["mindcontrol", "Mind Control & Hypnosis", "mind control|hypnosis|hypnotism|brainwashing|mind reading"],
     ["steampunk", "Steampunk", "steampunk|dieselpunk"],
     ["vr", "Virtual Reality & Simulations", "virtual reality|simulation|simulated reality|video game world"],
@@ -4972,7 +4972,7 @@
     ["talkinganimals", "Talking Animals", "talking animal|talking dog|anthropomorphism|anthropomorphic animal"],
     ["portal", "Other Worlds", "portal|another world|other world|fantasy world|isekai|alternate world"],
     // Horror
-    ["slasher", "Slashers", "slasher|masked killer|slasher flick"],
+    ["slasher", "Slashers", "slasher|masked killer|slasher flick|proto-slasher|slasher horror|slasher spoof|teen slasher"],
     ["zombies", "Zombies", "zombie|zombies|zombie apocalypse|living dead|undead"],
     ["vampires", "Vampires", "vampire|vampires|dracula|count dracula|vampire hunter"],
     ["classicmonsters", "Classic Monsters", "frankenstein|frankenstein's monster|mummy|wolf man|invisible man|creature from the black lagoon|universal monsters|bride of frankenstein"],
@@ -5099,6 +5099,41 @@
     ["money", "Money & Wall Street", "wall street|stock market|stockbroker|banker|corporate greed|capitalism|greed|money|millionaire|billionaire|financial crisis|investment banker"],
     ["medical", "Doctors & Hospitals", "doctor|surgeon|nurse|hospital|medicine|physician|medical drama"],
     ["science", "Scientists", "scientist|science|physicist|mathematician|mathematics|genius|inventor|invention"],
+    // exploitation & cult subgenres
+    ["blaxploitation", "Blaxploitation", "blaxploitation.*"],
+    ["christploitation", "Christploitation", "christian film|christian faith|evangelical christianity|faith-based|faith based|christian movie|christian drama|christian music|christian allegory", ["pureflix", "affirm", "kendrick", "angel", "kingdomstory"]],
+    ["hagsploitation", "Hagsploitation", "hagsploitation|psycho-biddy|grande dame guignol"],
+    ["nunsploitation", "Nunsploitation", "nunsploitation"],
+    ["nazisploitation", "Nazisploitation", "nazisploitation.*|naziploitation|nazi exploitation"],
+    ["canuxploitation", "Canuxploitation", "canuxploitation|canadian tax shelter"],
+    ["ozploitation", "Ozploitation", "ozploitation|australian new wave"],
+    ["sharksploitation", "Sharksploitation", "sharksploitation|shark|shark attack|killer shark|great white shark|megalodon"],
+    ["hicksploitation", "Hicksploitation & Backwoods", "hicksploitation|redneck|rednecks|hillbilly|hillbillies|backwoods|inbreeding|moonshine|moonshiner"],
+    ["southerngothic", "Southern Gothic", "southern gothic"],
+    ["bikers", "Bikers", "biker|bikers|motorcycle gang|biker gang|outlaw biker|hells angels|biker film"],
+    ["delinquents", "Juvenile Delinquents", "juvenile delinquent|juvenile delinquency|reform school|juvenile detention|teen gang|juvenile hall"],
+    ["wip", "Women in Prison", "women's prison|women in prison|female prisoner|female prison"],
+    ["raperevenge", "Rape & Revenge", "rape and revenge|rape-revenge"],
+    ["mondo", "Mondo & Shockumentary", "mondo|mondo film|shockumentary"],
+    ["videonasty", "Video Nasties", "video nasty|video nasties"],
+    ["sov", "Shot on Video", "shot on video|sov horror|camcorder"],
+    ["pinku", "Pinku Eiga", "pink film|pinku eiga|roman porno"],
+    ["softcore", "Softcore", "softcore|erotic movie|erotica|sexploitation"],
+    ["giallo", "Giallo", "giallo|gialli"],
+    ["spaghetti", "Spaghetti Westerns", "spaghetti western|macaroni western|euro western|eurowestern"],
+    ["neowestern", "Neo-Westerns", "neo-western|contemporary western|modern western|neo western"],
+    ["peplum", "Sword & Sandal", "peplum|sword and sandal"],
+    ["tokusatsu", "Tokusatsu", "tokusatsu|super sentai|kamen rider|ultraman|henshin hero"],
+    ["mecha", "Mecha", "mecha|giant robot|mech"],
+    ["isekai", "Isekai", "isekai"],
+    ["jhorror", "J-Horror", "j-horror|japanese horror|j horror"],
+    // film movements
+    ["germanexp", "German Expressionism", "german expressionism|expressionism|expressionist"],
+    ["frenchnewwave", "French New Wave", "french new wave|nouvelle vague"],
+    ["jnewwave", "Japanese New Wave", "japanese new wave"],
+    ["neorealism", "Italian Neorealism", "neorealism|italian neorealism"],
+    ["dogme", "Dogme 95", "dogme 95|dogma 95"],
+    ["slowcinema", "Slow Cinema", "slow cinema|contemplative cinema"],
     // Form & style
     ["anthology", "Anthologies", "anthology|omnibus|segments|portmanteau"],
     ["tvadapt", "Based on TV", "based on tv series|based on tv show|based on sitcom|based on cartoon"],
@@ -5236,6 +5271,11 @@
     ["apple", "Apple", "apple studios|apple original films|apple tv\\+"],
     ["hbo", "HBO", "hbo|hbo films|hbo max|hbo documentary films|home box office \\(hbo\\)"],
     ["hulu", "Hulu", "hulu"],
+    ["pureflix", "Pure Flix", "pure flix entertainment|pure flix|pure flix productions"],
+    ["affirm", "Affirm Films", "affirm films"],
+    ["kendrick", "Kendrick Brothers", "kendrick brothers|kendrick brothers productions|sherwood pictures"],
+    ["angel", "Angel Studios", "angel studios|vidangel studios"],
+    ["kingdomstory", "Kingdom Story Company", "kingdom story company"],
     ["hallmark", "Hallmark", "hallmark entertainment|hallmark channel|crown media|hallmark hall of fame productions"],
     ["disneychannel", "Disney Channel", "disney channel|disney television animation|disney+"],
   ];
@@ -5336,20 +5376,6 @@
     const short = (C.lists.get("type/short") || {}).set || null, tv = (C.lists.get("type/tv") || {}).set || null;
     // Letterboxd's themes (broad) and mini-themes (narrow, e.g. biopics, heists).
     const theme = multi("theme/"), mini = multi("mini-theme/");
-    let tags = null;
-    if (C.kw && C.fkw) {
-      // each keyword -> the tags it counts toward, then each film's tags
-      const res = KW_TAGS.map(([, , pat]) => new RegExp(`^(?:${pat})$`, "i"));
-      const kwTags = C.kw.map((name) => { const out = []; res.forEach((re, t) => { if (re.test(name)) out.push(t); }); return out; });
-      const per = new Array(N);
-      C.fkw.forEach((ks, i) => {
-        if (!ks) return;
-        let set = null;
-        for (const k of ks) for (const t of kwTags[k] || []) (set || (set = new Set())).add(t);
-        if (set) per[i] = [...set];
-      });
-      tags = { keys: KW_TAGS.map(([id]) => id), names: KW_TAGS.map(([, label]) => label), per };
-    }
     let studio = null;
     if (C.co && C.fco) {
       const res = STUDIOS.map(([, , pat]) => new RegExp(`^(?:${pat})$`, "i"));
@@ -5363,6 +5389,27 @@
       });
       studio = { keys: STUDIOS.map(([id]) => id), names: STUDIOS.map(([, label]) => label), per };
     }
+    let tags = null;
+    if (C.kw && C.fkw) {
+      // each keyword -> the tags it counts toward, then each film's tags
+      const res = KW_TAGS.map(([, , pat]) => new RegExp(`^(?:${pat})$`, "i"));
+      const kwTags = C.kw.map((name) => { const out = []; res.forEach((re, t) => { if (re.test(name)) out.push(t); }); return out; });
+      const per = new Array(N);
+      C.fkw.forEach((ks, i) => {
+        if (!ks) return;
+        let set = null;
+        for (const k of ks) for (const t of kwTags[k] || []) (set || (set = new Set())).add(t);
+        if (set) per[i] = [...set];
+      });
+      // tags that also count a studio's films (Christploitation: Pure Flix…)
+      if (studio) KW_TAGS.forEach(([, , , sids], t) => {
+        if (!sids) return;
+        const want = new Set(sids.map((id) => STUDIOS.findIndex(([x]) => x === id)).filter((n) => n >= 0));
+        studio.per.forEach((ss, i) => { if (ss && ss.some((x) => want.has(x)) && !(per[i] || []).includes(t)) (per[i] || (per[i] = [])).push(t); });
+      });
+      tags = { keys: KW_TAGS.map(([id]) => id), names: KW_TAGS.map(([, label]) => label), per };
+    }
+
     facts = { cat: C, idx, genre, country, origin, lang, primary, short, tv, theme, mini, tags, studio, runtime: C.info ? (i) => (C.info[i] && C.info[i][1]) || 0 : null };
     return facts;
   }
