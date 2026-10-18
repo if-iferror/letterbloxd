@@ -4798,3 +4798,17 @@ html.lbs-open {
   pointer-events: none !important;
   z-index: 2147483647;
 }
+
+/* search: people & studios */
+.lbs-find-list li.-who b { color: #9fe0a8; }
+.lbs-who-ico {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: #2c3440;
+  color: #cfd8e0;
+  font: 700 12px Arial, sans-serif;
+}

@@ -455,7 +455,8 @@
       let i = -1;
       lists.set(key, { name, set: new Set(gaps.map((d) => (i += d))) });
     }
-    catalogue = { at: j.at, films: j.films, lists, info: Array.isArray(j.info) ? j.info : null, people: j.people || [], langNames: j.langNames || {}, kw: Array.isArray(j.kw) ? j.kw : null, fkw: Array.isArray(j.fkw) ? j.fkw : null };
+    catalogue = { at: j.at, films: j.films, lists, info: Array.isArray(j.info) ? j.info : null, people: j.people || [], langNames: j.langNames || {}, kw: Array.isArray(j.kw) ? j.kw : null, fkw: Array.isArray(j.fkw) ? j.fkw : null,
+      co: j.co || null, fco: j.fco || null, cast: j.cast || null, fcast: j.fcast || null, certs: j.certs || null, fcert: j.fcert || null };
     catState = "ready";
     return true;
   }
@@ -1214,10 +1215,10 @@
       // The find bar stays put, above the Library, whether it's open or not.
       `<div class="lbs-find">` +
       `<button type="button" class="lbs-lib-btn" data-act="lib" aria-label="Library: every folder and film">${ICON_FOLDER}<span>Library</span></button>` +
-      `<div class="lbs-find-box">${ICON_SEARCH}<input type="search" class="lbs-find-q" placeholder="Find a movie in the store" autocomplete="off" spellcheck="false">` +
+      `<div class="lbs-find-box">${ICON_SEARCH}<input type="search" class="lbs-find-q" placeholder="Find a movie, person or studio" autocomplete="off" spellcheck="false">` +
       `<button type="button" class="lbs-find-type" data-act="find-type" aria-haspopup="menu" aria-label="Search for">Movie<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div>` +
       `<button type="button" class="lbs-gear" data-act="settings" aria-haspopup="menu" aria-label="Settings" title="Settings">${ICON_GEAR}</button>` +
-      `<ul class="lbs-find-types lbs-menu" role="menu" hidden><li><button type="button" data-act="find-as" data-v="film" class="-on">Movie</button></li><li><button type="button" disabled>Actor <em>soon</em></button></li><li><button type="button" disabled>Director <em>soon</em></button></li><li><button type="button" disabled>Crew <em>soon</em></button></li></ul>` +
+      `<ul class="lbs-find-types lbs-menu" role="menu" hidden><li><button type="button" data-act="find-as" data-v="film" class="-on">Movie</button></li><li><button type="button" disabled>People &amp; studios <em>just type a name</em></button></li></ul>` +
       `<div class="lbs-settings lbs-menu" role="menu" hidden></div>` +
       `<ul class="lbs-find-list" hidden></ul><div class="lbs-card" hidden></div></div>` +
       `<div class="lbs-pocket" hidden></div>` +
@@ -2879,6 +2880,51 @@
         st.phase = "done";
         await catSave();
       }
+      // 9 (on request). Film facts from TMDB for every film it knows: the
+      //    companies that made it (for Studio), the top-billed cast (for
+      //    search), the US age rating, plus country and keywords again.
+      if (st.phase === "facts") {
+        const key = readJSON(TMDB_KEY, "");
+        if (!key) throw new Error("This step uses TMDB: paste your TMDB key in the Logo builder first.");
+        await logoReady; await loadSharedLogos();
+        st.fx = st.fx || {}; st.coNames = st.coNames || {}; st.castNames = st.castNames || {};
+        st.kw = st.kw || {}; st.kwNames = st.kwNames || {}; st.origin = st.origin || {};
+        const bearer = key.length > 40, lane = limiter(10);
+        const todo = [];
+        st.films.forEach(([slug], i) => {
+          if (i in st.fx) return;
+          const e = logoEntry(slug), id = (e && e[0]) || (st.tmdb && st.tmdb[i]);
+          if (id) todo.push([i, id]);
+        });
+        let n = 0;
+        await Promise.all(todo.map(([i, id]) => lane(async () => {
+          if (!catJob.running) throw new Error("paused");
+          for (let tries = 0; tries < 6; tries++) {
+            const u = new URL(`https://api.themoviedb.org/3/movie/${id}`);
+            u.searchParams.set("append_to_response", "credits,release_dates,keywords");
+            if (!bearer) u.searchParams.set("api_key", key);
+            const r = await fetch(u, bearer ? { headers: { Authorization: `Bearer ${key}` } } : {});
+            catJob.reqs++;
+            if (r.status === 429) { await new Promise((ok) => setTimeout(ok, 1500 * (tries + 1))); continue; }
+            if (r.status === 401) throw new Error("TMDB didn't accept your key (Logo builder › Forget key, then paste it again).");
+            const j = r.ok ? await r.json() : null;
+            if (!j) { st.fx[i] = 0; break; }
+            const co = (j.production_companies || []).map((c) => { st.coNames[c.id] = c.name; return c.id; });
+            const cast = ((j.credits && j.credits.cast) || []).slice(0, 6).map((c) => { st.castNames[c.id] = c.name; return c.id; });
+            let cert = "";
+            const us = ((j.release_dates && j.release_dates.results) || []).find((x) => x.iso_3166_1 === "US");
+            if (us) { const ds = us.release_dates || []; const pick = ds.find((d) => d.certification && d.type === 3) || ds.find((d) => d.certification); cert = pick ? pick.certification.trim() : ""; }
+            st.fx[i] = [co, cast, cert];
+            if (j.origin_country) st.origin[i] = j.origin_country;
+            const ks = (j.keywords && j.keywords.keywords) || [];
+            if (ks.length || !(i in st.kw)) { for (const k of ks) st.kwNames[k.id] = k.name; st.kw[i] = ks.map((k) => k.id); }
+            break;
+          }
+          if (++n % 400 === 0) { catJob.msg = `Film facts from TMDB: ${fmt(n)} / ${fmt(todo.length)}`; await catSave(); tick(); }
+        })));
+        st.phase = "done";
+        await catSave();
+      }
       // 7 (on request). TMDB keywords for every film TMDB knows, the raw
       //    material for the store's Tags filter (LGBTQ+, Heist, Musical…).
       if (st.phase === "keywords") {
@@ -2930,6 +2976,7 @@
     if (st.phase === "lists") return `Reading lists: ${fmt(done)} / ${fmt(lists.length)}`;
     if (st.phase === "types") return "Reading Letterboxd's Short and TV marks…";
     if (st.phase === "lids") return `Film details: matching IDs, page ${fmt(st.lidPage || 0)} / ${fmt(st.cutPage)}`;
+    if (st.phase === "facts") return `Film facts from TMDB: ${fmt(Object.keys(st.fx || {}).length)} films so far`;
     if (st.phase === "deep") return `Finding the rest on TMDB: ${fmt(Object.keys(st.tmdb || {}).length)} looked up · ${fmt(Object.values(st.tmdb || {}).filter(Boolean).length)} found`;
     if (st.phase === "keywords") return `TMDB keywords: ${fmt(Object.keys(st.kw || {}).length)} films so far`;
     if (st.phase === "origin") return `Country of origin from TMDB: ${fmt(Object.keys(st.origin || {}).length)} films so far`;
@@ -2951,7 +2998,7 @@
       (catJob.error ? `<p class="-err">${esc(catJob.error)}</p>` : "") +
       `<div class="lbs-logobuild-row">` +
       (catJob.running ? `<button type="button" data-act="cat-stop">Pause</button>` : st && st.phase === "done" && neededLists().every((k) => st.lists[k]) ? "" : `<button type="button" data-act="cat-start" class="-go">${st && (st.films.length || Object.keys(st.probes).length) ? "Continue" : "Start"}</button>`) +
-      (st && st.phase === "done" ? `<button type="button" data-act="cat-save" class="-go">Download catalogue</button><button type="button" data-act="cat-try">Try it here</button>` + (catJob.running ? "" : `<button type="button" data-act="cat-details" title="Runtime, primary language and directors for every film (about an hour)">${st.info ? "Re-read film details" : "Read film details"}</button><button type="button" data-act="cat-keywords" title="TMDB keywords for every film, for the Tags filter (about an hour; needs your TMDB key)">${st.kw ? "Finish TMDB keywords" : "Read TMDB keywords"}</button><button type="button" data-act="cat-deep" title="Find the films the Logo builder never matched on TMDB, with their keywords and country (about two hours)">${st.tmdb ? "Finish finding the rest on TMDB" : "Find the rest on TMDB"}</button>`) : "") +
+      (st && st.phase === "done" ? `<button type="button" data-act="cat-save" class="-go">Download catalogue</button><button type="button" data-act="cat-try">Try it here</button>` + (catJob.running ? "" : `<button type="button" data-act="cat-details" title="Runtime, primary language and directors for every film (about an hour)">${st.info ? "Re-read film details" : "Read film details"}</button><button type="button" data-act="cat-keywords" title="TMDB keywords for every film, for the Tags filter (about an hour; needs your TMDB key)">${st.kw ? "Finish TMDB keywords" : "Read TMDB keywords"}</button><button type="button" data-act="cat-deep" title="Find the films the Logo builder never matched on TMDB, with their keywords and country (about two hours)">${st.tmdb ? "Finish finding the rest on TMDB" : "Find the rest on TMDB"}</button><button type="button" data-act="cat-facts" title="Studios, top-billed cast and US age rating for every film TMDB knows (run after Find the rest; about 1–2 hours)">${st.fx ? "Finish film facts from TMDB" : "Film facts from TMDB"}</button>`) : "") +
       (!BUILD_TAB ? `<p class="lbs-menu-note">Long runs: <a href="/films/#store-builder" target="_blank" rel="noopener">open the builder in its own tab</a> and keep sorting here. That tab never saves your shelves.</p>` : `<p class="lbs-menu-note">Builder tab: your shelves are read-only here, so sort in your other tab.</p>`) +
       (!catJob.running && st ? `<button type="button" data-act="cat-reset">Start over</button>` : "") +
       `<button type="button" data-act="cat-close">Close</button></div>`;
@@ -2976,6 +3023,23 @@
       out.info = st.info.map((x, i) => (x && x.length > 1 ? [x[0], x[1], x[2], x[3], (x[4] || []).map(pid), x[5] || 0, og[i] || 0] : x ? [x[0]] : 0));
       out.people = people;
       out.langNames = st.langNames || {};
+    }
+    if (st.fx) {
+      // Companies (2+ films) and top-billed cast (2+ films): names once, and
+      // each film's as indexes (fco / fcast; 0 for none); US age ratings.
+      const table = (pick, names, min) => {
+        const count = new Map();
+        for (const x of Object.values(st.fx)) if (x) for (const id of pick(x)) count.set(id, (count.get(id) || 0) + 1);
+        const keep = [...count].filter(([, c]) => c >= min).sort((a, b) => b[1] - a[1]).map(([id]) => id);
+        const at = new Map(keep.map((id, n) => [id, n]));
+        return { names: keep.map((id) => names[id] || String(id)), per: st.films.map((f, i) => { const x = st.fx[i]; const ids = x ? pick(x).filter((id) => at.has(id)).map((id) => at.get(id)) : []; return ids.length ? ids : 0; }) };
+      };
+      const co = table((x) => x[0], st.coNames, 2), cast = table((x) => x[1], st.castNames, 2);
+      out.co = co.names; out.fco = co.per;
+      out.cast = cast.names; out.fcast = cast.per;
+      const certs = [];
+      out.fcert = st.films.map((f, i) => { const c = st.fx[i] && st.fx[i][2]; if (!c) return 0; let k = certs.indexOf(c); if (k < 0) { certs.push(c); k = certs.length - 1; } return k + 1; });
+      out.certs = certs;
     }
     if (st.kw) {
       // TMDB keywords used by 3+ films: their names once (kw), and each
@@ -5058,6 +5122,148 @@
     ["play", "Based on Plays", "based on play or musical|based on play|based on stage play"],
   ];
 
+  /* Studio labels: each rolls up the TMDB company names behind one brand
+   * (whole name, case-insensitive). Edit freely: no rebuild needed. */
+  const STUDIOS = [
+    // animation
+    ["disney", "Disney", "walt disney pictures|walt disney productions|walt disney animation studios|walt disney feature animation|disneytoon studios|disney"],
+    ["pixar", "Pixar", "pixar|pixar animation studios"],
+    ["dwa", "DreamWorks Animation", "dreamworks animation|pdi/dreamworks"],
+    ["illumination", "Illumination", "illumination|illumination entertainment"],
+    ["bluesky", "Blue Sky", "blue sky studios"],
+    ["sonyanim", "Sony Pictures Animation", "sony pictures animation"],
+    ["wbanim", "Warner Bros. Animation", "warner bros\\. animation|warner bros\\. cartoons|warner animation group|hanna-barbera productions|hanna-barbera"],
+    ["ghibli", "Studio Ghibli", "studio ghibli"],
+    ["laika", "Laika", "laika|laika entertainment"],
+    ["aardman", "Aardman", "aardman|aardman animations"],
+    ["cartoonsaloon", "Cartoon Saloon", "cartoon saloon"],
+    ["ponoc", "Studio Ponoc", "studio ponoc"],
+    ["comix", "CoMix Wave", "comix wave films|comix wave"],
+    ["toeianim", "Toei Animation", "toei animation"],
+    ["madhouse", "Madhouse", "madhouse"],
+    ["ig", "Production I.G", "production i\\.g"],
+    ["kyoani", "Kyoto Animation", "kyoto animation"],
+    ["sunrise", "Sunrise", "sunrise|bandai namco filmworks"],
+    // the big studios
+    ["wb", "Warner Bros.", "warner bros\\. pictures|warner bros\\.|warner bros\\. entertainment|warner bros\\.-first national|first national pictures"],
+    ["universal", "Universal", "universal pictures|universal international pictures|universal studios"],
+    ["paramount", "Paramount", "paramount|paramount pictures"],
+    ["columbia", "Columbia", "columbia pictures|columbia pictures corporation|columbia pictures industries"],
+    ["fox", "20th Century", "20th century fox|twentieth century fox|twentieth century fox film corporation|20th century studios|20th century pictures"],
+    ["mgm", "MGM", "metro-goldwyn-mayer|mgm|metro-goldwyn-mayer \\(mgm\\)"],
+    ["ua", "United Artists", "united artists"],
+    ["rko", "RKO", "rko radio pictures|rko"],
+    ["tristar", "TriStar", "tristar pictures"],
+    ["touchstone", "Touchstone", "touchstone pictures"],
+    ["marvel", "Marvel", "marvel studios|marvel entertainment|marvel enterprises|marvel knights"],
+    ["dc", "DC", "dc entertainment|dc comics|dc films|dc studios"],
+    ["lucasfilm", "Lucasfilm", "lucasfilm|lucasfilm ltd\\.|lucasfilm animation"],
+    ["dreamworks", "DreamWorks Pictures", "dreamworks pictures|dreamworks skg|dreamworks"],
+    // mini-majors & labels
+    ["lionsgate", "Lionsgate", "lionsgate|lions gate films|lionsgate films|lions gate entertainment"],
+    ["newline", "New Line", "new line cinema"],
+    ["miramax", "Miramax", "miramax|miramax films"],
+    ["dimension", "Dimension", "dimension films"],
+    ["searchlight", "Searchlight", "fox searchlight pictures|searchlight pictures"],
+    ["focus", "Focus Features", "focus features"],
+    ["sonyclassics", "Sony Pictures Classics", "sony pictures classics"],
+    ["a24", "A24", "a24"],
+    ["neon", "Neon", "neon"],
+    ["annapurna", "Annapurna", "annapurna pictures"],
+    ["orion", "Orion", "orion pictures"],
+    ["carolco", "Carolco", "carolco pictures"],
+    ["summit", "Summit", "summit entertainment"],
+    ["screengems", "Screen Gems", "screen gems"],
+    ["stx", "STX", "stx entertainment|stxfilms"],
+    ["relativity", "Relativity", "relativity media"],
+    ["legendary", "Legendary", "legendary pictures|legendary entertainment"],
+    ["skydance", "Skydance", "skydance|skydance media|skydance productions"],
+    ["village", "Village Roadshow", "village roadshow pictures"],
+    ["castlerock", "Castle Rock", "castle rock entertainment"],
+    ["spyglass", "Spyglass", "spyglass entertainment|spyglass media group"],
+    // producers' shingles
+    ["amblin", "Amblin", "amblin entertainment|amblin partners"],
+    ["badrobot", "Bad Robot", "bad robot|bad robot productions"],
+    ["platinumdunes", "Platinum Dunes", "platinum dunes"],
+    ["bruckheimer", "Jerry Bruckheimer", "jerry bruckheimer films|simpson/bruckheimer|don simpson/jerry bruckheimer films"],
+    ["imagine", "Imagine", "imagine entertainment"],
+    ["syncopy", "Syncopy", "syncopy"],
+    ["planb", "Plan B", "plan b entertainment"],
+    ["happymadison", "Happy Madison", "happy madison productions"],
+    ["apatow", "Apatow", "apatow productions"],
+    ["garysanchez", "Gary Sanchez", "gary sanchez productions"],
+    ["pointgrey", "Point Grey", "point grey pictures"],
+    ["originalfilm", "Original Film", "original film"],
+    ["dupass", "Duplass Brothers", "duplass brothers productions"],
+    ["killer", "Killer Films", "killer films"],
+    ["participant", "Participant", "participant|participant media|participant productions"],
+    ["workingtitle", "Working Title", "working title films"],
+    ["monkeypaw", "Monkeypaw", "monkeypaw productions"],
+    ["darkcastle", "Dark Castle", "dark castle entertainment"],
+    ["ghosthouse", "Ghost House", "ghost house pictures"],
+    ["atomicmonster", "Atomic Monster", "atomic monster"],
+    ["twisted", "Twisted Pictures", "twisted pictures"],
+    ["blumhouse", "Blumhouse", "blumhouse productions|blumhouse|blumhouse television"],
+    ["shudder", "Shudder", "shudder"],
+    // genre & cult houses
+    ["hammer", "Hammer", "hammer films|hammer film productions"],
+    ["amicus", "Amicus", "amicus productions"],
+    ["aip", "AIP", "american international pictures|american international productions"],
+    ["cannon", "Cannon", "cannon films|the cannon group|cannon group"],
+    ["troma", "Troma", "troma entertainment|troma"],
+    ["newworld", "New World", "new world pictures"],
+    ["fullmoon", "Full Moon", "full moon features|full moon entertainment|full moon pictures"],
+    ["empire", "Empire Pictures", "empire pictures"],
+    ["corman", "Roger Corman", "concorde-new horizons|new horizons pictures|new concorde|filmgroup"],
+    // international
+    ["ealing", "Ealing", "ealing studios"],
+    ["gaumont", "Gaumont", "gaumont"],
+    ["pathe", "Pathé", "pathé|pathe|pathé films"],
+    ["studiocanal", "StudioCanal", "studiocanal|canal\\+"],
+    ["toho", "Toho", "toho|toho co\\., ltd\\.|toho company"],
+    ["toei", "Toei", "toei company|toei"],
+    ["shochiku", "Shochiku", "shochiku"],
+    ["nikkatsu", "Nikkatsu", "nikkatsu"],
+    ["daiei", "Daiei", "daiei film|daiei studios|daiei motion picture company"],
+    ["shaw", "Shaw Brothers", "shaw brothers"],
+    ["goldenharvest", "Golden Harvest", "golden harvest|golden harvest company"],
+    ["cjent", "CJ ENM", "cj entertainment|cj enm|cj enm studios"],
+    ["yashraj", "Yash Raj", "yash raj films"],
+    ["dharma", "Dharma", "dharma productions"],
+    // streamers & TV
+    ["netflix", "Netflix", "netflix|netflix animation|netflix studios"],
+    ["amazon", "Amazon", "amazon studios|amazon mgm studios|amazon prime video|amazon content services"],
+    ["apple", "Apple", "apple studios|apple original films|apple tv\\+"],
+    ["hbo", "HBO", "hbo|hbo films|hbo max|hbo documentary films|home box office \\(hbo\\)"],
+    ["hulu", "Hulu", "hulu"],
+    ["hallmark", "Hallmark", "hallmark entertainment|hallmark channel|crown media|hallmark hall of fame productions"],
+    ["disneychannel", "Disney Channel", "disney channel|disney television animation|disney+"],
+  ];
+
+  const CERTS = [["G", "G"], ["PG", "PG"], ["PG-13", "PG-13"], ["R", "R"], ["NC-17", "NC-17"], ["NR", "Not rated"]];
+  const certBucket = (c) => (["G", "PG", "PG-13", "R", "NC-17"].includes(c) ? c : c === "X" ? "NC-17" : c === "M" || c === "GP" ? "PG" : "NR");
+  const RATING_BANDS = [["4", "4★ and up"], ["35", "3.5–4★"], ["3", "3–3.5★"], ["25", "2.5–3★"], ["0", "Under 2.5★"]];
+  const ratingBand = (r) => (r >= 400 ? "4" : r >= 350 ? "35" : r >= 300 ? "3" : r >= 250 ? "25" : "0");
+  const RUNTIME_BANDS = [["s", "Under 90 min"], ["m", "90 min – 2 h"], ["l", "2 – 2½ h"], ["xl", "2½ h and up"]];
+  const runtimeBand = (m) => (m < 90 ? "s" : m < 120 ? "m" : m < 150 ? "l" : "xl");
+  // A film's people and companies, as filter keys: d: director, c: cast, k: company
+  function whoOf(C, i) {
+    const out = [];
+    const row = C.info && C.info[i];
+    if (row && Array.isArray(row[4])) for (const d of row[4]) out.push(`d:${d}`);
+    if (C.fcast && C.fcast[i]) for (const c of C.fcast[i]) out.push(`c:${c}`);
+    if (C.fco && C.fco[i]) for (const k of C.fco[i]) out.push(`k:${k}`);
+    return out;
+  }
+  function whoName(k) {
+    const C = catalogue, [t, n] = [k.slice(0, 1), +k.slice(2)];
+    if (!C) return k;
+    if (t === "d") return `${C.people[n] || "?"} (director)`;
+    if (t === "c") return `${(C.cast || [])[n] || "?"} (cast)`;
+    if (t === "k") return (C.co || [])[n] || "?";
+    return k;
+  }
+
   let facts = null;
   function buildFacts() {
     if (!catalogue) return null;
@@ -5144,7 +5350,20 @@
       });
       tags = { keys: KW_TAGS.map(([id]) => id), names: KW_TAGS.map(([, label]) => label), per };
     }
-    facts = { cat: C, idx, genre, country, origin, lang, primary, short, tv, theme, mini, tags, runtime: C.info ? (i) => (C.info[i] && C.info[i][1]) || 0 : null };
+    let studio = null;
+    if (C.co && C.fco) {
+      const res = STUDIOS.map(([, , pat]) => new RegExp(`^(?:${pat})$`, "i"));
+      const coS = C.co.map((name) => { const out = []; res.forEach((re, t) => { if (re.test(name)) out.push(t); }); return out; });
+      const per = new Array(N);
+      C.fco.forEach((ks, i) => {
+        if (!ks) return;
+        let set = null;
+        for (const k of ks) for (const t of coS[k] || []) (set || (set = new Set())).add(t);
+        if (set) per[i] = [...set];
+      });
+      studio = { keys: STUDIOS.map(([id]) => id), names: STUDIOS.map(([, label]) => label), per };
+    }
+    facts = { cat: C, idx, genre, country, origin, lang, primary, short, tv, theme, mini, tags, studio, runtime: C.info ? (i) => (C.info[i] && C.info[i][1]) || 0 : null };
     return facts;
   }
 
@@ -5189,6 +5408,12 @@
           country: i != null && F.origin.per[i] ? F.origin.per[i].map(String) : [],
           pcountry: i != null && F.country.per[i] ? F.country.per[i].map(String) : [],
           tag: i != null && F.tags && F.tags.per[i] ? F.tags.per[i].map(String) : [],
+          studio: i != null && F.studio && F.studio.per[i] ? F.studio.per[i].map(String) : [],
+          cert: i != null && F.cat.fcert && F.cat.fcert[i] ? [certBucket(F.cat.certs[F.cat.fcert[i] - 1])] : [],
+          rating: i != null ? (F.cat.films[i][2] || 0) : 0,
+          rband: i != null && F.cat.films[i][2] ? [ratingBand(F.cat.films[i][2])] : [],
+          rtband: i != null && F.runtime && F.runtime(i) ? [runtimeBand(F.runtime(i))] : [],
+          who: i != null ? whoOf(F.cat, i) : [],
           theme: i != null && F.theme && F.theme.per[i] ? F.theme.per[i].map(String) : [],
           mini: i != null && F.mini && F.mini.per[i] ? F.mini.per[i].map(String) : [],
         };
@@ -5198,9 +5423,9 @@
       if (onWall && p.genre !== UNCAT) status.push(onWall.has(slug) ? "wall" : "nowall");
       if (held.has(slug)) status.push("held");
       out.push({
-        slug, name: S.name, year: S.year, i: S.i, key: S.key,
+        slug, name: S.name, year: S.year, i: S.i, key: S.key, rating: S.rating,
         path: [p.genre, p.cat, p.sub, p.niche].filter(Boolean),
-        v: { status, sgenre: [p.genre], scat: p.cat ? [p.cat] : [], ssub: [p.sub, p.niche].filter(Boolean), genre: S.genre, type: S.type, decade: S.decade, lang: S.lang, country: S.country, pcountry: S.pcountry, tag: S.tag, theme: S.theme, mini: S.mini },
+        v: { status, sgenre: [p.genre], scat: p.cat ? [p.cat] : [], ssub: [p.sub, p.niche].filter(Boolean), genre: S.genre, type: S.type, decade: S.decade, lang: S.lang, country: S.country, pcountry: S.pcountry, tag: S.tag, studio: S.studio, cert: S.cert, rband: S.rband, rtband: S.rtband, who: S.who, theme: S.theme, mini: S.mini },
       });
     }
     lv.base = out; lv.baseLib = lib; lv.baseLay = wall.lay; lv.baseKey = key;
@@ -5221,6 +5446,13 @@
     const sc = inc("scat").filter((c) => lib.cats.has(c));
     if (sc.length) gs.push({ id: "ssub", label: "Store subcat", vals: sc.flatMap((c) => lib.cats.get(c).subs.flatMap((s2) => [[s2, sc.length > 1 ? `${nameOf(c)} › ${nameOf(s2)}` : nameOf(s2)], ...(lib.subs.get(s2).niches || []).map((n) => [n, `↳ ${nameOf(n)}`])])) });
     gs.push({ id: "genre", label: "Genre", vals: GENRES.map(([g, n]) => [g, n]) });
+    // People and companies picked from search (only the picked ones show)
+    const who = Object.keys(lv.f.who || {});
+    if (who.length) gs.push({ id: "who", label: "People & companies", vals: who.map((k) => [k, whoName(k)]) });
+    if (F && F.studio) gs.push({ id: "studio", label: "Studio", vals: F.studio.keys.map((k, n) => [String(n), F.studio.names[n], STUDIOS[n][2].replace(/\\/g, "").replace(/\|/g, " ").toLowerCase()]), many: true, find: "studio (try Disney, A24, Bad Robot…)" });
+    if (F && F.cat.fcert) gs.push({ id: "cert", label: "Age rating (US)", vals: CERTS });
+    gs.push({ id: "rband", label: "Letterboxd rating", vals: RATING_BANDS });
+    if (F && F.runtime) gs.push({ id: "rtband", label: "Runtime", vals: RUNTIME_BANDS });
     // Search also matches the tag's keywords (its slug), plus a few common words.
     const THEME_WORDS = { "biography-artists-musician-songs-emotional": "biopic biographical" };
     const tagVals = (T) => T.keys.map((k, n) => [String(n), T.names[n], `${k.replace(/-/g, " ")} ${THEME_WORDS[k] || ""}`.toLowerCase()]);
@@ -5235,7 +5467,6 @@
     if (F) {
       gs.push({ id: "lang", label: F.primary ? "Primary language" : "Language (spoken anywhere in the film)", vals: F.lang.keys.map((k, n) => [String(n), F.lang.names[n]]), many: true });
       gs.push({ id: "country", label: "Country of origin", vals: F.origin.keys.map((k, n) => [String(n), F.origin.names[n]]), many: true, note: F.origin.exact ? "" : F.primary ? "Co-productions go to the country that speaks their language" : "Co-productions count for each of their countries until film details are read" });
-      gs.push({ id: "pcountry", label: "Any production country", vals: F.country.keys.map((k, n) => [String(n), F.country.names[n]]), many: true });
     }
     return gs;
   }
@@ -5271,7 +5502,7 @@
       rows.push(r);
       for (let k = 0; k < act.length; k++) { const c = counts[k]; for (const v of r.v[act[k].g.id] || []) c.set(v, (c.get(v) || 0) + 1); }
     }
-    const cmp = lv.sort === "title" ? (a, b) => collator.compare(a.key, b.key) || a.year - b.year : lv.sort === "year" ? (a, b) => (b.year || 0) - (a.year || 0) || a.i - b.i : (a, b) => a.i - b.i;
+    const cmp = lv.sort === "title" ? (a, b) => collator.compare(a.key, b.key) || a.year - b.year : lv.sort === "year" ? (a, b) => (b.year || 0) - (a.year || 0) || a.i - b.i : lv.sort === "rating" ? (a, b) => (b.rating || 0) - (a.rating || 0) || a.i - b.i : (a, b) => a.i - b.i;
     rows.sort(cmp);
     // A franchise is one row (it shows when any of its films match); open
     // it to see all its films beneath, the ones that don't match dimmed.
@@ -5342,7 +5573,7 @@
       $(".lbs-lv-q", box).value = lv.q;
     }
     lvChrome(box);
-    $(".lbs-lv-sort", box).innerHTML = [["pop", "Popular"], ["title", "Title"], ["year", "Year"]].map(([v, l]) => `<button type="button" data-act="lv-sort" data-v="${v}" class="${lv.sort === v ? "-on" : ""}">${l}</button>`).join("");
+    $(".lbs-lv-sort", box).innerHTML = [["pop", "Popular"], ["rating", "Rating"], ["title", "Title"], ["year", "Year"]].map(([v, l]) => `<button type="button" data-act="lv-sort" data-v="${v}" class="${lv.sort === v ? "-on" : ""}">${l}</button>`).join("");
     const nAct = lvActive();
     $(".lbs-lv-ftoggle", box).innerHTML = `Filters${nAct ? ` <em>${nAct}</em>` : ""} ${lv.showFilters ? "▴" : "▾"}`;
     const fl = $(".lbs-lv-filters", box);
@@ -5744,6 +5975,50 @@
 
   // The search box: matches as you type, in the store first, then all of Letterboxd.
   let findTimer = 0;
+  // Search index for people and companies: directors, top-billed cast, every
+  // company (2+ films) and the Studio labels, each with its film count.
+  let whoIndex = null;
+  function whoSearch(nq) {
+    const C = catalogue;
+    if (!C || nq.length < 3) return [];
+    if (!whoIndex || whoIndex.cat !== C) {
+      const cnt = new Map();
+      const add = (k) => cnt.set(k, (cnt.get(k) || 0) + 1);
+      C.films.forEach((f, i) => { for (const k of whoOf(C, i)) add(k); });
+      const items = [];
+      for (const [k, n] of cnt) {
+        const t = k[0], name = t === "d" ? C.people[+k.slice(2)] : t === "c" ? (C.cast || [])[+k.slice(2)] : (C.co || [])[+k.slice(2)];
+        if (name) items.push({ k, name, low: name.toLowerCase(), n, kind: t === "d" ? "Director" : t === "c" ? "Cast" : "Company" });
+      }
+      const F = buildFacts();
+      if (F && F.studio) {
+        const sc = new Map();
+        F.studio.per.forEach((ts) => { if (ts) for (const t of ts) sc.set(t, (sc.get(t) || 0) + 1); });
+        STUDIOS.forEach(([, label], t) => { if (sc.get(t)) items.push({ k: `studio:${t}`, name: label, low: label.toLowerCase(), n: sc.get(t), kind: "Studio" }); });
+      }
+      // a person who directs and acts is one entry per role; studios first
+      whoIndex = { cat: C, items };
+    }
+    const hits = [];
+    for (const it of whoIndex.items) {
+      const at = it.low.startsWith(nq) ? 0 : it.low.includes(" " + nq) ? 1 : it.low.includes(nq) ? 2 : -1;
+      if (at >= 0) hits.push([at, it.kind === "Studio" ? 0 : 1, -it.n, it]);
+    }
+    hits.sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2]);
+    // a studio label hides the raw company of the same name
+    const labels = new Set(hits.filter((h) => h[3].kind === "Studio").map((h) => h[3].low));
+    return hits.map((h) => h[3]).filter((it) => it.kind === "Studio" || !labels.has(it.low)).slice(0, 5);
+  }
+  function openWho(k) {
+    lv.f = k.startsWith("studio:") ? { studio: { [k.slice(7)]: 1 } } : { who: { [k]: 1 } };
+    lv.y0 = lv.y1 = ""; lv.q = ""; lv.sel = new Set(); lv.sort = "pop";
+    lv.mode = "list";
+    saveLv();
+    $(".lbs-find-list", root).hidden = true;
+    $(".lbs-card", root).hidden = true;
+    setLibrary(true);
+  }
+
   function runFind(q) {
     const list = $(".lbs-find-list", root);
     q = q.trim();
@@ -5768,7 +6043,7 @@
     const frItem = ([fid, f]) => `<li class="-fr" data-act="fr-open" data-fr="${esc(fid)}"><img data-poster="${esc(f.films[0][0])}" alt=""><div><b>${esc(f.name)}</b> <span>Franchise · ${f.films.length} films</span><small>${esc(where(whereIs(f.films[0][0]) || []))}</small></div><button type="button" class="lbs-find-req" data-act="fr-open" data-fr="${esc(fid)}">View</button></li>`;
     const top = local.slice(0, 8);
     const used = new Set();
-    let html = "";
+    let html = whoSearch(nq).map((it) => `<li class="-who" data-act="find-who" data-k="${esc(it.k)}"><span class="lbs-who-ico">${it.kind === "Studio" || it.kind === "Company" ? "🎬" : esc(it.name.split(/\s+/).map((w) => w[0]).slice(0, 2).join(""))}</span><div><b>${esc(it.name)}</b> <span>${it.kind} · ${fmt(it.n)} film${it.n === 1 ? "" : "s"}</span><small>Show in the Library list</small></div></li>`).join("");
     for (const h of frHits) {
       html += frItem(h);
       for (const [, sl, nm] of top) if (lib.frOf.get(sl) === h[0]) { html += item(sl, nm, true, true); used.add(sl); }
@@ -7095,6 +7370,7 @@
         if (act === "frm-out") { franchiseRemove(m.films.map(([x]) => x)); buildLibrary(); return moveFilms(m.films, m.target, { fr: true }); }
         return moveFilms([...m.films, ...m.extra], m.target, { fr: true });
       }
+      if (act === "find-who") return openWho(btn.dataset.k);
       if (act === "fr-open") { closeFilm(); $(".lbs-find-list", root).hidden = true; $(".lbs-card", root).hidden = true; return openFranchiseById(btn.dataset.fr); }
       if (act === "fr-logo") { ui.fr.logo = btn.dataset.path; return renderFranchise(); }
       if (act === "fr-delete") { delete franchises()[ui.fr.id]; saveMine(); shareEdit("franchise", ui.fr.id, null); ui.fr = null; renderFranchise(); refresh(); return toast("Franchise undone."); }
@@ -7141,6 +7417,7 @@
       catJob.st.phase = catJob.st.info && catJob.st.info.some(Boolean) ? "details" : "lids";
       return runCatJob();
     }
+    if (act === "cat-facts") { if (!catJob.st) return; catJob.st.phase = "facts"; return runCatJob(); }
     if (act === "cat-deep") { if (!catJob.st) return; catJob.st.phase = "deep"; return runCatJob(); }
     if (act === "cat-keywords") { if (!catJob.st) return; catJob.st.phase = "keywords"; return runCatJob(); }
     if (act === "cat-try") {
