@@ -822,6 +822,7 @@
   // The store's logo, an original mark (icons/bloxbuster-logo.svg, inlined: this script runs in the page).
   const LOGO_SVG = `<svg class="lbs-logo-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 300" role="img" aria-label="BLOXBUSTER"> <rect x="6" y="6" width="588" height="288" rx="26" fill="#17191c" stroke="#3a3f46" stroke-width="4"/> <circle cx="34" cy="34" r="7" fill="#2c3036"/><circle cx="566" cy="34" r="7" fill="#2c3036"/> <circle cx="34" cy="266" r="7" fill="#2c3036"/><circle cx="566" cy="266" r="7" fill="#2c3036"/> <rect x="58" y="34" width="484" height="146" rx="10" fill="#e23b2e"/> <rect x="58" y="34" width="484" height="16" rx="8" fill="#f0e6cf"/> <rect x="58" y="164" width="484" height="16" rx="8" fill="#f0e6cf"/> <text x="300" y="139" text-anchor="middle" font-family="Impact, 'Haettenschweiler', 'Arial Narrow Bold', 'Arial Black', sans-serif" font-weight="900" font-size="92" letter-spacing="2" fill="#fff4dc" textLength="440" lengthAdjust="spacingAndGlyphs">BLOXBUSTER</text> <rect x="160" y="198" width="280" height="76" rx="38" fill="#0b0c0e" stroke="#3a3f46" stroke-width="4"/> <g fill="#f2efe6"> <circle cx="228" cy="236" r="27"/><circle cx="372" cy="236" r="27"/> </g> <g fill="#17191c"> <circle cx="228" cy="236" r="12"/><circle cx="372" cy="236" r="12"/> </g> <g fill="#f2efe6"> <rect x="225" y="222" width="6" height="8"/><rect x="225" y="242" width="6" height="8"/><rect x="214" y="233" width="8" height="6"/><rect x="234" y="233" width="8" height="6"/> <rect x="369" y="222" width="6" height="8"/><rect x="369" y="242" width="6" height="8"/><rect x="358" y="233" width="8" height="6"/><rect x="378" y="233" width="8" height="6"/> </g> <rect x="270" y="226" width="60" height="20" rx="3" fill="#2c3036"/> </svg>`;
   const ICON_GEAR = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><circle cx="16" cy="7" r="2.4" fill="none" stroke="currentColor" stroke-width="2.2"/><circle cx="8" cy="17" r="2.4" fill="none" stroke="currentColor" stroke-width="2.2"/></svg>`;
+  const ICON_DROPPER = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.7 3.3a2.4 2.4 0 0 1 3.4 3.4l-2.6 2.6 1 1-1.5 1.5-1-1-7.6 7.6c-.4.4-.9.6-1.4.7l-2.3.4-1.3 1.3-1.4-1.4 1.3-1.3.4-2.3c.1-.5.3-1 .7-1.4l7.6-7.6-1-1L13.5 4l1 1zM8.6 13.6l-.6.6c-.1.1-.2.3-.2.4l-.2 1.4 1.4-.2c.1 0 .3-.1.4-.2l.6-.6z" fill="currentColor"/></svg>`;
   const ICON_SEARCH = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="M16 16l4.5 4.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>`;
 
   function openStore() {
@@ -6515,7 +6516,7 @@
     const box = h("div", "lbs-cpick",
       `<div class="lbs-cpick-sv"><i></i></div>` +
       `<input type="range" class="lbs-cpick-hue" min="0" max="359" step="1" aria-label="Hue">` +
-      `<div class="lbs-cpick-row"><span class="lbs-cpick-now"></span><input type="text" class="lbs-cpick-hex" maxlength="7" spellcheck="false" aria-label="Hex colour"><button type="button" class="lbs-cpick-done">Done</button></div>` +
+      `<div class="lbs-cpick-row"><span class="lbs-cpick-now"></span><input type="text" class="lbs-cpick-hex" maxlength="7" spellcheck="false" aria-label="Hex colour"><button type="button" class="lbs-cpick-drop" title="Eyedropper: pick a colour from a poster, logo or the wall (Esc to cancel)" aria-label="Eyedropper">${ICON_DROPPER}</button><button type="button" class="lbs-cpick-done">Done</button></div>` +
       `<div class="lbs-cpick-presets">${CPICK_PRESETS.map((c) => `<button type="button" data-c="${c}" style="--c:${c}" aria-label="${c}"></button>`).join("")}</div>`);
     root.append(box);
     cpick = { input, btn, h: hh, s: ss, v, box, cls: input.className, slug: input.dataset.slug };
@@ -6525,6 +6526,7 @@
       e.stopPropagation();
       const p = e.target.closest("[data-c]");
       if (p) return setPickHex(p.dataset.c);
+      if (e.target.closest(".lbs-cpick-drop")) return cpick.dropping ? stopDropper() : startDropper();
       if (e.target.closest(".lbs-cpick-done")) closeColorPicker();
     });
     box.querySelector(".lbs-cpick-hue").addEventListener("input", (e) => { cpick.h = +e.target.value; pickChanged(); });
@@ -6575,10 +6577,110 @@
   }
   function closeColorPicker() {
     if (!cpick) return;
+    stopDropper();
     cpick.box.remove();
     cpick = null;
   }
-  window.addEventListener("mousedown", (e) => { if (cpick && !e.target.closest(".lbs-cpick, .lbs-swatch")) closeColorPicker(); }, true);
+  window.addEventListener("mousedown", (e) => { if (cpick && !cpick.dropping && !e.target.closest(".lbs-cpick, .lbs-swatch")) closeColorPicker(); }, true);
+
+  /* The eyedropper, drawn in the page too (the system one is what locked the
+   * Mac up). It reads the pixel under the pointer from posters, logos and the
+   * wall, or the colour of whatever else is there; a loupe follows the
+   * pointer; click to take it, Esc / right-click / leaving the window cancels.
+   * Nothing outside this tab is involved, so it can't hold the computer. */
+  const dropCanvas = document.createElement("canvas");
+  dropCanvas.width = dropCanvas.height = 1;
+  const dropCtx = dropCanvas.getContext("2d", { willReadFrequently: true });
+  const corsCopies = new Map(); // src -> Image loaded with CORS (or false)
+  function corsCopy(src) {
+    if (corsCopies.has(src)) return corsCopies.get(src);
+    const im = new Image();
+    im.crossOrigin = "anonymous";
+    corsCopies.set(src, null);
+    im.onload = () => corsCopies.set(src, im);
+    im.onerror = () => corsCopies.set(src, false);
+    im.src = src;
+    return null;
+  }
+  function pixelFrom(source, sx, sy) {
+    try {
+      dropCtx.clearRect(0, 0, 1, 1);
+      dropCtx.drawImage(source, sx, sy, 1, 1, 0, 0, 1, 1);
+      const [r, g, b, a] = dropCtx.getImageData(0, 0, 1, 1).data;
+      return a > 8 ? rgbToHex(r, g, b) : null;
+    } catch { return undefined; } // a picture this page isn't allowed to read
+  }
+  function sampleAt(x, y) {
+    const els = document.elementsFromPoint(x, y).filter((el) => !el.closest(".lbs-cpick, .lbs-loupe"));
+    for (const el of els) {
+      const r = el.getBoundingClientRect();
+      if (!r.width || !r.height) continue;
+      if (el.tagName === "CANVAS") {
+        const px = pixelFrom(el, ((x - r.left) / r.width) * el.width, ((y - r.top) / r.height) * el.height);
+        if (px) return px;
+        if (px === undefined) continue;
+      }
+      if (el.tagName === "IMG" && el.complete && el.naturalWidth) {
+        // where in the picture, allowing for object-fit: cover / contain
+        const fit = getComputedStyle(el).objectFit;
+        const nw = el.naturalWidth, nh = el.naturalHeight;
+        const sc = fit === "cover" ? Math.max(r.width / nw, r.height / nh) : fit === "contain" || fit === "scale-down" ? Math.min(r.width / nw, r.height / nh) : null;
+        const ix = sc ? (x - r.left - (r.width - nw * sc) / 2) / sc : ((x - r.left) / r.width) * nw;
+        const iy = sc ? (y - r.top - (r.height - nh * sc) / 2) / sc : ((y - r.top) / r.height) * nh;
+        if (ix >= 0 && iy >= 0 && ix < nw && iy < nh) {
+          let px = pixelFrom(el, ix, iy);
+          if (px === undefined) { const c = corsCopy(el.currentSrc || el.src); px = c ? pixelFrom(c, ix, iy) : c === false ? undefined : "…"; }
+          if (px === "…") return "…";
+          if (px) return px;
+          if (px === null) continue;
+        }
+      }
+      const bg = getComputedStyle(el).backgroundColor;
+      const m = bg && bg.match(/rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+))?/);
+      if (m && (m[4] == null || +m[4] > 0.5)) return rgbToHex(+m[1], +m[2], +m[3]);
+    }
+    return null;
+  }
+  let dropper = null; // { loupe, last, handlers }
+  function startDropper() {
+    if (!cpick || dropper) return;
+    cpick.dropping = true;
+    cpick.box.classList.add("-dropping");
+    const loupe = h("div", "lbs-loupe", `<i></i><span>Click to pick · Esc cancels</span>`);
+    document.body.append(loupe);
+    root.classList.add("lbs-dropping");
+    const show = (e) => {
+      const hex = sampleAt(e.clientX, e.clientY);
+      dropper.last = hex && hex !== "…" ? hex : null;
+      loupe.style.transform = `translate(${e.clientX + 18}px, ${e.clientY + 18}px)`;
+      loupe.querySelector("i").style.background = dropper.last || "transparent";
+      loupe.querySelector("span").textContent = hex === "…" ? "reading picture…" : dropper.last ? `${dropper.last} · click to pick` : "nothing to pick here";
+    };
+    const block = (e) => { if (e.target.closest && e.target.closest(".lbs-cpick")) return; e.preventDefault(); e.stopPropagation(); };
+    const down = (e) => {
+      if (e.target.closest && e.target.closest(".lbs-cpick")) return;
+      block(e);
+      if (e.button !== 0) return stopDropper();
+      show(e);
+      const hex = dropper.last;
+      stopDropper();
+      if (hex) setPickHex(hex);
+    };
+    const key = (e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); stopDropper(); } };
+    const handlers = [["pointermove", show], ["pointerdown", down], ["mousedown", block], ["mouseup", block], ["click", block], ["contextmenu", block], ["keydown", key], ["blur", () => stopDropper()]];
+    handlers.forEach(([t, f]) => window.addEventListener(t, f, true));
+    dropper = { loupe, last: null, handlers };
+  }
+  function stopDropper() {
+    if (!dropper) return;
+    const d = dropper;
+    dropper = null;
+    d.loupe.remove();
+    root.classList.remove("lbs-dropping");
+    // let the click that ended it finish before the page hears clicks again
+    setTimeout(() => d.handlers.forEach(([t, f]) => window.removeEventListener(t, f, true)), 0);
+    if (cpick) { cpick.dropping = false; cpick.box.classList.remove("-dropping"); }
+  }
 
   /* Drags of rows, folders and franchise films, done with the mouse rather
    * than the browser's drag and drop (which can hang macOS when it goes
@@ -6649,6 +6751,7 @@
   window.addEventListener("blur", cancelAllDrags);
   window.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
+    if (dropper) { e.stopPropagation(); e.preventDefault(); return stopDropper(); }
     if (cpick) { e.stopPropagation(); e.preventDefault(); return closeColorPicker(); }
     if (mdnd || grab) { e.stopPropagation(); e.preventDefault(); cancelAllDrags(); }
   }, true);
