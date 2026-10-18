@@ -6596,6 +6596,47 @@
   }
   window.addEventListener("mousedown", (e) => { if (cpick && !cpick.dropping && !e.target.closest(".lbs-cpick, .lbs-swatch")) closeColorPicker(); }, true);
 
+  /* The system colour picker (with its eyedropper), made safe. What locked
+   * the Mac up was the page throwing away the <input type="color"> the picker
+   * belonged to (the panel re-renders) while the picker was open: the picker
+   * window was left talking to nothing, holding the mouse. Now there is one
+   * colour input for the whole page, outside the store, that is never removed
+   * or redrawn; swatches just borrow it. Same on Windows (Chrome's own
+   * picker and eyedropper). */
+  let nativeColor = null, nativeFor = null; // nativeFor: { cls, slug }
+  function nativeTarget() {
+    if (!nativeFor || !root) return null;
+    return [...root.querySelectorAll(`input.${nativeFor.cls}`)].find((x) => (x.dataset.slug || "") === (nativeFor.slug || "")) || null;
+  }
+  function relayNative(e) {
+    const t = nativeTarget();
+    if (!t || t.disabled) return;
+    t.value = nativeColor.value;
+    if (t.nextElementSibling) t.nextElementSibling.style.setProperty("--c", nativeColor.value);
+    t.dispatchEvent(new Event("input", { bubbles: true }));
+    if (e.type === "change") nativeFor = null;
+  }
+  function openNativePicker(btn) {
+    const input = btn.previousElementSibling;
+    if (!input || input.disabled) return;
+    if (!nativeColor) {
+      nativeColor = document.createElement("input");
+      nativeColor.type = "color";
+      nativeColor.className = "lbs-native-color";
+      nativeColor.tabIndex = -1;
+      nativeColor.setAttribute("aria-hidden", "true");
+      nativeColor.addEventListener("input", relayNative);
+      nativeColor.addEventListener("change", relayNative);
+      document.documentElement.append(nativeColor); // outside the store: never re-rendered
+    }
+    nativeFor = { cls: input.className, slug: input.dataset.slug };
+    nativeColor.value = /^#[0-9a-f]{6}$/i.test(input.value) ? input.value.toLowerCase() : "#2c3440";
+    const r = btn.getBoundingClientRect();
+    nativeColor.style.left = `${Math.round(r.left)}px`;
+    nativeColor.style.top = `${Math.round(r.bottom)}px`;
+    try { nativeColor.showPicker(); } catch { nativeColor.click(); }
+  }
+
   /* The eyedropper, drawn in the page too (the system one is what locked the
    * Mac up). It reads the pixel under the pointer from posters, logos and the
    * wall, or the colour of whatever else is there; a loupe follows the
@@ -7009,7 +7050,7 @@
       return toast("Discarded your unpublished changes.");
     }
 
-    if (act === "cpick") return cpick && cpick.btn === btn ? closeColorPicker() : openColorPicker(btn);
+    if (act === "cpick") return openNativePicker(btn);
     if (act === "cat-build") return openCatBuild();
     if (act === "cat-close") { $(".lbs-catbuild", root).hidden = true; return; }
     if (act === "cat-stop") { catJob.running = false; catJob.msg = "pausing after the requests in flight…"; return renderCatBuild(); }
