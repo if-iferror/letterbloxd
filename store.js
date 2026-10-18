@@ -356,7 +356,7 @@
     // a marker with nothing behind it (IndexedDB unreadable): don't save over it
     mineReady = !mine._idb;
     delete mine._idb;
-    if (mine.lv) Object.assign(lv, { mode: mine.lv.mode || lv.mode, f: mine.lv.f || {}, y0: mine.lv.y0 || "", y1: mine.lv.y1 || "", sort: mine.lv.sort || "pop", showFilters: !mine.lv.hideFilters });
+    if (mine.lv) Object.assign(lv, { mode: mine.lv.mode || lv.mode, f: mine.lv.f || {}, all: mine.lv.all || {}, y0: mine.lv.y0 || "", y1: mine.lv.y1 || "", sort: mine.lv.sort || "pop", showFilters: !mine.lv.hideFilters });
     houseLocal = await restoreBig(HOUSE_KEY, houseLocal);
   });
   const house = () => fullHouse(houseLocal || houseShared);
@@ -4876,13 +4876,14 @@
   const lv = {
     mode: (mine.lv && mine.lv.mode) || "folders",
     f: (mine.lv && mine.lv.f) || {}, // group -> { value: 1 | -1 }
+    all: (mine.lv && mine.lv.all) || {}, // group -> true: its included chips must ALL match (AND), not any (OR)
     y0: (mine.lv && mine.lv.y0) || "", y1: (mine.lv && mine.lv.y1) || "",
     sort: (mine.lv && mine.lv.sort) || "pop",
     q: "", showFilters: !(mine.lv && mine.lv.hideFilters), more: {}, open: new Set(),
     sel: new Set(), selecting: false, anchor: null, cursor: null,
     base: null, baseKey: null, rows: [], pos: new Map(),
   };
-  const saveLv = () => { mine.lv = { mode: lv.mode, f: lv.f, y0: lv.y0, y1: lv.y1, sort: lv.sort, hideFilters: !lv.showFilters }; saveMine(); };
+  const saveLv = () => { mine.lv = { mode: lv.mode, f: lv.f, all: lv.all, y0: lv.y0, y1: lv.y1, sort: lv.sort, hideFilters: !lv.showFilters }; saveMine(); };
 
   // What the catalogue knows about each film: genres, countries, languages,
   // and (once the builder has read film details) runtime and primary language.
@@ -5565,7 +5566,7 @@
       const st = lv.f[g.id] || {};
       const I = new Set(), X = new Set();
       for (const [v, s] of Object.entries(st)) (s === 1 ? I : s === -1 ? X : null)?.add(v);
-      return { g, I, X, on: I.size || X.size };
+      return { g, I, X, on: I.size || X.size, all: !!(lv.all && lv.all[g.id]) && I.size > 1 };
     });
     const y0 = +lv.y0 || 0, y1 = +lv.y1 || 0;
     const q = fileKey(lv.q || "").trim();
@@ -5580,7 +5581,8 @@
         if (!a.on) continue;
         const vs = r.v[a.g.id] || [];
         let ok = !a.I.size;
-        for (const v of vs) { if (a.X.has(v)) { ok = false; break; } if (a.I.has(v)) ok = true; }
+        if (a.all) { let hit = 0; for (const v of vs) if (a.I.has(v)) hit++; ok = hit >= a.I.size; }
+        else for (const v of vs) { if (a.X.has(v)) { ok = false; break; } if (a.I.has(v)) ok = true; }
         if (a.X.size && ok) for (const v of vs) if (a.X.has(v)) { ok = false; break; }
         if (!ok) { fails++; failAt = k; if (fails > 1) break; }
       }
@@ -5627,7 +5629,9 @@
         return `<button type="button" class="lbs-chip${s === 1 ? " -in" : s === -1 ? " -out" : ""}${n || s ? "" : " -zero"}" data-act="lv-chip" data-g="${g.id}" data-v="${esc(v)}" title="Click: only these · again: exclude · again: off">${s === -1 ? "−" : s === 1 ? "+" : ""}${esc(label)}<em>${fmt(n)}</em></button>`;
       };
       const on = Object.keys(st).length;
-      return `<div class="lbs-lv-group"><h6>${esc(g.label)}${on ? `<button type="button" data-act="lv-clear-g" data-g="${g.id}">clear</button>` : ""}</h6>` +
+      const nInc = Object.values(st).filter((x) => x === 1).length, all = !!(lv.all && lv.all[g.id]);
+      const anyAll = nInc > 1 ? `<span class="lbs-lv-anyall" role="group" aria-label="Match"><button type="button" data-act="lv-anyall" data-g="${g.id}" data-v="any" class="${all ? "" : "-on"}" title="Films with any of these (OR)">Any</button><button type="button" data-act="lv-anyall" data-g="${g.id}" data-v="all" class="${all ? "-on" : ""}" title="Films with all of these (AND)">All</button></span>` : "";
+      return `<div class="lbs-lv-group"><h6>${esc(g.label)}${anyAll}${on ? `<button type="button" data-act="lv-clear-g" data-g="${g.id}">clear</button>` : ""}</h6>` +
         (g.note ? `<p class="lbs-lv-note">${esc(g.note)}</p>` : "") +
         (g.many ? `<input type="search" class="lbs-lv-gq" data-g="${g.id}" placeholder="Find a ${g.find || (g.id === "lang" ? "language" : "country")}" value="${esc(lv.more[g.id + ":q"] || "")}">` : "") +
         `<div class="lbs-chips">${shown.map(chip).join("")}` +
@@ -7380,6 +7384,7 @@
         saveLv();
         return renderLibrary();
       }
+      if (act === "lv-anyall") { lv.all = { ...(lv.all || {}), [btn.dataset.g]: btn.dataset.v === "all" }; if (!lv.all[btn.dataset.g]) delete lv.all[btn.dataset.g]; saveLv(); return renderLibrary(); }
       if (act === "lv-clear-g") { delete lv.f[btn.dataset.g]; if (btn.dataset.g === "decade") { lv.y0 = lv.y1 = ""; } saveLv(); return renderLibrary(); }
       if (act === "lv-more") { lv.more[btn.dataset.g] = !lv.more[btn.dataset.g]; return renderLibrary(); }
       if (act === "lv-reset") { lv.f = {}; lv.y0 = lv.y1 = ""; lv.q = ""; const qi = $(".lbs-lv-q", root); if (qi) qi.value = ""; saveLv(); return renderLibrary(); }
