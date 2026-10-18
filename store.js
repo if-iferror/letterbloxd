@@ -6614,7 +6614,9 @@
     t.value = nativeColor.value;
     if (t.nextElementSibling) t.nextElementSibling.style.setProperty("--c", nativeColor.value);
     t.dispatchEvent(new Event("input", { bubbles: true }));
-    if (e.type === "change") nativeFor = null;
+    // (no "done" here: on a Mac the picker window stays open after a change
+    // and keeps sending colours; it stays tied to this swatch until another
+    // swatch is clicked, and does nothing once its film is closed)
   }
   function openNativePicker(btn) {
     const input = btn.previousElementSibling;
