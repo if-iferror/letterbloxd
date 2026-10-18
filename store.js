@@ -2597,6 +2597,28 @@
       if (st.themeV !== 2 && (st.phase === "lists" || st.phase === "done")) { st.sampled = 0; st.quiet = 0; st.phase = "themes"; }
       if (st.phase === "done") { seed(); if (Object.values(st.lists).some((l) => !l.ids)) st.phase = "lists"; else if (!st.lists["type/short"] || !st.lists["type/tv"]) st.phase = "types"; }
       const tick = () => { catJob.msg = ""; renderCatBuild(); };
+      const readTypes = async () => {
+          const index = new Map(st.films.map((f, i) => [f[0], i]));
+          for (const [kind, key, name] of [["shorts", "type/short", "Short"], ["tv", "type/tv", "TV"]]) {
+            if (st.lists[key] && st.lists[key].ids) continue;
+            const ids = [];
+            // (your own browse filters live in this cookie: put them back after)
+            const was = (document.cookie.match(/(?:^|;\s*)filmFilter=([^;]*)/) || [])[1];
+            document.cookie = `filmFilter=show-${kind}; path=/`;
+            try {
+              for (let p = 1; p <= 2000; p++) {
+                const t = await lbGet(`/csi/films/films-browser-list/by/popular/${p > 1 ? `page/${p}/` : ""}?esiAllowFilters=true`);
+                const list = [...parse(t).querySelectorAll("[data-item-slug]")].map((el) => el.dataset.itemSlug);
+                const hits = list.map((x) => index.get(x)).filter((i) => i != null);
+                ids.push(...hits);
+                if (!hits.length || list.length < PER_PAGE) break;
+              }
+            } finally { document.cookie = was ? `filmFilter=${was}; path=/; max-age=31536000` : "filmFilter=; path=/; max-age=0"; }
+            st.lists[key] = { name, ids: [...new Set(ids)].sort((a, b) => a - b) };
+            await catSave();
+            tick();
+          }
+      };
 
       // 1. The cutoff: the last page whose sampled films have a median of MIN watches.
       if (st.phase === "cutoff") {
@@ -2702,24 +2724,7 @@
       // 4b. Shorts and TV, by Letterboxd's own marks: its "show only shorts"
       //     and "show only TV" browse filters (a cookie, so one at a time).
       if (st.phase === "types") {
-        const index = new Map(st.films.map((f, i) => [f[0], i]));
-        for (const [kind, key, name] of [["shorts", "type/short", "Short"], ["tv", "type/tv", "TV"]]) {
-          if (st.lists[key] && st.lists[key].ids) continue;
-          const ids = [];
-          document.cookie = `filmFilter=show-${kind}; path=/`;
-          try {
-            for (let p = 1; p <= 2000; p++) {
-              const t = await lbGet(`/csi/films/films-browser-list/by/popular/${p > 1 ? `page/${p}/` : ""}?esiAllowFilters=true`);
-              const list = [...parse(t).querySelectorAll("[data-item-slug]")].map((el) => el.dataset.itemSlug);
-              const hits = list.map((x) => index.get(x)).filter((i) => i != null);
-              ids.push(...hits);
-              if (!hits.length || list.length < PER_PAGE) break;
-            }
-          } finally { document.cookie = "filmFilter=; path=/; max-age=0"; }
-          st.lists[key] = { name, ids: [...new Set(ids)].sort((a, b) => a - b) };
-          await catSave();
-          tick();
-        }
+        await readTypes();
         st.phase = "done";
         await catSave();
       }
@@ -2789,6 +2794,7 @@
             if (++n % 300 === 0) { catJob.msg = `Country of origin: ${fmt(Object.keys(st.origin).length)} / ${fmt(todo.length + Object.keys(st.origin).length - n)}`; await catSave(); tick(); }
           })));
         } else if (!key) catJob.msg = "No TMDB key here, so country of origin is worked out from countries and language instead.";
+        if (!st.lists["type/short"] || !st.lists["type/tv"]) await readTypes();
         st.phase = "done";
         await catSave();
       }
