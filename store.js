@@ -781,19 +781,32 @@
   let io = null; // posters in the aisle
   let rowIo = null; // thumbnails in the desk
 
+  /* Posters load with CORS (Letterboxd's image server allows it) so the
+   * canvases they're drawn on stay readable: the eyedropper needs that. If a
+   * CORS load ever fails, it loads again the plain way so nothing goes blank. */
+  function corsSrc(im, src) {
+    if (!src) return;
+    if (im.crossOrigin !== "anonymous") im.crossOrigin = "anonymous";
+    im.addEventListener("error", function retry() {
+      if (im.crossOrigin == null || im._plain) return;
+      im._plain = true; im.removeAttribute("crossorigin"); im.removeAttribute("srcset"); im.src = src;
+    }, { once: true });
+    im.src = src;
+  }
   function fillPoster(el) {
     const img = el.querySelector("img");
     posterFor(el.dataset.slug)
       .then(([one, two]) => {
-        img.src = one;
+        img.crossOrigin = "anonymous";
         img.srcset = `${one} 1x, ${two} 2x`;
+        corsSrc(img, one);
         el.classList.add("lbs-loaded");
       })
       .catch(() => el.classList.add("lbs-noposter"));
   }
   const imgAttrs = (slug) => {
     const c = posterCache.get(slug);
-    return c ? `src="${esc(c[0])}" srcset="${esc(c[0])} 1x, ${esc(c[1])} 2x"` : `src="${EMPTY}"`;
+    return c ? `crossorigin="anonymous" src="${esc(c[0])}" srcset="${esc(c[0])} 1x, ${esc(c[1])} 2x"` : `src="${EMPTY}"`;
   };
 
   function posterHTML([slug, name], tag) {
@@ -3000,7 +3013,7 @@
     if (im) return im.complete && im.naturalWidth ? im : null;
     im = new Image();
     wall.imgs.set(slug, im);
-    posterFor(slug).then(([one]) => { im.onload = drawSoon; im.src = one; }).catch(() => {});
+    posterFor(slug).then(([one]) => { im.onload = drawSoon; corsSrc(im, one); }).catch(() => {});
     return null;
   }
 
@@ -3996,7 +4009,7 @@
       `<img src="${cached ? esc(cached[0]) : EMPTY}" alt="" width="70" height="105">` +
       `<div><b>${esc(titleOf(f.name))}</b><span>${f.year || ""}</span><small>${esc(pathOf(f.sub).join(" › "))}</small>${frFor(f.slug) ? `<small class="-fr">Franchise · ${esc(frFor(f.slug).name)}</small>` : ""}` +
       `<a href="/film/${esc(f.slug)}/" target="_blank" rel="noopener">Open on Letterboxd ↗</a><em>Drag to a folder to re-file${logoEntry(f.slug)?.[0] ? " · right-click for other logos" : ""}</em></div>`;
-    if (!cached) posterFor(f.slug).then(([u]) => { const im = tip.querySelector("img"); if (im && wall.hover === i) im.src = u; }).catch(() => {});
+    if (!cached) posterFor(f.slug).then(([u]) => { const im = tip.querySelector("img"); if (im && wall.hover === i) corsSrc(im, u); }).catch(() => {});
     const st = $(".lbs-stage", root).getBoundingClientRect();
     tip.hidden = false;
     const tw = tip.offsetWidth, th = tip.offsetHeight;
@@ -4223,7 +4236,7 @@
     );
   }
   function fillPosters(el, big) {
-    el.querySelectorAll("img[data-poster]").forEach((im) => posterFor(im.dataset.poster).then(([a, b]) => (im.src = big ? b || a : a)).catch(() => {}));
+    el.querySelectorAll("img[data-poster]").forEach((im) => posterFor(im.dataset.poster).then(([a, b]) => corsSrc(im, big ? b || a : a)).catch(() => {}));
     // Film cans in the film view: draw the can, then again once the poster is in.
     el.querySelectorAll("canvas.lbs-can-cv").forEach((cv) => {
       const name = cv.dataset.name || (lib && lib.names.get(cv.dataset.can)) || cv.dataset.can;
@@ -4233,7 +4246,7 @@
       posterFor(cv.dataset.can).then(([a, b]) => {
         const im = new Image();
         im.onload = () => { cv._poster = im; drawCanBig(cv, im, cv.dataset.tape, f); };
-        im.src = cv.dataset.big ? b || a : a;
+        corsSrc(im, cv.dataset.big ? b || a : a);
       }).catch(() => {});
     });
     // A spine logo that's taller than it is wide stays upright.
@@ -4703,7 +4716,7 @@
         obs.unobserve(e.target);
         const im = e.target;
         if (posterCache.has(im.dataset.lp)) continue;
-        posterFor(im.dataset.lp).then(([u]) => (im.src = u)).catch(() => {});
+        posterFor(im.dataset.lp).then(([u]) => corsSrc(im, u)).catch(() => {});
       }
     }, { root: null, rootMargin: "200px" }) : null;
     box.querySelectorAll("img[data-lp]").forEach((im) => libIo && libIo.observe(im));
@@ -5327,7 +5340,7 @@
     sp.innerHTML = html;
     clearTimeout(lv.posterT);
     lv.posterT = setTimeout(() => {
-      sp.querySelectorAll("img[data-lvp]").forEach((im) => { if (!posterCache.has(im.dataset.lvp)) posterFor(im.dataset.lvp).then(([u]) => (im.src = u)).catch(() => {}); });
+      sp.querySelectorAll("img[data-lvp]").forEach((im) => { if (!posterCache.has(im.dataset.lvp)) posterFor(im.dataset.lvp).then(([u]) => corsSrc(im, u)).catch(() => {}); });
     }, 150);
   }
   const rowSlugs = (r) => (r.fr ? r.members : [r.slug]);
@@ -6591,91 +6604,112 @@
   const dropCanvas = document.createElement("canvas");
   dropCanvas.width = dropCanvas.height = 1;
   const dropCtx = dropCanvas.getContext("2d", { willReadFrequently: true });
-  const corsCopies = new Map(); // src -> Image loaded with CORS (or false)
-  function corsCopy(src) {
-    if (corsCopies.has(src)) return corsCopies.get(src);
-    const im = new Image();
-    im.crossOrigin = "anonymous";
-    corsCopies.set(src, null);
-    im.onload = () => corsCopies.set(src, im);
-    im.onerror = () => corsCopies.set(src, false);
-    im.src = src;
-    return null;
+  const LOUPE_N = 11, LOUPE_PX = 10; // an 11x11 patch, 10x bigger
+  function readable(source) {
+    try { dropCtx.clearRect(0, 0, 1, 1); dropCtx.drawImage(source, 0, 0, 1, 1, 0, 0, 1, 1); dropCtx.getImageData(0, 0, 1, 1); return true; } catch { return false; }
   }
   function pixelFrom(source, sx, sy) {
-    try {
-      dropCtx.clearRect(0, 0, 1, 1);
-      dropCtx.drawImage(source, sx, sy, 1, 1, 0, 0, 1, 1);
-      const [r, g, b, a] = dropCtx.getImageData(0, 0, 1, 1).data;
-      return a > 8 ? rgbToHex(r, g, b) : null;
-    } catch { return undefined; } // a picture this page isn't allowed to read
+    dropCtx.clearRect(0, 0, 1, 1);
+    dropCtx.drawImage(source, Math.floor(sx), Math.floor(sy), 1, 1, 0, 0, 1, 1);
+    const [r, g, b, a] = dropCtx.getImageData(0, 0, 1, 1).data;
+    return a > 8 ? rgbToHex(r, g, b) : null;
   }
+  // What's under the pointer: { hex, source, sx, sy, k } where source/sx/sy
+  // say which picture and which pixel (k: picture pixels per screen pixel),
+  // or { hex } for a plain coloured element, or { locked: true }.
   function sampleAt(x, y) {
     const els = document.elementsFromPoint(x, y).filter((el) => !el.closest(".lbs-cpick, .lbs-loupe"));
+    let locked = false;
     for (const el of els) {
       const r = el.getBoundingClientRect();
       if (!r.width || !r.height) continue;
+      let source = null, sx = 0, sy = 0, k = 1;
       if (el.tagName === "CANVAS") {
-        const px = pixelFrom(el, ((x - r.left) / r.width) * el.width, ((y - r.top) / r.height) * el.height);
-        if (px) return px;
-        if (px === undefined) continue;
-      }
-      if (el.tagName === "IMG" && el.complete && el.naturalWidth) {
-        // where in the picture, allowing for object-fit: cover / contain
+        source = el; k = el.width / r.width;
+        sx = (x - r.left) * k; sy = (y - r.top) * (el.height / r.height);
+      } else if (el.tagName === "IMG" && el.complete && el.naturalWidth) {
         const fit = getComputedStyle(el).objectFit;
         const nw = el.naturalWidth, nh = el.naturalHeight;
         const sc = fit === "cover" ? Math.max(r.width / nw, r.height / nh) : fit === "contain" || fit === "scale-down" ? Math.min(r.width / nw, r.height / nh) : null;
-        const ix = sc ? (x - r.left - (r.width - nw * sc) / 2) / sc : ((x - r.left) / r.width) * nw;
-        const iy = sc ? (y - r.top - (r.height - nh * sc) / 2) / sc : ((y - r.top) / r.height) * nh;
-        if (ix >= 0 && iy >= 0 && ix < nw && iy < nh) {
-          let px = pixelFrom(el, ix, iy);
-          if (px === undefined) { const c = corsCopy(el.currentSrc || el.src); px = c ? pixelFrom(c, ix, iy) : c === false ? undefined : "…"; }
-          if (px === "…") return "…";
-          if (px) return px;
-          if (px === null) continue;
-        }
+        const kx = sc ? 1 / sc : nw / r.width, ky = sc ? 1 / sc : nh / r.height;
+        sx = sc ? (x - r.left - (r.width - nw * sc) / 2) * kx : (x - r.left) * kx;
+        sy = sc ? (y - r.top - (r.height - nh * sc) / 2) * ky : (y - r.top) * ky;
+        if (sx < 0 || sy < 0 || sx >= nw || sy >= nh) continue;
+        source = el; k = kx;
+      }
+      if (source) {
+        if (!readable(source)) { locked = true; continue; }
+        const hex = pixelFrom(source, sx, sy);
+        if (hex) return { hex, source, sx, sy, k };
+        continue; // transparent here: look underneath
       }
       const bg = getComputedStyle(el).backgroundColor;
       const m = bg && bg.match(/rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+))?/);
-      if (m && (m[4] == null || +m[4] > 0.5)) return rgbToHex(+m[1], +m[2], +m[3]);
+      if (m && (m[4] == null || +m[4] > 0.5)) return { hex: rgbToHex(+m[1], +m[2], +m[3]), locked };
     }
-    return null;
+    return { hex: null, locked };
   }
   let dropper = null; // { loupe, last, handlers }
   function startDropper() {
     if (!cpick || dropper) return;
     cpick.dropping = true;
     cpick.box.classList.add("-dropping");
-    const loupe = h("div", "lbs-loupe", `<i></i><span>Click to pick · Esc cancels</span>`);
+    const before = cpick.box.querySelector(".lbs-cpick-now").style.background;
+    const S = LOUPE_N * LOUPE_PX;
+    const loupe = h("div", "lbs-loupe", `<canvas width="${S}" height="${S}"></canvas><div><i></i><span></span></div>`);
     document.body.append(loupe);
+    const lc = loupe.querySelector("canvas").getContext("2d");
+    lc.imageSmoothingEnabled = false;
     root.classList.add("lbs-dropping");
-    const show = (e) => {
-      const hex = sampleAt(e.clientX, e.clientY);
-      dropper.last = hex && hex !== "…" ? hex : null;
-      loupe.style.transform = `translate(${e.clientX + 18}px, ${e.clientY + 18}px)`;
-      loupe.querySelector("i").style.background = dropper.last || "transparent";
-      loupe.querySelector("span").textContent = hex === "…" ? "reading picture…" : dropper.last ? `${dropper.last} · click to pick` : "nothing to pick here";
+    let raf = 0, at = null;
+    const paint = () => {
+      raf = 0;
+      if (!dropper || !at) return;
+      const { x, y } = at;
+      const got = sampleAt(x, y);
+      dropper.last = got.hex;
+      // the magnifier: the patch around the pixel, big and unsmoothed
+      lc.fillStyle = "#0b1014"; lc.fillRect(0, 0, S, S);
+      if (got.source) {
+        const half = (LOUPE_N / 2) * got.k;
+        lc.drawImage(got.source, got.sx - half, got.sy - half, LOUPE_N * got.k, LOUPE_N * got.k, 0, 0, S, S);
+      } else if (got.hex) { lc.fillStyle = got.hex; lc.fillRect(0, 0, S, S); }
+      lc.strokeStyle = "#fff"; lc.lineWidth = 2;
+      const c0 = Math.floor(LOUPE_N / 2) * LOUPE_PX;
+      lc.strokeRect(c0, c0, LOUPE_PX, LOUPE_PX);
+      lc.strokeStyle = "rgba(0,0,0,.6)"; lc.lineWidth = 1;
+      lc.strokeRect(c0 - 1.5, c0 - 1.5, LOUPE_PX + 3, LOUPE_PX + 3);
+      loupe.querySelector("i").style.background = got.hex || "transparent";
+      loupe.querySelector("span").textContent = got.hex ? got.hex : got.locked ? "can't read this picture" : "nothing here";
+      // live preview in the picker (taken only when you click)
+      cpick.box.querySelector(".lbs-cpick-now").style.background = got.hex || before;
+      // keep the loupe on screen
+      const lw = loupe.offsetWidth, lh = loupe.offsetHeight;
+      const lx = x + 20 + lw > innerWidth ? x - 20 - lw : x + 20, ly = y + 20 + lh > innerHeight ? y - 20 - lh : y + 20;
+      loupe.style.transform = `translate(${lx}px, ${ly}px)`;
     };
+    const show = (e) => { at = { x: e.clientX, y: e.clientY }; if (!raf) raf = requestAnimationFrame(paint); };
     const block = (e) => { if (e.target.closest && e.target.closest(".lbs-cpick")) return; e.preventDefault(); e.stopPropagation(); };
     const down = (e) => {
       if (e.target.closest && e.target.closest(".lbs-cpick")) return;
       block(e);
       if (e.button !== 0) return stopDropper();
-      show(e);
-      const hex = dropper.last;
+      at = { x: e.clientX, y: e.clientY }; paint();
+      const hex = dropper && dropper.last;
       stopDropper();
       if (hex) setPickHex(hex);
     };
     const key = (e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); stopDropper(); } };
     const handlers = [["pointermove", show], ["pointerdown", down], ["mousedown", block], ["mouseup", block], ["click", block], ["contextmenu", block], ["keydown", key], ["blur", () => stopDropper()]];
     handlers.forEach(([t, f]) => window.addEventListener(t, f, true));
-    dropper = { loupe, last: null, handlers };
+    dropper = { loupe, last: null, handlers, restore: () => { if (cpick) cpick.box.querySelector(".lbs-cpick-now").style.background = before; } };
   }
   function stopDropper() {
     if (!dropper) return;
     const d = dropper;
     dropper = null;
     d.loupe.remove();
+    d.restore();
     root.classList.remove("lbs-dropping");
     // let the click that ended it finish before the page hears clicks again
     setTimeout(() => d.handlers.forEach(([t, f]) => window.removeEventListener(t, f, true)), 0);
