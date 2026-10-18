@@ -451,7 +451,7 @@
       let i = -1;
       lists.set(key, { name, set: new Set(gaps.map((d) => (i += d))) });
     }
-    catalogue = { at: j.at, films: j.films, lists, info: Array.isArray(j.info) ? j.info : null, people: j.people || [], langNames: j.langNames || {} };
+    catalogue = { at: j.at, films: j.films, lists, info: Array.isArray(j.info) ? j.info : null, people: j.people || [], langNames: j.langNames || {}, kw: Array.isArray(j.kw) ? j.kw : null, fkw: Array.isArray(j.fkw) ? j.fkw : null };
     catState = "ready";
     return true;
   }
@@ -2805,6 +2805,37 @@
         st.phase = "done";
         await catSave();
       }
+      // 7 (on request). TMDB keywords for every film TMDB knows, the raw
+      //    material for the store's Tags filter (LGBTQ+, Heist, Musical…).
+      if (st.phase === "keywords") {
+        const key = readJSON(TMDB_KEY, "");
+        if (!key) throw new Error("Keywords come from TMDB: paste your TMDB key in the Logo builder first.");
+        await logoReady; await loadSharedLogos();
+        st.kw = st.kw || {}; st.kwNames = st.kwNames || {};
+        const todo = [];
+        st.films.forEach(([slug], i) => { const e = logoEntry(slug); if (e && e[0] && !(i in st.kw)) todo.push([i, e[0]]); });
+        const bearer = key.length > 40, lane = limiter(10);
+        let n = 0;
+        await Promise.all(todo.map(([i, tid]) => lane(async () => {
+          if (!catJob.running) throw new Error("paused");
+          for (let tries = 0; tries < 5; tries++) {
+            const u = new URL(`https://api.themoviedb.org/3/movie/${tid}/keywords`);
+            if (!bearer) u.searchParams.set("api_key", key);
+            const r = await fetch(u, bearer ? { headers: { Authorization: `Bearer ${key}` } } : {});
+            catJob.reqs++;
+            if (r.status === 429) { await new Promise((ok) => setTimeout(ok, 1500 * (tries + 1))); continue; }
+            if (r.status === 401) throw new Error("TMDB didn't accept your key (Logo builder › Forget key, then paste it again).");
+            const j = r.ok ? await r.json() : null;
+            const ks = (j && j.keywords) || [];
+            for (const k of ks) st.kwNames[k.id] = k.name;
+            st.kw[i] = ks.map((k) => k.id);
+            break;
+          }
+          if (++n % 400 === 0) { catJob.msg = `Keywords: ${fmt(n)} / ${fmt(todo.length)}`; await catSave(); tick(); }
+        })));
+        st.phase = "done";
+        await catSave();
+      }
     } catch (err) {
       if (err.message !== "paused") catJob.error = err.message;
       if (catJob.st) await catSave().catch(() => {});
@@ -2825,9 +2856,10 @@
     if (st.phase === "lists") return `Reading lists: ${fmt(done)} / ${fmt(lists.length)}`;
     if (st.phase === "types") return "Reading Letterboxd's Short and TV marks…";
     if (st.phase === "lids") return `Film details: matching IDs, page ${fmt(st.lidPage || 0)} / ${fmt(st.cutPage)}`;
+    if (st.phase === "keywords") return `TMDB keywords: ${fmt(Object.keys(st.kw || {}).length)} films so far`;
     if (st.phase === "origin") return `Country of origin from TMDB: ${fmt(Object.keys(st.origin || {}).length)} films so far`;
     if (st.phase === "details") { const got = (st.info || []).filter((x) => x && x.length > 1).length; return `Film details: ${fmt(got)} / ${fmt((st.info || []).filter(Boolean).length)} read`; }
-    return `Done: ${fmt(st.films.length)} films · ${fmt(lists.length)} lists${st.info ? ` · details for ${fmt(st.info.filter((x) => x && x.length > 1).length)}` : ""}`;
+    return `Done: ${fmt(st.films.length)} films · ${fmt(lists.length)} lists${st.info ? ` · details for ${fmt(st.info.filter((x) => x && x.length > 1).length)}` : ""}${st.kw ? ` · keywords for ${fmt(Object.keys(st.kw).length)}` : ""}`;
   }
 
   function renderCatBuild() {
@@ -2844,7 +2876,7 @@
       (catJob.error ? `<p class="-err">${esc(catJob.error)}</p>` : "") +
       `<div class="lbs-logobuild-row">` +
       (catJob.running ? `<button type="button" data-act="cat-stop">Pause</button>` : st && st.phase === "done" && neededLists().every((k) => st.lists[k]) ? "" : `<button type="button" data-act="cat-start" class="-go">${st && (st.films.length || Object.keys(st.probes).length) ? "Continue" : "Start"}</button>`) +
-      (st && st.phase === "done" ? `<button type="button" data-act="cat-save" class="-go">Download catalogue</button><button type="button" data-act="cat-try">Try it here</button>` + (catJob.running ? "" : `<button type="button" data-act="cat-details" title="Runtime, primary language and directors for every film (about an hour)">${st.info ? "Re-read film details" : "Read film details"}</button>`) : "") +
+      (st && st.phase === "done" ? `<button type="button" data-act="cat-save" class="-go">Download catalogue</button><button type="button" data-act="cat-try">Try it here</button>` + (catJob.running ? "" : `<button type="button" data-act="cat-details" title="Runtime, primary language and directors for every film (about an hour)">${st.info ? "Re-read film details" : "Read film details"}</button><button type="button" data-act="cat-keywords" title="TMDB keywords for every film, for the Tags filter (about an hour; needs your TMDB key)">${st.kw ? "Finish TMDB keywords" : "Read TMDB keywords"}</button>`) : "") +
       (!catJob.running && st ? `<button type="button" data-act="cat-reset">Start over</button>` : "") +
       `<button type="button" data-act="cat-close">Close</button></div>`;
   }
@@ -2868,6 +2900,16 @@
       out.info = st.info.map((x, i) => (x && x.length > 1 ? [x[0], x[1], x[2], x[3], (x[4] || []).map(pid), x[5] || 0, og[i] || 0] : x ? [x[0]] : 0));
       out.people = people;
       out.langNames = st.langNames || {};
+    }
+    if (st.kw) {
+      // TMDB keywords used by 3+ films: their names once (kw), and each
+      // film's as indexes into that list (fkw; 0 when it has none).
+      const count = new Map();
+      for (const ids of Object.values(st.kw)) for (const id of ids) count.set(id, (count.get(id) || 0) + 1);
+      const keep = [...count].filter(([, c]) => c >= 3).sort((a, b) => b[1] - a[1]).map(([id]) => id);
+      const at = new Map(keep.map((id, n) => [id, n]));
+      out.kw = keep.map((id) => st.kwNames[id] || String(id));
+      out.fkw = st.films.map((f, i) => { const ids = (st.kw[i] || []).filter((id) => at.has(id)).map((id) => at.get(id)); return ids.length ? ids : 0; });
     }
     return out;
   }
@@ -4704,6 +4746,227 @@
 
   // What the catalogue knows about each film: genres, countries, languages,
   // and (once the builder has read film details) runtime and primary language.
+  /* The store's Tags: about 150 solid, human-sized tags rolled up from TMDB's
+   * hand-made keywords (catalogue.kw). Each is [id, label, pattern]; a film
+   * gets the tag when any of its keywords matches the pattern (whole
+   * keyword, case-insensitive). Edit freely: no rebuild needed. */
+  const KW_TAGS = [
+    // Crime & thrillers
+    ["heist", "Heist", "heist|bank robbery|robbery|caper|safecracker|bank heist|jewel heist|art heist|casino heist|train robbery"],
+    ["gangster", "Gangsters & Mob", "gangster|mafia|mobster|organized crime|crime boss|mafia boss|cosa nostra|the mob|crime family|gang war|crime syndicate"],
+    ["yakuza", "Yakuza & Triads", "yakuza|triad|triads"],
+    ["con", "Cons & Swindles", "con artist|con man|swindle|swindler|scam|grifter|confidence trick|fraud"],
+    ["serialkiller", "Serial Killers", "serial killer|serial murder|killing spree"],
+    ["hitman", "Hitmen & Assassins", "hitman|hit man|assassin|contract killer|assassination"],
+    ["detective", "Detectives", "detective|private detective|private investigator|police detective|sleuth|amateur detective"],
+    ["whodunit", "Whodunits", "whodunit|murder mystery|locked room mystery"],
+    ["noir", "Film Noir", "film noir|noir"],
+    ["neonoir", "Neo-Noir", "neo-noir"],
+    ["cops", "Cops", "police|police officer|cop|police corruption|corrupt cop|police procedural|lapd|nypd|undercover cop"],
+    ["buddycop", "Buddy Cops", "buddy cop"],
+    ["prison", "Prison", "prison|prison escape|prison break|prisoner|jail|penitentiary|death row|women in prison"],
+    ["courtroom", "Courtroom", "courtroom|courtroom drama|trial|lawyer|attorney|defense attorney|jury|legal drama"],
+    ["drugs", "Drug Trade", "drug dealer|drug trafficking|drug cartel|cartel|drug lord|cocaine|drug smuggling|narcotics"],
+    ["kidnap", "Kidnapping & Hostages", "kidnapping|kidnapped|hostage|hostage situation|abduction|ransom"],
+    ["revenge", "Revenge", "revenge|vengeance|rape and revenge|revenge killing"],
+    ["vigilante", "Vigilantes", "vigilante|vigilantism"],
+    ["conspiracy", "Conspiracy", "conspiracy|cover-up|government conspiracy|conspiracy theory"],
+    ["erotic", "Erotic Thrillers", "erotic thriller|femme fatale"],
+    ["stalker", "Stalkers & Obsession", "stalker|stalking|obsession|obsessive love"],
+    ["homeinvasion", "Home Invasion", "home invasion"],
+    ["twist", "Twist Endings", "twist ending|plot twist|surprise ending|unreliable narrator"],
+    // Spies, war, military
+    ["spy", "Spies & Espionage", "spy|espionage|secret agent|cia|kgb|mi6|double agent|british secret service"],
+    ["ww2", "World War II", "world war ii|world war 2|ww2|d-day|battle of britain|pearl harbor"],
+    ["ww1", "World War I", "world war i|world war 1|ww1|trench warfare"],
+    ["vietnam", "Vietnam War", "vietnam war"],
+    ["coldwar", "Cold War", "cold war"],
+    ["civilwar", "Civil Wars", "american civil war|civil war|spanish civil war"],
+    ["nazi", "Nazis & the Holocaust", "nazi|nazis|nazi germany|holocaust|holocaust \\(shoah\\)|concentration camp|third reich|hitler|adolf hitler|gestapo"],
+    ["military", "Soldiers & Military", "soldier|military|army|navy|marines|u\\.s\\. marine|special forces|navy seal|platoon|boot camp"],
+    ["pilots", "Pilots & Air Combat", "fighter pilot|pilot|aerial combat|dogfight|air force"],
+    ["submarine", "Submarines", "submarine|u-boat"],
+    ["terror", "Terrorism", "terrorism|terrorist|terrorist attack|hijacking"],
+    // Action & adventure
+    ["martialarts", "Martial Arts", "martial arts|kung fu|karate|taekwondo|muay thai|jiu-jitsu|shaolin|wing chun"],
+    ["wuxia", "Wuxia", "wuxia|swordsman"],
+    ["samurai", "Samurai", "samurai|ronin|chanbara|jidaigeki"],
+    ["ninja", "Ninjas", "ninja"],
+    ["superhero", "Superheroes", "superhero|superheroes|super power|superpower|marvel cinematic universe \\(mcu\\)|dc extended universe \\(dceu\\)|based on comic|dc comics|marvel comics"],
+    ["carchase", "Car Chases & Racing", "car chase|car race|car racing|drag racing|street racing|race car|racing|formula 1|nascar|stunt driver|getaway driver"],
+    ["pirates", "Pirates", "pirate|pirates|piracy"],
+    ["treasure", "Treasure Hunts", "treasure hunt|treasure|lost treasure|treasure map"],
+    ["explorers", "Explorers & Expeditions", "expedition|explorer|archaeologist|archaeology|lost city|jungle expedition"],
+    ["survival", "Survival", "survival|stranded|survivalist|deserted island|plane crash|shipwreck|wilderness"],
+    ["disaster", "Disasters", "disaster|natural disaster|disaster movie|earthquake|tsunami|volcano|tornado|hurricane|flood|avalanche|sinking ship"],
+    ["mercenary", "Mercenaries", "mercenary|mercenaries|soldier of fortune"],
+    // Sci-fi
+    ["timetravel", "Time Travel", "time travel|time machine|time traveler"],
+    ["timeloop", "Time Loops", "time loop"],
+    ["althistory", "Alternate History", "alternate history|alternative history|counterfactual history"],
+    ["multiverse", "Parallel Worlds", "parallel world|parallel universe|multiverse|alternate reality|alternate universe|alternate dimension"],
+    ["space", "Space Travel", "space travel|spaceship|space station|astronaut|space mission|outer space|space exploration|mars|moon landing|spacecraft"],
+    ["aliens", "Aliens", "alien|aliens|alien invasion|extraterrestrial|alien life-form|ufo|first contact|alien abduction"],
+    ["robots", "Robots & AI", "robot|robots|android|artificial intelligence|artificial intelligence \\(a\\.i\\.\\)|cyborg|humanoid robot"],
+    ["dystopia", "Dystopias", "dystopia|dystopian|totalitarianism|totalitarian regime|police state"],
+    ["postapoc", "Post-Apocalyptic", "post-apocalyptic future|post-apocalyptic|apocalypse|end of the world|nuclear war|nuclear holocaust|wasteland"],
+    ["cyberpunk", "Cyberpunk", "cyberpunk"],
+    ["vr", "Virtual Reality & Simulations", "virtual reality|simulation|simulated reality|video game world"],
+    ["clones", "Clones & Genetic Engineering", "clone|cloning|genetic engineering|genetic mutation|mutant|mutation"],
+    ["pandemic", "Outbreaks & Pandemics", "pandemic|epidemic|virus|outbreak|plague|infection|quarantine"],
+    ["kaiju", "Giant Monsters", "kaiju|giant monster|giant creature|godzilla|tokusatsu"],
+    ["dinosaurs", "Dinosaurs", "dinosaur|dinosaurs|tyrannosaurus rex|prehistoric"],
+    ["madscientist", "Mad Scientists", "mad scientist|scientific experiment|experiment|human experimentation"],
+    ["superpowers", "Powers & Telekinesis", "telekinesis|telepathy|psychic|psychic power|superpowers"],
+    // Fantasy & myth
+    ["swordsorcery", "Sword & Sorcery", "sword and sorcery|high fantasy|sword and sandal"],
+    ["dragons", "Dragons", "dragon|dragons"],
+    ["witches", "Witches & Witchcraft", "witch|witches|witchcraft|coven|sorceress"],
+    ["wizards", "Wizards & Magic", "wizard|magic|magician|sorcerer|spell|magical creature"],
+    ["fairytale", "Fairy Tales", "fairy tale|fairy|based on fairy tale|princess|fairy godmother"],
+    ["mythology", "Mythology", "mythology|greek mythology|norse mythology|greek god|gods|mythological beast|hercules|zeus|thor"],
+    ["talkinganimals", "Talking Animals", "talking animal|talking dog|anthropomorphism|anthropomorphic animal"],
+    ["portal", "Other Worlds", "portal|another world|other world|fantasy world|isekai|alternate world"],
+    // Horror
+    ["slasher", "Slashers", "slasher|masked killer|slasher flick"],
+    ["zombies", "Zombies", "zombie|zombies|zombie apocalypse|living dead|undead"],
+    ["vampires", "Vampires", "vampire|vampires|dracula|count dracula|vampire hunter"],
+    ["werewolves", "Werewolves", "werewolf|werewolves|lycanthrope"],
+    ["ghosts", "Ghosts", "ghost|ghosts|ghost story|haunting|poltergeist"],
+    ["haunted", "Haunted Houses", "haunted house|haunted mansion|haunted hotel"],
+    ["possession", "Possession & Exorcism", "possession|demonic possession|exorcism|exorcist|demon|demons|satanism|devil|satan|antichrist"],
+    ["cults", "Cults", "cult|religious cult|cult leader|commune|sect"],
+    ["folkhorror", "Folk Horror", "folk horror|pagan|paganism|ritual sacrifice|wicker man"],
+    ["bodyhorror", "Body Horror", "body horror|mutilation|body modification"],
+    ["foundfootage", "Found Footage", "found footage|mockumentary horror|screenlife"],
+    ["creature", "Creature Features", "creature|creature feature|monster|sea monster|giant animal|killer animal|shark|shark attack|giant spider"],
+    ["cannibals", "Cannibals", "cannibal|cannibalism|cannibals"],
+    ["giallo", "Giallo", "giallo"],
+    ["psychhorror", "Psychological Horror", "psychological horror|psychological thriller|madness|insanity|paranoia"],
+    ["splatter", "Gore & Splatter", "gore|splatter|torture|torture porn|extreme violence"],
+    ["halloween", "Halloween", "halloween"],
+    // Comedy flavours
+    ["satire", "Satire", "satire|political satire|social satire|black comedy|dark comedy"],
+    ["parody", "Parody & Spoofs", "parody|spoof|spoof movie"],
+    ["mockumentary", "Mockumentaries", "mockumentary"],
+    ["slapstick", "Slapstick", "slapstick|slapstick comedy"],
+    ["screwball", "Screwball", "screwball comedy|screwball"],
+    ["romcom", "Rom-Coms", "romantic comedy|romcom"],
+    ["buddy", "Buddy Comedies", "buddy comedy|buddy movie|bromance"],
+    ["stoner", "Stoner Comedies", "stoner comedy|marijuana|cannabis|weed"],
+    ["teencomedy", "Teen Comedies", "teen comedy|sex comedy|teen movie"],
+    ["standup", "Stand-Up Comedy", "stand-up comedy|stand-up comedian|stand up comedy|comedy special"],
+    // Music & show business
+    ["musical", "Musicals", "musical|jukebox musical|based on musical|movie musical|rock musical|stage musical|based on play or musical"],
+    ["vaudeville", "Vaudeville & Burlesque", "vaudeville|burlesque|music hall|cabaret|showgirl|chorus girl|revue"],
+    ["dance", "Dance", "dance|dancing|dancer|ballet|ballerina|dance competition|breakdance|hip hop dance|tango|ballroom dancing|choreographer"],
+    ["concert", "Concert Films", "concert film|concert|live performance|music tour"],
+    ["musicians", "Musicians & Bands", "musician|band|rock band|rock and roll|rock 'n' roll|singer|songwriter|rock star|pop star|guitarist|jazz musician|jazz|hip-hop|rapper|punk rock|heavy metal|country music|blues"],
+    ["hollywood", "Hollywood & Filmmaking", "hollywood|filmmaking|film making|movie business|film director|film production|movie star|actor|actress|film industry|making of"],
+    ["theater", "Theatre", "theater|theatre|stage play|broadway|playwright|stage actor|drama school"],
+    ["artists", "Artists & Painters", "painter|artist|painting|art world|sculptor|art forger"],
+    ["writers", "Writers", "writer|novelist|author|poet|writer's block|screenwriter"],
+    ["fashion", "Fashion", "fashion|fashion designer|fashion model|fashion industry|supermodel"],
+    ["food", "Food & Cooking", "cooking|chef|restaurant|food|baking|cuisine|culinary"],
+    // True stories & history
+    ["biopic", "Biopics", "biography|biopic|biographical|based on real person"],
+    ["truestory", "Based on a True Story", "based on true story|based on true events|true crime|based on a true story"],
+    ["truecrime", "True Crime", "true crime"],
+    ["royalty", "Royalty", "royalty|king|queen|monarchy|royal family|princess|prince|emperor|empress|british monarchy|tudor"],
+    ["period", "Period Pieces", "period drama|costume drama|19th century|18th century|victorian era|victorian england|regency|edwardian era|georgian era|period piece"],
+    ["medieval", "Medieval", "medieval|middle ages|knight|knights|crusades|king arthur|castle"],
+    ["ancient", "Ancient World", "ancient rome|roman empire|ancient greece|ancient egypt|gladiator|gladiators|pharaoh|sparta|sword and sandal|biblical epic"],
+    ["bible", "Bible Stories", "bible|biblical|jesus christ|christianity|old testament|new testament|moses"],
+    ["western", "Westerns", "western|spaghetti western|cowboy|outlaw|gunslinger|wild west|sheriff|frontier|bounty hunter|cattle drive|revisionist western|acid western"],
+    ["politics", "Politics", "politics|politician|election|election campaign|president|presidential election|white house|senator|political corruption|political thriller|u\\.s\\. president"],
+    ["journalism", "Journalism", "journalism|journalist|newspaper|reporter|investigative journalism|news media"],
+    ["civilrights", "Civil Rights & Racism", "civil rights|civil rights movement|racism|racial segregation|segregation|racial prejudice|black lives matter|apartheid|ku klux klan"],
+    ["slavery", "Slavery", "slavery|slave|slave trade|plantation"],
+    ["immigration", "Immigrants & Refugees", "immigrant|immigration|refugee|refugees|migrant|emigration|illegal immigration|diaspora"],
+    ["colonial", "Colonialism", "colonialism|colonization|colony|british empire|imperialism|post-colonialism"],
+    ["revolution", "Revolutions & Uprisings", "revolution|revolutionary|rebellion|uprising|protest|resistance|french revolution|russian revolution"],
+    // People & relationships
+    ["lgbtq", "LGBTQ+", "lgbt|lgbtq|lgbtq\\+|gay|gay theme|gay relationship|gay interest|lesbian|lesbian relationship|lesbian interest|bisexual|bisexuality|transgender|trans woman|trans man|queer|queer cinema|homosexuality|coming out|drag queen|gay romance|same-sex marriage|non-binary|gender identity"],
+    ["feminism", "Feminism & Women's Stories", "feminism|feminist|women's rights|female empowerment|women's liberation|sexism|misogyny|patriarchy"],
+    ["comingofage", "Coming of Age", "coming of age|growing up|adolescence|teenage life|first love|loss of virginity"],
+    ["highschool", "High School", "high school|high school student|teenager|prom|high school sports|school dance"],
+    ["college", "College", "college|university|college student|fraternity|sorority|campus|dorm"],
+    ["school", "School & Teachers", "school|teacher|boarding school|student|classroom|elementary school|teacher student relationship"],
+    ["summercamp", "Summer Camp", "summer camp|camp counselor"],
+    ["family", "Family Drama", "family relationships|dysfunctional family|family conflict|family drama|father son relationship|mother daughter relationship|father daughter relationship|mother son relationship|siblings|brother brother relationship|sister sister relationship"],
+    ["parenthood", "Parenthood", "parenthood|single parent|single mother|single father|pregnancy|pregnant|motherhood|fatherhood|adoption|foster child"],
+    ["marriage", "Marriage & Divorce", "marriage|marriage crisis|divorce|husband wife relationship|wedding|infidelity|adultery|affair|unfaithfulness"],
+    ["friendship", "Friendship", "friendship|best friend|friends|female friendship|male friendship|childhood friends"],
+    ["oldage", "Old Age", "old age|aging|elderly|retirement|dementia|alzheimer's disease|nursing home|senior citizen"],
+    ["grief", "Grief & Loss", "grief|mourning|death of a loved one|loss of loved one|death of wife|death of husband|death of child|death of father|death of mother|bereavement|funeral"],
+    ["illness", "Illness", "illness|terminal illness|cancer|disease|hospital|disability|blindness|deaf|wheelchair"],
+    ["mentalhealth", "Mental Health", "mental illness|depression|mental health|schizophrenia|bipolar disorder|psychiatric hospital|mental institution|ptsd|post-traumatic stress disorder \\(ptsd\\)|anxiety"],
+    ["addiction", "Addiction", "addiction|drug addiction|alcoholism|alcoholic|heroin|drug abuse|recovery|rehab"],
+    ["loneliness", "Loneliness", "loneliness|isolation|lonely|solitude|alienation"],
+    // Faith & the uncanny
+    ["religion", "Religion & Faith", "religion|faith|priest|nun|catholic|catholicism|church|catholic church|christian|islam|muslim|judaism|jewish|buddhism|hinduism|monk|spirituality|religious"],
+    ["afterlife", "Afterlife", "afterlife|heaven|hell|purgatory|limbo|reincarnation|life after death"],
+    ["dreams", "Dreams & Surreal", "dream|dreams|surreal|surrealism|lucid dream|nightmare|hallucination"],
+    ["amnesia", "Amnesia & Memory", "amnesia|memory loss|lost memory"],
+    ["bodyswap", "Body Swaps & Shapeshifters", "body swap|shapeshifting|shape shifter|switching bodies"],
+    // Places & journeys
+    ["roadtrip", "Road Trips", "road trip|road movie|on the road|cross country"],
+    ["trains", "Trains", "train|railway|train station|subway|locomotive"],
+    ["planes", "Planes & Airports", "airplane|airport|flight|plane|airline|flight attendant"],
+    ["sea", "At Sea", "ship|boat|ocean|sailing|sailor|cruise ship|at sea|lighthouse|fisherman|whaling"],
+    ["island", "Islands", "island|desert island|tropical island|remote island"],
+    ["smalltown", "Small Towns", "small town|rural area|village|countryside|farm|farmer|rural life"],
+    ["nyc", "New York", "new york city|manhattan, new york city|brooklyn, new york city|new york|harlem, new york city|bronx, new york city"],
+    ["la", "Los Angeles", "los angeles, california|hollywood, los angeles, california|los angeles|beverly hills"],
+    ["paris", "Paris", "paris, france|paris"],
+    ["london", "London", "london, england|london|london, united kingdom"],
+    ["tokyo", "Tokyo", "tokyo, japan|tokyo"],
+    ["vegas", "Las Vegas & Gambling", "las vegas|gambling|casino|poker|gambler|card game|betting"],
+    ["suburbia", "Suburbia", "suburbia|suburb|suburban"],
+    ["ghetto", "Inner City", "ghetto|inner city|hood|street gang"],
+    ["snow", "Snow, Ice & Mountains", "snow|arctic|antarctica|winter|blizzard|north pole|mountain climbing|mountaineering|mountain"],
+    ["jungle", "Jungles", "jungle|rainforest|amazon rainforest"],
+    ["onelocation", "One Location", "single location|one location|confined space|bottle episode|chamber piece|real time"],
+    // Seasons & occasions
+    ["christmas", "Christmas", "christmas|christmas eve|santa claus|christmas party|christmas tree|holiday season|xmas"],
+    ["newyear", "New Year's & Holidays", "new year's eve|thanksgiving|easter|valentine's day|independence day"],
+    // Sports
+    ["sports", "Sports", "sports|sport|athlete|coach|underdog|sports team|championship|olympic games|olympics"],
+    ["boxing", "Boxing & Fighting", "boxing|boxer|boxing match|mixed martial arts|mma|wrestling|wrestler|professional wrestling|fight club|underground fighting"],
+    ["baseball", "Baseball", "baseball|baseball player|major league baseball \\(mlb\\)"],
+    ["football", "American Football", "american football|football player|nfl|college football|quarterback"],
+    ["soccer", "Soccer", "soccer|football \\(soccer\\)|soccer player|world cup|fifa"],
+    ["basketball", "Basketball", "basketball|basketball player|nba"],
+    ["extremesports", "Surfing & Extreme Sports", "surfing|surfer|skateboarding|skateboard|snowboarding|skiing|rock climbing|bmx"],
+    ["chess", "Chess, Games & Contests", "chess|board game|spelling bee|game show"],
+    // Animals & nature
+    ["dogs", "Dogs", "dog|dogs|puppy|pet dog|dog owner"],
+    ["cats", "Cats", "cat|cats|kitten"],
+    ["horses", "Horses", "horse|horses|horse racing|horseback riding|pony"],
+    ["nature", "Nature & Wildlife", "nature|wildlife|animals|ecology|environment|environmentalism|climate change|global warming"],
+    // Tech & work
+    ["hackers", "Hackers & Tech", "hacker|hacking|computer|internet|social media|cyber|technology|silicon valley|computer virus|video game"],
+    ["money", "Money & Wall Street", "wall street|stock market|stockbroker|banker|corporate greed|capitalism|greed|money|millionaire|billionaire|financial crisis|investment banker"],
+    ["workplace", "Workplace", "workplace|office|corporation|boss|job|unemployment|working class|labor|factory|strike|labor union"],
+    ["medical", "Doctors & Hospitals", "doctor|surgeon|nurse|hospital|medicine|physician|medical drama"],
+    ["science", "Scientists", "scientist|science|physicist|mathematician|mathematics|genius|inventor|invention"],
+    // Form & style
+    ["anthology", "Anthologies", "anthology|omnibus|segments|portmanteau"],
+    ["stopmotion", "Stop Motion", "stop motion|claymation|puppetry|puppet"],
+    ["anime", "Anime", "anime|shounen|shoujo|seinen|josei|mecha|based on manga"],
+    ["silent", "Silent Films", "silent film|silent movie|black and white silent"],
+    ["exploitation", "Exploitation & Grindhouse", "exploitation|grindhouse|b movie|sexploitation|blaxploitation|nunsploitation|women in prison|nazisploitation"],
+    ["cultclassic", "Cult & Midnight Movies", "cult film|midnight movie|so bad it's good"],
+    ["nonlinear", "Nonlinear Stories", "nonlinear timeline|non-linear narrative|flashback|told in flashback|multiple storylines|hyperlink cinema|interconnected stories"],
+    ["metafilm", "Movies About Movies", "meta|metafiction|breaking the fourth wall|film within a film|movie within a movie"],
+    ["remake", "Remakes", "remake"],
+    ["videogame", "Based on Video Games", "based on video game"],
+    ["novel", "Based on Novels", "based on novel or book|based on novel|based on book|literary adaptation"],
+    ["comicadapt", "Based on Comics", "based on comic|based on comic book|based on graphic novel|based on manga"],
+    ["play", "Based on Plays", "based on play or musical|based on play|based on stage play"],
+    ["shakespeare", "Shakespeare", "shakespeare|william shakespeare|based on play by william shakespeare|shakespearean"],
+  ];
+
   let facts = null;
   function buildFacts() {
     if (!catalogue) return null;
@@ -4776,7 +5039,21 @@
     const short = (C.lists.get("type/short") || {}).set || null, tv = (C.lists.get("type/tv") || {}).set || null;
     // Letterboxd's themes (broad) and mini-themes (narrow, e.g. biopics, heists).
     const theme = multi("theme/"), mini = multi("mini-theme/");
-    facts = { cat: C, idx, genre, country, origin, lang, primary, short, tv, theme, mini, runtime: C.info ? (i) => (C.info[i] && C.info[i][1]) || 0 : null };
+    let tags = null;
+    if (C.kw && C.fkw) {
+      // each keyword -> the tags it counts toward, then each film's tags
+      const res = KW_TAGS.map(([, , pat]) => new RegExp(`^(?:${pat})$`, "i"));
+      const kwTags = C.kw.map((name) => { const out = []; res.forEach((re, t) => { if (re.test(name)) out.push(t); }); return out; });
+      const per = new Array(N);
+      C.fkw.forEach((ks, i) => {
+        if (!ks) return;
+        let set = null;
+        for (const k of ks) for (const t of kwTags[k] || []) (set || (set = new Set())).add(t);
+        if (set) per[i] = [...set];
+      });
+      tags = { keys: KW_TAGS.map(([id]) => id), names: KW_TAGS.map(([, label]) => label), per };
+    }
+    facts = { cat: C, idx, genre, country, origin, lang, primary, short, tv, theme, mini, tags, runtime: C.info ? (i) => (C.info[i] && C.info[i][1]) || 0 : null };
     return facts;
   }
 
@@ -4820,6 +5097,7 @@
           lang: i != null && F.lang.per[i] ? F.lang.per[i].map(String) : [],
           country: i != null && F.origin.per[i] ? F.origin.per[i].map(String) : [],
           pcountry: i != null && F.country.per[i] ? F.country.per[i].map(String) : [],
+          tag: i != null && F.tags && F.tags.per[i] ? F.tags.per[i].map(String) : [],
           theme: i != null && F.theme && F.theme.per[i] ? F.theme.per[i].map(String) : [],
           mini: i != null && F.mini && F.mini.per[i] ? F.mini.per[i].map(String) : [],
         };
@@ -4831,7 +5109,7 @@
       out.push({
         slug, name: S.name, year: S.year, i: S.i, key: S.key,
         path: [p.genre, p.cat, p.sub, p.niche].filter(Boolean),
-        v: { status, sgenre: [p.genre], scat: p.cat ? [p.cat] : [], ssub: [p.sub, p.niche].filter(Boolean), genre: S.genre, type: S.type, decade: S.decade, lang: S.lang, country: S.country, pcountry: S.pcountry, theme: S.theme, mini: S.mini },
+        v: { status, sgenre: [p.genre], scat: p.cat ? [p.cat] : [], ssub: [p.sub, p.niche].filter(Boolean), genre: S.genre, type: S.type, decade: S.decade, lang: S.lang, country: S.country, pcountry: S.pcountry, tag: S.tag, theme: S.theme, mini: S.mini },
       });
     }
     lv.base = out; lv.baseLib = lib; lv.baseLay = wall.lay; lv.baseKey = key;
@@ -4855,6 +5133,8 @@
     // Search also matches the tag's keywords (its slug), plus a few common words.
     const THEME_WORDS = { "biography-artists-musician-songs-emotional": "biopic biographical" };
     const tagVals = (T) => T.keys.map((k, n) => [String(n), T.names[n], `${k.replace(/-/g, " ")} ${THEME_WORDS[k] || ""}`.toLowerCase()]);
+    if (F && F.tags) gs.push({ id: "tag", label: "Tags", vals: F.tags.keys.map((k, n) => [String(n), F.tags.names[n], KW_TAGS[n][2].replace(/\\/g, "").replace(/\|/g, " ").toLowerCase()]), many: true, find: "tag (try LGBTQ, heist, musical…)" });
+    else gs.push({ id: "tag", label: "Tags", vals: [], note: "Tags need TMDB keywords (Catalogue builder › Read TMDB keywords)" });
     if (F && F.theme && F.theme.keys.length) gs.push({ id: "theme", label: "Theme", vals: tagVals(F.theme), many: true, find: "theme" });
     if (F && F.mini && F.mini.keys.length) gs.push({ id: "mini", label: "Mini-theme", vals: tagVals(F.mini), many: true, find: "mini-theme (try biopic, heist, zombies…)" });
     gs.push({ id: "type", label: "Type", vals: LV_TYPES, note: F && (F.short || F.runtime) ? "" : "Feature and Short need film details (Catalogue builder › Film details)" });
@@ -6604,6 +6884,7 @@
       catJob.st.phase = catJob.st.info && catJob.st.info.some(Boolean) ? "details" : "lids";
       return runCatJob();
     }
+    if (act === "cat-keywords") { if (!catJob.st) return; catJob.st.phase = "keywords"; return runCatJob(); }
     if (act === "cat-try") {
       // Stock the store from the finished job, in this tab only (nothing published).
       useCatalogue(JSON.parse(JSON.stringify(catalogueJSON())));
