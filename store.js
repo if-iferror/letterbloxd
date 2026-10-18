@@ -5101,7 +5101,15 @@
     ["science", "Scientists", "scientist|science|physicist|mathematician|mathematics|genius|inventor|invention"],
     // exploitation & cult subgenres
     ["blaxploitation", "Blaxploitation", "blaxploitation.*"],
-    ["christploitation", "Christploitation", "christian film|christian faith|evangelical christianity|faith-based|faith based|christian movie|christian drama|christian music|christian allegory", ["pureflix", "affirm", "kendrick", "angel", "kingdomstory"]],
+    // Christploitation: Christian imagery in camp/exploitation (Jesus Christ
+    // Vampire Hunter, Killer Nun), and the rapture scare films. Needs a
+    // religious keyword or title word AND an exploitation keyword.
+    ["christploitation", "Christploitation", "jesus christ|jesus|christ figure|crucifixion|messiah|second coming|antichrist|apostle|blasphemy|nun|nuns|evil nun|convent \\(nunnery\\)|evangelical christianity|televangelist|christianity", {
+      title: "\\b(?:jesus|christ|messiah|apostles?|nuns?|rapture)\\b",
+      and: "exploitation|b movie|psychotronic|psychotronic film|grindhouse|splatter|video nasty|nunsploitation|sexploitation|shot on video|trash|so bad it's good",
+      direct: "christploitation|christsploitation|rapture|the rapture|end times|left behind|tribulation",
+    }],
+    ["faithbased", "Faith-Based", "christian film|faith-based|faith based|christian movie|faith film|faith-based film", { studios: ["pureflix", "affirm", "kendrick", "angel", "kingdomstory"], from: 1970 }],
     ["hagsploitation", "Hagsploitation", "hagsploitation|psycho-biddy|grande dame guignol"],
     ["nunsploitation", "Nunsploitation", "nunsploitation"],
     ["nazisploitation", "Nazisploitation", "nazisploitation.*|naziploitation|nazi exploitation"],
@@ -5391,21 +5399,40 @@
     }
     let tags = null;
     if (C.kw && C.fkw) {
-      // each keyword -> the tags it counts toward, then each film's tags
-      const res = KW_TAGS.map(([, , pat]) => new RegExp(`^(?:${pat})$`, "i"));
-      const kwTags = C.kw.map((name) => { const out = []; res.forEach((re, t) => { if (re.test(name)) out.push(t); }); return out; });
+      // Most tags: any keyword matching the pattern. A tag with an "and"
+      // needs one keyword (or title word) from its pattern AND one from its
+      // "and"; "direct" keywords and "studios" count on their own.
+      const re = (p) => new RegExp(`^(?:${p})$`, "i");
+      const plain = [], both = [];
+      KW_TAGS.forEach(([, , pat, o], t) => {
+        o = o || {};
+        if (o.and) both.push({ t, a: re(pat), b: re(o.and), title: o.title ? new RegExp(o.title, "i") : null });
+        const d = o.and ? o.direct : o.direct ? `${pat}|${o.direct}` : pat;
+        if (d) plain.push([t, re(d)]);
+      });
+      const kwTags = C.kw.map((name) => plain.filter(([, r]) => r.test(name)).map(([t]) => t));
+      const kwA = both.map((x) => C.kw.map((name) => x.a.test(name)));
+      const kwB = both.map((x) => C.kw.map((name) => x.b.test(name)));
       const per = new Array(N);
+      const put = (i, t) => { const p = per[i] || (per[i] = []); if (!p.includes(t)) p.push(t); };
       C.fkw.forEach((ks, i) => {
         if (!ks) return;
-        let set = null;
-        for (const k of ks) for (const t of kwTags[k] || []) (set || (set = new Set())).add(t);
-        if (set) per[i] = [...set];
+        for (const k of ks) for (const t of kwTags[k] || []) put(i, t);
+        both.forEach((x, n) => {
+          if (!ks.some((k) => kwB[n][k])) return;
+          if (ks.some((k) => kwA[n][k]) || (x.title && x.title.test(titleOf(C.films[i][1])))) put(i, x.t);
+        });
       });
-      // tags that also count a studio's films (Christploitation: Pure Flix…)
-      if (studio) KW_TAGS.forEach(([, , , sids], t) => {
-        if (!sids) return;
-        const want = new Set(sids.map((id) => STUDIOS.findIndex(([x]) => x === id)).filter((n) => n >= 0));
-        studio.per.forEach((ss, i) => { if (ss && ss.some((x) => want.has(x)) && !(per[i] || []).includes(t)) (per[i] || (per[i] = [])).push(t); });
+      // tags that also count a studio's films (Faith-Based: Pure Flix…)
+      if (studio) KW_TAGS.forEach(([, , , o], t) => {
+        if (!o || !o.studios) return;
+        const want = new Set(o.studios.map((id) => STUDIOS.findIndex(([x]) => x === id)).filter((n) => n >= 0));
+        studio.per.forEach((ss, i) => { if (ss && ss.some((x) => want.has(x))) put(i, t); });
+      });
+      // tags limited to a period (Faith-Based: the modern industry, not 1950s epics)
+      KW_TAGS.forEach(([, , , o], t) => {
+        if (!o || !o.from) return;
+        per.forEach((ts, i) => { if (ts && ts.includes(t) && yearOf(C.films[i][1]) < o.from) per[i] = ts.filter((x) => x !== t); });
       });
       tags = { keys: KW_TAGS.map(([id]) => id), names: KW_TAGS.map(([, label]) => label), per };
     }
