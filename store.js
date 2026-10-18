@@ -4626,11 +4626,11 @@
       `<button type="button" class="lbs-lib-up" data-act="lib-up" aria-label="Up a level" title="Up a level"${path.length ? "" : " disabled"}>${ICON_LEFT}</button>` + libModeHTML() +
       `<div class="lbs-lib-crumbs"><button type="button" data-act="lib-root">Library</button>${path.map((id, i) => `<i>›</i><button type="button" data-act="lib-to" data-i="${i}" data-drop="${esc(id)}" class="lbs-crumb">${esc(nameOf(id))}</button>`).join("")}</div>` +
       `<button type="button" class="lbs-lib-x" data-act="lib" aria-label="Close the Library">${ICON_CLOSE}</button></div>` +
-      (pick ? `<div class="lbs-lib-pick">Moving <b>${pick.films.length === 1 ? esc(titleOf(pick.films[0][1])) : `${fmt(pick.films.length)} films`}</b>: open the folder they belong in${edit.on ? ", or make one" : ", or make a new one"}.</div>` : "") +
+      (pick ? `<div class="lbs-lib-pick">Moving <b>${pick.films.length === 1 ? esc(titleOf(pick.films[0][1])) : `${fmt(pick.films.length)} films`}</b>: open the folder ${pick.films.length === 1 ? "it belongs" : "they belong"} in${edit.on ? ", or make one" : ", or make a new one"}.</div>` : "") +
       `<div class="lbs-lib-cols">${column(left, "left")}${path.length ? column(right, "right") : `<div class="lbs-lib-col -right"><p class="lbs-lib-hint">Pick a genre</p></div>`}</div>` +
       `<div class="lbs-lib-foot">` +
       (pick
-        ? `<div class="lbs-lib-acts"><button type="button" class="-go" data-act="lib-pick-go"${pickTo ? "" : " disabled"}>${pickTo ? `Move ${pick.films.length === 1 ? "it" : `all ${fmt(pick.films.length)}`} to ${esc(pathOf(pickTo).slice(-2).join(" › "))}` : "Open a folder to move them into"}</button>` +
+        ? `<div class="lbs-lib-acts"><button type="button" class="-go" data-act="lib-pick-go"${pickTo ? "" : " disabled"}>${pickTo ? `Move ${pick.films.length === 1 ? "it" : `all ${fmt(pick.films.length)}`} to ${esc(pathOf(pickTo).slice(-2).join(" › "))}` : `Open a folder to move ${pick.films.length === 1 ? "it" : "them"} into`}</button>` +
           `<button type="button" data-act="lib-pick-cancel">Cancel</button></div>`
         : sel
         ? `<div class="lbs-lib-sel"><img data-poster="${esc(sel[0])}" alt=""><div><b>${esc(titleOf(sel[1]))}</b> <span>${yearOf(sel[1]) || ""}</span><small>${selAt ? `In ${esc(pathOf(selAt).slice(1).join(" › "))}` : "Not in the store yet"}</small></div>` +
@@ -4736,11 +4736,18 @@
     let exact = 0;
     for (let i = 0; i < N; i++) {
       const row = C.info && C.info[i];
-      if (row && Array.isArray(row[6]) && row[6].length) { origin.per[i] = row[6].map(isoSlug); exact++; continue; }
-      const prod = country.per[i];
-      if (!prod || prod.length <= 1) { origin.per[i] = prod; continue; }
       const lang = row && (row[2] || row[3]);
       const pref = lang && LANG_HOME[lang];
+      if (row && Array.isArray(row[6]) && row[6].length) {
+        // TMDB often lists a financier's country too (Regretting You: DE + US).
+        // When some of the listed countries speak the film's main language,
+        // keep just those.
+        let t = row[6].map(isoSlug);
+        if (t.length > 1 && pref) { const home = new Set(pref.map((sl) => at.get(sl)).filter((n) => n != null)); const k = t.filter((n) => home.has(n)); if (k.length) t = k; }
+        origin.per[i] = t; exact++; continue;
+      }
+      const prod = country.per[i];
+      if (!prod || prod.length <= 1) { origin.per[i] = prod; continue; }
       const pick = pref && pref.map((sl) => at.get(sl)).find((n) => n != null && prod.includes(n));
       origin.per[i] = pick != null ? [pick] : prod;
     }
@@ -5136,7 +5143,15 @@
   }
 
   // Old name, same tool now: "Sort" opens the Library on the film.
-  const openSort = (slug, name) => openLibraryAt(slug, name);
+  // Right-click → Sort: the same folder picker as Move to…, starting at the
+  // film's current folder (or the store's top level if it's uncategorized).
+  const openSort = (slug, name) => {
+    const at = lib.place.get(slug);
+    const p = at ? partsOf(at) : {};
+    libUI.path = at && p.genre !== UNCAT ? [p.genre, p.cat, p.sub, p.niche].filter(Boolean) : [];
+    const many = lv.sel.size > 1 && lv.sel.has(slug);
+    openMovePick(many ? lvFilms() : [[slug, name || lib.names.get(slug) || slug]]);
+  };
   const renderSortPanel = () => renderLibrary();
 
   /* Franchises: films that belong together on the shelf, in a set order.
