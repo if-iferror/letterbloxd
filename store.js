@@ -4774,7 +4774,9 @@
     } else lang = multi("language/");
     // Letterboxd's own Short and TV marks (its "show only shorts / TV" filters)
     const short = (C.lists.get("type/short") || {}).set || null, tv = (C.lists.get("type/tv") || {}).set || null;
-    facts = { cat: C, idx, genre, country, origin, lang, primary, short, tv, runtime: C.info ? (i) => (C.info[i] && C.info[i][1]) || 0 : null };
+    // Letterboxd's themes (broad) and mini-themes (narrow, e.g. biopics, heists).
+    const theme = multi("theme/"), mini = multi("mini-theme/");
+    facts = { cat: C, idx, genre, country, origin, lang, primary, short, tv, theme, mini, runtime: C.info ? (i) => (C.info[i] && C.info[i][1]) || 0 : null };
     return facts;
   }
 
@@ -4818,6 +4820,8 @@
           lang: i != null && F.lang.per[i] ? F.lang.per[i].map(String) : [],
           country: i != null && F.origin.per[i] ? F.origin.per[i].map(String) : [],
           pcountry: i != null && F.country.per[i] ? F.country.per[i].map(String) : [],
+          theme: i != null && F.theme && F.theme.per[i] ? F.theme.per[i].map(String) : [],
+          mini: i != null && F.mini && F.mini.per[i] ? F.mini.per[i].map(String) : [],
         };
         stat.set(slug, S);
       }
@@ -4827,7 +4831,7 @@
       out.push({
         slug, name: S.name, year: S.year, i: S.i, key: S.key,
         path: [p.genre, p.cat, p.sub, p.niche].filter(Boolean),
-        v: { status, sgenre: [p.genre], scat: p.cat ? [p.cat] : [], ssub: [p.sub, p.niche].filter(Boolean), genre: S.genre, type: S.type, decade: S.decade, lang: S.lang, country: S.country, pcountry: S.pcountry },
+        v: { status, sgenre: [p.genre], scat: p.cat ? [p.cat] : [], ssub: [p.sub, p.niche].filter(Boolean), genre: S.genre, type: S.type, decade: S.decade, lang: S.lang, country: S.country, pcountry: S.pcountry, theme: S.theme, mini: S.mini },
       });
     }
     lv.base = out; lv.baseLib = lib; lv.baseLay = wall.lay; lv.baseKey = key;
@@ -4848,6 +4852,11 @@
     const sc = inc("scat").filter((c) => lib.cats.has(c));
     if (sc.length) gs.push({ id: "ssub", label: "Store subcat", vals: sc.flatMap((c) => lib.cats.get(c).subs.flatMap((s2) => [[s2, sc.length > 1 ? `${nameOf(c)} › ${nameOf(s2)}` : nameOf(s2)], ...(lib.subs.get(s2).niches || []).map((n) => [n, `↳ ${nameOf(n)}`])])) });
     gs.push({ id: "genre", label: "Genre", vals: GENRES.map(([g, n]) => [g, n]) });
+    // Search also matches the tag's keywords (its slug), plus a few common words.
+    const THEME_WORDS = { "biography-artists-musician-songs-emotional": "biopic biographical" };
+    const tagVals = (T) => T.keys.map((k, n) => [String(n), T.names[n], `${k.replace(/-/g, " ")} ${THEME_WORDS[k] || ""}`.toLowerCase()]);
+    if (F && F.theme && F.theme.keys.length) gs.push({ id: "theme", label: "Theme", vals: tagVals(F.theme), many: true, find: "theme" });
+    if (F && F.mini && F.mini.keys.length) gs.push({ id: "mini", label: "Mini-theme", vals: tagVals(F.mini), many: true, find: "mini-theme (try biopic, heist, zombies…)" });
     gs.push({ id: "type", label: "Type", vals: LV_TYPES, note: F && (F.short || F.runtime) ? "" : "Feature and Short need film details (Catalogue builder › Film details)" });
     const decs = [];
     for (let d = 1890; d <= 2020; d += 10) decs.push([`${d}s`, `${d}s`]);
@@ -4922,7 +4931,7 @@
       let vals = g.vals.slice();
       if (g.many) vals.sort((a, b) => (c.get(b[0]) || 0) - (c.get(a[0]) || 0));
       const ql = (lv.more[g.id + ":q"] || "").toLowerCase();
-      if (ql) vals = vals.filter(([, n]) => n.toLowerCase().includes(ql));
+      if (ql) vals = vals.filter(([, n, kw]) => n.toLowerCase().includes(ql) || (kw && kw.includes(ql)));
       const shown = g.many && !lv.more[g.id] ? vals.filter(([v], n) => n < 16 || st[v]) : vals;
       const chip = ([v, label]) => {
         const s = st[v] || 0, n = c.get(v) || 0;
@@ -4931,7 +4940,7 @@
       const on = Object.keys(st).length;
       return `<div class="lbs-lv-group"><h6>${esc(g.label)}${on ? `<button type="button" data-act="lv-clear-g" data-g="${g.id}">clear</button>` : ""}</h6>` +
         (g.note ? `<p class="lbs-lv-note">${esc(g.note)}</p>` : "") +
-        (g.many ? `<input type="search" class="lbs-lv-gq" data-g="${g.id}" placeholder="Find a ${g.id === "lang" ? "language" : "country"}" value="${esc(lv.more[g.id + ":q"] || "")}">` : "") +
+        (g.many ? `<input type="search" class="lbs-lv-gq" data-g="${g.id}" placeholder="Find a ${g.find || (g.id === "lang" ? "language" : "country")}" value="${esc(lv.more[g.id + ":q"] || "")}">` : "") +
         `<div class="lbs-chips">${shown.map(chip).join("")}` +
         (g.many && vals.length > shown.length ? `<button type="button" class="lbs-chip -more" data-act="lv-more" data-g="${g.id}">${fmt(vals.length - shown.length)} more…</button>` : "") +
         (g.many && lv.more[g.id] ? `<button type="button" class="lbs-chip -more" data-act="lv-more" data-g="${g.id}">fewer</button>` : "") +
