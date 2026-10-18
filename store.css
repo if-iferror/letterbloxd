@@ -4721,3 +4721,20 @@ html.lbs-open {
   background: #6b2420;
   color: #fff;
 }
+/* Long Library columns draw only the rows in view */
+.lbs-lib-vwrap {
+  position: relative;
+  padding: 0;
+  list-style: none;
+}
+/* Move to…: the Library's columns in destination mode */
+.lbs-lib-pick {
+  padding: 8px 14px;
+  border-bottom: 1px solid #2c3440;
+  background: #13303f;
+  color: #cfeaf7;
+  font-size: 12.5px;
+}
+.lbs-lib-pick b {
+  color: #fff;
+}

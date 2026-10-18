@@ -4500,6 +4500,7 @@
    * the Library on that film. */
   // sel: the selected film (what Move here moves). focus: whatever you clicked
   // last, a film or a folder: that's where Jump to section takes you.
+  const LIB_VMAX = 150, LIB_VROW = 42; // past this many, a column draws only the rows in view
   const libUI = { open: !!mine.libOpen, path: [STOCKED], sel: null, focus: null, adding: null };
   function kidsOf(id) {
     if (!id) return { folders: [...lib.genres.keys()], films: [] };
@@ -4531,7 +4532,14 @@
     libUI.sel = [slug, name || lib.names.get(slug) || slug];
     libUI.focus = { film: libUI.sel };
     setLibrary(true);
-    requestAnimationFrame(() => root.querySelector(`.lbs-library [data-film="${CSS.escape(slug)}"]`)?.scrollIntoView({ block: "center" }));
+    requestAnimationFrame(() => {
+      const el = root.querySelector(`.lbs-library [data-film="${CSS.escape(slug)}"]`);
+      if (el) return el.scrollIntoView({ block: "center" });
+      // a long column: scroll to where the film's row will be drawn
+      const wrap = root.querySelector('.lbs-library .lbs-lib-vwrap[data-side="right"]');
+      const items = libUI.vcols.right, n = items && items.slugs ? items.slugs.indexOf(slug) : -1;
+      if (wrap && n >= 0) { const ul = wrap.closest("ul"); ul.scrollTop = wrap.offsetTop + n * LIB_VROW - ul.clientHeight / 2; }
+    });
   }
   function renderLibrary() {
     const box = root && $(".lbs-library", root);
@@ -4568,16 +4576,28 @@
       return `<li class="lbs-lib-row lbs-folder -fr${path.includes(fidp) ? " -on" : ""}" data-act="lib-open" data-side="${side}" data-id="${esc(fidp)}">` +
         `${ICON_FOLDER}<span>${esc(fr.name)}</span><em class="-frtag">Franchise</em><small>${fmt(fr.films.length)}</small><b>›</b></li>`;
     };
+    // Films (and franchise folders) in a column. A long list is drawn only
+    // where you're looking (Uncategorized holds tens of thousands).
+    libUI.vcols = {};
     const filmItems = (id, films, side) => {
-      if (String(id).startsWith("fr:")) return films.map(filmRow).join("");
-      const seen = new Set();
-      return films.map((f) => {
-        const fid = lib.frOf.get(f[0]);
-        if (!fid) return filmRow(f);
-        if (seen.has(fid)) return "";
-        seen.add(fid);
-        return frRow(fid, side);
-      }).join("");
+      let items, slugs;
+      if (String(id).startsWith("fr:")) { items = films.map((f) => () => filmRow(f)); slugs = films.map((f) => f[0]); }
+      else {
+        const seen = new Set();
+        items = []; slugs = [];
+        for (const f of films) {
+          const fid = lib.frOf.get(f[0]);
+          if (!fid) { items.push(() => filmRow(f)); slugs.push(f[0]); continue; }
+          if (seen.has(fid)) continue;
+          seen.add(fid);
+          items.push(() => frRow(fid, side)); slugs.push(f[0]);
+        }
+      }
+      if (libUI.picking) return ""; // choosing a destination: folders only
+      if (items.length <= LIB_VMAX) return items.map((x) => x()).join("");
+      libUI.vcols[side] = items;
+      items.slugs = slugs;
+      return `<li class="lbs-lib-vwrap" data-side="${side}" style="height:${items.length * LIB_VROW}px"></li>`;
     };
     const column = (id, side) => {
       const k = kidsOf(id);
@@ -4599,14 +4619,20 @@
     const jumpLabel = focus ? (focus.film ? titleOf(focus.film[1]) : nameOf(focus.folder)) : "";
     const jumpBtn = `<button type="button" data-act="lib-jump"${jumpOk ? "" : " disabled"} title="${jumpOk ? `Fly to ${esc(jumpLabel)} on the wall` : ""}">Jump to section</button>`;
     const canMove = sel && target && target !== selAt;
+    const pick = libUI.picking;
+    const pickTo = pick && right && !String(right).startsWith("fr:") ? landingSub(right) : null;
     box.innerHTML =
       `<div class="lbs-lib-head">` +
       `<button type="button" class="lbs-lib-up" data-act="lib-up" aria-label="Up a level" title="Up a level"${path.length ? "" : " disabled"}>${ICON_LEFT}</button>` + libModeHTML() +
       `<div class="lbs-lib-crumbs"><button type="button" data-act="lib-root">Library</button>${path.map((id, i) => `<i>›</i><button type="button" data-act="lib-to" data-i="${i}" data-drop="${esc(id)}" class="lbs-crumb">${esc(nameOf(id))}</button>`).join("")}</div>` +
       `<button type="button" class="lbs-lib-x" data-act="lib" aria-label="Close the Library">${ICON_CLOSE}</button></div>` +
+      (pick ? `<div class="lbs-lib-pick">Moving <b>${pick.films.length === 1 ? esc(titleOf(pick.films[0][1])) : `${fmt(pick.films.length)} films`}</b>: open the folder they belong in${edit.on ? ", or make one" : ", or make a new one"}.</div>` : "") +
       `<div class="lbs-lib-cols">${column(left, "left")}${path.length ? column(right, "right") : `<div class="lbs-lib-col -right"><p class="lbs-lib-hint">Pick a genre</p></div>`}</div>` +
       `<div class="lbs-lib-foot">` +
-      (sel
+      (pick
+        ? `<div class="lbs-lib-acts"><button type="button" class="-go" data-act="lib-pick-go"${pickTo ? "" : " disabled"}>${pickTo ? `Move ${pick.films.length === 1 ? "it" : `all ${fmt(pick.films.length)}`} to ${esc(pathOf(pickTo).slice(-2).join(" › "))}` : "Open a folder to move them into"}</button>` +
+          `<button type="button" data-act="lib-pick-cancel">Cancel</button></div>`
+        : sel
         ? `<div class="lbs-lib-sel"><img data-poster="${esc(sel[0])}" alt=""><div><b>${esc(titleOf(sel[1]))}</b> <span>${yearOf(sel[1]) || ""}</span><small>${selAt ? `In ${esc(pathOf(selAt).slice(1).join(" › "))}` : "Not in the store yet"}</small></div>` +
           `<button type="button" class="lbs-lib-x -small" data-act="lib-unsel" aria-label="Deselect">${ICON_CLOSE}</button></div>` +
           `<div class="lbs-lib-acts">` +
@@ -4631,6 +4657,22 @@
       }
     }, { root: null, rootMargin: "200px" }) : null;
     box.querySelectorAll("img[data-lp]").forEach((im) => libIo && libIo.observe(im));
+    // long columns: draw the rows in view, and again as you scroll
+    box.querySelectorAll(".lbs-lib-vwrap").forEach((wrap) => {
+      const ul = wrap.closest("ul");
+      const paint = () => {
+        const items = libUI.vcols[wrap.dataset.side] || [];
+        const top = ul.scrollTop - wrap.offsetTop;
+        const a = Math.max(0, Math.floor(top / LIB_VROW) - 10), b = Math.min(items.length, Math.ceil((top + ul.clientHeight) / LIB_VROW) + 10);
+        let html = "";
+        for (let n = a; n < b; n++) html += items[n]().replace(/^<li /, `<li style="position:absolute;left:0;right:0;top:${n * LIB_VROW}px;height:${LIB_VROW}px;box-sizing:border-box" `);
+        wrap.innerHTML = html;
+        wrap.querySelectorAll("img[data-lp]").forEach((im) => libIo && libIo.observe(im));
+      };
+      paint();
+      let raf = 0;
+      ul.addEventListener("scroll", () => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; paint(); }); });
+    });
     const inp = $(".lbs-lib-new-name", box);
     if (inp) inp.focus();
   }
@@ -5078,35 +5120,20 @@
   }
 
   // Move to…: every folder in the store, filterable, one click to file the selection there.
+  // Move to…: the Library's own folder columns, in "pick a destination"
+  // mode (make or delete folders right there), then Move here.
   function openMovePick(films) {
-    closeMovePick();
     if (!films.length) return;
-    const box = h("div", "lbs-mvpick",
-      `<div class="lbs-mvpick-top"><b>Move ${films.length === 1 ? `‘${esc(titleOf(films[0][1]))}’` : `${fmt(films.length)} films`} to…</b><button type="button" class="lbs-lib-x -small" data-act="mv-close" aria-label="Close">${ICON_CLOSE}</button></div>` +
-      `<input type="search" class="lbs-mvpick-q" placeholder="Find a folder" autocomplete="off" spellcheck="false"><ul class="lbs-mvpick-list"></ul>` +
-      (edit.on ? "" : `<p class="lbs-lv-note">Not in dev mode: this moves them on your own shelves.</p>`));
-    box._films = films;
-    $(".lbs-library", root).append(box);
-    const all = [];
-    for (const g of lib.genres.values()) {
-      all.push([g.id, 0]);
-      if (g.id === UNCAT) continue;
-      for (const c of g.cats) { all.push([c, 1]); for (const sId of lib.cats.get(c).subs) { all.push([sId, 2]); for (const n of lib.subs.get(sId).niches || []) all.push([n, 3]); } }
-    }
-    box._all = all;
-    const paint = () => {
-      const q = box.querySelector(".lbs-mvpick-q").value.trim().toLowerCase();
-      const rec = (mine.recent || []).filter((x) => lib.subs.has(x));
-      const items = q ? all.filter(([id]) => pathOf(id).join(" › ").toLowerCase().includes(q)).map(([id]) => [id, 0, true]) : all;
-      box.querySelector(".lbs-mvpick-list").innerHTML =
-        (!q && rec.length ? `<li class="lbs-mvpick-h">Recent</li>` + rec.map((id) => `<li data-act="mv-to" data-id="${esc(id)}" class="-d0">${esc(pathOf(id).join(" › "))}</li>`).join("") + `<li class="lbs-mvpick-h">All folders</li>` : "") +
-        items.slice(0, 400).map(([id, d, full]) => `<li data-act="mv-to" data-id="${esc(id)}" class="-d${d}">${esc(full ? pathOf(id).join(" › ") : nameOf(id))}<small>${fmt(lib.count.get(id) || 0)}</small></li>`).join("");
-    };
-    box.querySelector(".lbs-mvpick-q").addEventListener("input", (e) => { e.stopPropagation(); paint(); });
-    paint();
-    box.querySelector(".lbs-mvpick-q").focus();
+    libUI.picking = { films, back: libUI.picking ? libUI.picking.back : lv.mode };
+    lv.mode = "folders";
+    libUI.adding = null;
+    setLibrary(true);
   }
-  function closeMovePick() { root && root.querySelectorAll(".lbs-mvpick").forEach((x) => x.remove()); }
+  function closeMovePick() {
+    if (!libUI.picking) return;
+    lv.mode = libUI.picking.back;
+    libUI.picking = null;
+  }
 
   // Old name, same tool now: "Sort" opens the Library on the film.
   const openSort = (slug, name) => openLibraryAt(slug, name);
@@ -6394,7 +6421,16 @@
         return renderLibrary();
       }
       if (act === "lib-unsel") { libUI.sel = null; lv.sel = new Set(); return renderLibrary(); }
-      if (act === "lib-mode") { lv.mode = btn.dataset.v; closeMovePick(); saveLv(); return renderLibrary(); }
+      if (act === "lib-mode") { libUI.picking = null; lv.mode = btn.dataset.v; saveLv(); return renderLibrary(); }
+      if (act === "lib-pick-cancel") { closeMovePick(); return renderLibrary(); }
+      if (act === "lib-pick-go") {
+        const right = libUI.path[libUI.path.length - 1], pk = libUI.picking;
+        if (!pk || !right) return;
+        closeMovePick();
+        lv.selecting = false; lvSetSel(new Set());
+        moveFilms(pk.films, right);
+        return renderLibrary();
+      }
       if (act === "lv-selmode") { lv.selecting = !lv.selecting; if (!lv.selecting) lvSetSel(libUI.sel ? new Set([libUI.sel[0]]) : new Set()); return lvRefreshSel(); }
       if (act === "lv-all") { lvSetSel(new Set([...lv.sel, ...lv.rows.flatMap(rowSlugs)])); return lvRefreshSel(); }
       if (act === "lv-none") { const s2 = new Set(lv.sel); for (const r of lv.rows) for (const x of rowSlugs(r)) s2.delete(x); lvSetSel(s2); return lvRefreshSel(); }
@@ -6424,14 +6460,6 @@
         return toast(`${fmt(films.length)} film${films.length === 1 ? "" : "s"} in your inventory.`);
       }
       if (act === "lv-uncat") { const films = lvFilms(); lv.selecting = false; lvSetSel(new Set()); return moveFilms(films, UNCAT); }
-      if (act === "mv-close") return closeMovePick();
-      if (act === "mv-to") {
-        const pk = btn.closest(".lbs-mvpick"), films = pk && pk._films;
-        closeMovePick();
-        if (!films) return;
-        lv.selecting = false; lvSetSel(new Set());
-        return moveFilms(films, id);
-      }
       if (act === "lib-new") { const col = btn.closest(".lbs-lib-col"); libUI.adding = col && col.classList.contains("-left") && libUI.path.length < 2 ? "@root" : libUI.path[libUI.path.length - 1] || "@root"; return renderLibrary(); }
       if (act === "lib-del") {
         e.stopPropagation();
