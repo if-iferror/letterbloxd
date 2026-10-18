@@ -273,7 +273,10 @@
   // Never save before the saved copy has been read back (that would write an
   // empty shelf over it).
   let mineReady = false;
-  const saveMine = () => { paintVer++; return mineReady ? persist(MINE_KEY, mine) : true; };
+  // A tab opened as #store-builder only runs the builders: it never saves
+  // your shelves, so your sorting in another tab can't be overwritten.
+  const BUILD_TAB = /^#store-builder\b/.test(location.hash);
+  const saveMine = () => { paintVer++; return mineReady && !BUILD_TAB ? persist(MINE_KEY, mine) : true; };
 
   /* Your shelves and the house plan are saved to IndexedDB as well as
    * localStorage. localStorage holds about 5 MB, and a few thousand moves
@@ -281,6 +284,7 @@
    * The newer copy wins when the store opens. */
   const bigTimers = {};
   function persist(key, obj) {
+    if (BUILD_TAB && (key === MINE_KEY || key === HOUSE_KEY)) return true; // builder tab: read-only shelves
     if (obj) obj._at = Date.now();
     let ok = true;
     if (!obj) { try { localStorage.removeItem(key); } catch {} }
@@ -840,6 +844,7 @@
 
   function openStore() {
     if (!document.body) return;
+    if (BUILD_TAB && !openStore.built) { openStore.built = true; setTimeout(() => { if (root && $(".lbs-catbuild", root) && $(".lbs-catbuild", root).hidden) openCatBuild(); }, 1500); }
     if (!root) {
       root = h("div", "lbs-root");
       root.setAttribute("role", "dialog");
@@ -2819,6 +2824,61 @@
         st.phase = "done";
         await catSave();
       }
+      // 8 (on request). The films the Logo builder never matched: find each
+      //    on TMDB (title + year; Letterboxd settles close calls), then read
+      //    its country of origin and keywords in the same request.
+      if (st.phase === "deep") {
+        const key = readJSON(TMDB_KEY, "");
+        if (!key) throw new Error("This step uses TMDB: paste your TMDB key in the Logo builder first.");
+        await logoReady; await loadSharedLogos();
+        st.tmdb = st.tmdb || {}; st.kw = st.kw || {}; st.kwNames = st.kwNames || {}; st.origin = st.origin || {};
+        const bearer = key.length > 40, lane = limiter(8), verify = limiter(3);
+        const api = async (path, params, tries = 0) => {
+          if (!catJob.running) throw new Error("paused");
+          const u = new URL(`https://api.themoviedb.org/3/${path}`);
+          for (const [k, v] of Object.entries(params || {})) u.searchParams.set(k, v);
+          if (!bearer) u.searchParams.set("api_key", key);
+          const r = await fetch(u, bearer ? { headers: { Authorization: `Bearer ${key}` } } : {});
+          catJob.reqs++;
+          if (r.status === 401) throw new Error("TMDB didn't accept your key (Logo builder › Forget key, then paste it again).");
+          if (r.status === 429 && tries < 6) { await new Promise((ok) => setTimeout(ok, 1500 * (tries + 1))); return api(path, params, tries + 1); }
+          return r.ok ? r.json() : null;
+        };
+        const norm = (x) => String(x || "").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/&/g, "and").replace(/[^a-z0-9]+/g, "");
+        const yr = (c) => +String(c.release_date || "").slice(0, 4) || 0;
+        const isOurs = async (id, slug) => {
+          try { const r = await fetch(`/tmdb/${id}/`, { method: "HEAD", credentials: "include" }); return r.ok && new URL(r.url).pathname.startsWith(`/film/${slug}/`); } catch { return false; }
+        };
+        const todo = [];
+        st.films.forEach(([slug], i) => { const e = logoEntry(slug); if (!(e && e[0]) && !(i in st.tmdb)) todo.push(i); });
+        let n = 0, found = Object.values(st.tmdb).filter(Boolean).length;
+        await Promise.all(todo.map((i) => lane(async () => {
+          const [slug, name] = st.films[i];
+          const t = titleOf(name), y = yearOf(name), nt = norm(t);
+          let res = ((await api("search/movie", { query: t, year: y || "", include_adult: "true" })) || {}).results || [];
+          const exact = res.filter((c) => (norm(c.title) === nt || norm(c.original_title) === nt) && (!y || Math.abs(yr(c) - y) <= 1));
+          let id = exact.length === 1 ? exact[0].id : 0;
+          if (!id) {
+            if (!res.length && y) res = ((await api("search/movie", { query: t, include_adult: "true" })) || {}).results || [];
+            const order = [...exact, ...res.filter((c) => !exact.includes(c))].slice(0, 3);
+            for (const c of order) if (await verify(() => isOurs(c.id, slug))) { id = c.id; break; }
+          }
+          if (id) {
+            const j = await api(`movie/${id}`, { append_to_response: "keywords" });
+            if (j) {
+              st.origin[i] = j.origin_country || [];
+              const ks = (j.keywords && j.keywords.keywords) || [];
+              for (const k of ks) st.kwNames[k.id] = k.name;
+              st.kw[i] = ks.map((k) => k.id);
+              found++;
+            }
+          }
+          st.tmdb[i] = id;
+          if (++n % 300 === 0) { catJob.msg = `Finding the rest on TMDB: ${fmt(n)} / ${fmt(todo.length)} · ${fmt(found)} found`; await catSave(); tick(); }
+        })));
+        st.phase = "done";
+        await catSave();
+      }
       // 7 (on request). TMDB keywords for every film TMDB knows, the raw
       //    material for the store's Tags filter (LGBTQ+, Heist, Musical…).
       if (st.phase === "keywords") {
@@ -2870,6 +2930,7 @@
     if (st.phase === "lists") return `Reading lists: ${fmt(done)} / ${fmt(lists.length)}`;
     if (st.phase === "types") return "Reading Letterboxd's Short and TV marks…";
     if (st.phase === "lids") return `Film details: matching IDs, page ${fmt(st.lidPage || 0)} / ${fmt(st.cutPage)}`;
+    if (st.phase === "deep") return `Finding the rest on TMDB: ${fmt(Object.keys(st.tmdb || {}).length)} looked up · ${fmt(Object.values(st.tmdb || {}).filter(Boolean).length)} found`;
     if (st.phase === "keywords") return `TMDB keywords: ${fmt(Object.keys(st.kw || {}).length)} films so far`;
     if (st.phase === "origin") return `Country of origin from TMDB: ${fmt(Object.keys(st.origin || {}).length)} films so far`;
     if (st.phase === "details") { const got = (st.info || []).filter((x) => x && x.length > 1).length; return `Film details: ${fmt(got)} / ${fmt((st.info || []).filter(Boolean).length)} read`; }
@@ -2890,7 +2951,8 @@
       (catJob.error ? `<p class="-err">${esc(catJob.error)}</p>` : "") +
       `<div class="lbs-logobuild-row">` +
       (catJob.running ? `<button type="button" data-act="cat-stop">Pause</button>` : st && st.phase === "done" && neededLists().every((k) => st.lists[k]) ? "" : `<button type="button" data-act="cat-start" class="-go">${st && (st.films.length || Object.keys(st.probes).length) ? "Continue" : "Start"}</button>`) +
-      (st && st.phase === "done" ? `<button type="button" data-act="cat-save" class="-go">Download catalogue</button><button type="button" data-act="cat-try">Try it here</button>` + (catJob.running ? "" : `<button type="button" data-act="cat-details" title="Runtime, primary language and directors for every film (about an hour)">${st.info ? "Re-read film details" : "Read film details"}</button><button type="button" data-act="cat-keywords" title="TMDB keywords for every film, for the Tags filter (about an hour; needs your TMDB key)">${st.kw ? "Finish TMDB keywords" : "Read TMDB keywords"}</button>`) : "") +
+      (st && st.phase === "done" ? `<button type="button" data-act="cat-save" class="-go">Download catalogue</button><button type="button" data-act="cat-try">Try it here</button>` + (catJob.running ? "" : `<button type="button" data-act="cat-details" title="Runtime, primary language and directors for every film (about an hour)">${st.info ? "Re-read film details" : "Read film details"}</button><button type="button" data-act="cat-keywords" title="TMDB keywords for every film, for the Tags filter (about an hour; needs your TMDB key)">${st.kw ? "Finish TMDB keywords" : "Read TMDB keywords"}</button><button type="button" data-act="cat-deep" title="Find the films the Logo builder never matched on TMDB, with their keywords and country (about two hours)">${st.tmdb ? "Finish finding the rest on TMDB" : "Find the rest on TMDB"}</button>`) : "") +
+      (!BUILD_TAB ? `<p class="lbs-menu-note">Long runs: <a href="/films/#store-builder" target="_blank" rel="noopener">open the builder in its own tab</a> and keep sorting here. That tab never saves your shelves.</p>` : `<p class="lbs-menu-note">Builder tab: your shelves are read-only here, so sort in your other tab.</p>`) +
       (!catJob.running && st ? `<button type="button" data-act="cat-reset">Start over</button>` : "") +
       `<button type="button" data-act="cat-close">Close</button></div>`;
   }
@@ -7079,6 +7141,7 @@
       catJob.st.phase = catJob.st.info && catJob.st.info.some(Boolean) ? "details" : "lids";
       return runCatJob();
     }
+    if (act === "cat-deep") { if (!catJob.st) return; catJob.st.phase = "deep"; return runCatJob(); }
     if (act === "cat-keywords") { if (!catJob.st) return; catJob.st.phase = "keywords"; return runCatJob(); }
     if (act === "cat-try") {
       // Stock the store from the finished job, in this tab only (nothing published).
