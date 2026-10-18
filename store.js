@@ -270,7 +270,10 @@
   let mine = readJSON(MINE_KEY, null) || {};
   mine = { place: {}, cats: {}, subs: {}, recent: [], view: "community", sort: {}, held: [], colors: {}, wash: {}, ...mine };
   let paintVer = 0; // bumps when anything that colours the far-away wall changes
-  const saveMine = () => { paintVer++; return persist(MINE_KEY, mine); };
+  // Never save before the saved copy has been read back (that would write an
+  // empty shelf over it).
+  let mineReady = false;
+  const saveMine = () => { paintVer++; return mineReady ? persist(MINE_KEY, mine) : true; };
 
   /* Your shelves and the house plan are saved to IndexedDB as well as
    * localStorage. localStorage holds about 5 MB, and a few thousand moves
@@ -289,7 +292,9 @@
   async function restoreBig(key, cur) {
     try {
       const saved = await idbGet(`ls:${key}`);
-      if (saved && (saved._at || 0) > ((cur && cur._at) || 0)) return saved;
+      // >= : when localStorage only holds the "it's in IndexedDB" marker, the
+      // two carry the same timestamp, and the IndexedDB copy is the real one.
+      if (saved && ((cur && cur._idb) || (saved._at || 0) >= ((cur && cur._at) || 0))) return saved;
     } catch {}
     return cur && cur._idb ? null : cur;
   }
@@ -344,6 +349,8 @@
   const bigReady = Promise.resolve().then(async () => {
     const m = await restoreBig(MINE_KEY, mine);
     if (m && m !== mine) mine = { place: {}, cats: {}, subs: {}, recent: [], view: "community", sort: {}, held: [], colors: {}, wash: {}, ...m };
+    // a marker with nothing behind it (IndexedDB unreadable): don't save over it
+    mineReady = !mine._idb;
     delete mine._idb;
     if (mine.lv) Object.assign(lv, { mode: mine.lv.mode || lv.mode, f: mine.lv.f || {}, y0: mine.lv.y0 || "", y1: mine.lv.y1 || "", sort: mine.lv.sort || "pop", showFilters: !mine.lv.hideFilters });
     houseLocal = await restoreBig(HOUSE_KEY, houseLocal);
