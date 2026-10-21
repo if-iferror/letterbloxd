@@ -4863,7 +4863,7 @@ html.lbs-open {
 .lbs-ghost svg { width: 14px; height: 14px; vertical-align: -2px; }
 
 /* Library: folders and list side by side */
-.lbs-root.lbs-lib-both { --lib-w: min(1180px, 82vw); }
+.lbs-root.lbs-lib-both { --lib-w: min(1080px, 66vw); }
 .lbs-library[data-mode="both"] { flex-direction: row; }
 .lbs-lib-pane {
   display: flex;
@@ -4876,3 +4876,6 @@ html.lbs-open {
 .lbs-lib-pane.-l .lbs-lib-head .lbs-lib-mode,
 .lbs-lib-pane.-l .lbs-lib-head .lbs-lib-x { display: none; }
 .lbs-lib-pane .lbs-lib-cols { flex: 1; min-height: 0; }
+
+/* The film preview beside a wide Library: stack the box over the details */
+.lbs-lib-both .lbs-filmview .lbs-fwrap { flex-direction: column; align-items: center; gap: 18px; width: 94%; max-height: 100%; overflow: auto; padding: 16px 0; box-sizing: border-box; }

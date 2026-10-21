@@ -5989,6 +5989,8 @@
     } else {
       lvSetSel(new Set(xs));
       lv.anchor = n;
+      // a plain click on a film previews it on the left (as Details would)
+      if (!r.fr) openFilm(r.slug, r.name);
     }
     lv.cursor = n;
     lvRefreshSel();
@@ -7609,6 +7611,8 @@
         if (wall.dragged) return;
         libUI.sel = libUI.sel && libUI.sel[0] === fs ? null : [fs, fn];
         libUI.focus = libUI.sel ? { film: libUI.sel } : null;
+        // one click previews the film on the left (as Details would)
+        if (libUI.sel) openFilm(fs, fn); else closeFilm();
         return renderLibrary();
       }
       if (act === "lib-unsel") { libUI.sel = null; lv.sel = new Set(); return renderLibrary(); }
