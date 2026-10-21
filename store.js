@@ -399,7 +399,28 @@
     if (mine.lv) Object.assign(lv, { mode: mine.lv.mode || lv.mode, f: mine.lv.f || {}, all: mine.lv.all || {}, y0: mine.lv.y0 || "", y1: mine.lv.y1 || "", sort: mine.lv.sort || "pop", showFilters: !mine.lv.hideFilters });
     houseLocal = await restoreBig(HOUSE_KEY, houseLocal);
     synced[HOUSE_KEY] = Math.max((houseLocal && houseLocal._at) || 0, savedAt(HOUSE_KEY));
+    await mergeMineIntoHouse();
   });
+  /* One store (see ONE_STORE): fold your own shelves into the house plan, once.
+   * Your shelves win wherever the two disagree. A copy of them as they were
+   * is kept in IndexedDB ("premerge-mine") first. */
+  async function mergeMineIntoHouse() {
+    if (!ONE_STORE || BUILD_TAB || !mineReady || !houseLocal) return;
+    const n = Object.keys(mine.place || {}).length + Object.keys(mine.cats || {}).length + Object.keys(mine.subs || {}).length + (mine.held || []).length;
+    if (!n) return;
+    try { await idbPut("premerge-mine", { at: Date.now(), mine: JSON.parse(JSON.stringify(mine)) }); } catch { return; } // no safety copy, no merge
+    const H = fullHouse(JSON.parse(JSON.stringify(houseLocal)));
+    for (const [id, c] of Object.entries(mine.cats || {})) if (!H.cats[id]) H.cats[id] = { genre: c.genre, name: c.name };
+    for (const [id, c] of Object.entries(mine.subs || {})) if (!H.subs[id]) H.subs[id] = c.parent ? { cat: c.cat, parent: c.parent, name: c.name } : { cat: c.cat, name: c.name };
+    for (const [slug, v] of Object.entries(mine.place || {})) H.place[slug] = v;
+    for (const it of mine.held || []) if (!H.held.some(([x]) => x === it[0])) H.held.push(it);
+    houseLocal = H;
+    persist(HOUSE_KEY, houseLocal);
+    mine.place = {}; mine.cats = {}; mine.subs = {}; mine.held = []; mine.merged = Date.now();
+    saveMine();
+    mergedNote = `Merged your shelves into one store: ${fmt(Object.keys(H.place).length)} films placed.`;
+  }
+  let mergedNote = "";
   const house = () => fullHouse(houseLocal || houseShared);
   // grab: "one" moves a single piece; "group" moves every piece of that section, keeping its shape.
   const edit = { on: false, sel: null, renaming: null, deleting: null, undo: [], grab: "one" };
@@ -956,6 +977,7 @@
       Promise.all([loadCatalogue(), bigReady]).then(() => {
         if (catalogue) { stock = stockFromCatalogue(); defaults = null; lib = null; }
         if (root && !root.hidden) render();
+        if (mergedNote) { setTimeout(() => toast(mergedNote), 800); mergedNote = ""; }
       });
     }
     if (catState !== "loading") stock = stock || loadStock();
@@ -1270,7 +1292,7 @@
       `<button type="button" class="lbs-pocket-tab" data-act="pocket">${ICON_UP}<span>Inventory</span><em></em></button>` +
       `<button type="button" class="lbs-desk-toggle" data-act="desk">${ICON_UP}<span>Sorting desk</span></button>` +
       `<div class="lbs-deskbar-path"></div>` +
-      `<div class="lbs-view" role="group" aria-label="Whose shelves"><button type="button" data-view="community">Community</button><button type="button" data-view="mine">Mine <span></span></button></div>` +
+      `<div class="lbs-view" role="group" aria-label="Whose shelves"${ONE_STORE ? " hidden" : ""}><button type="button" data-view="community">Community</button><button type="button" data-view="mine">Mine <span></span></button></div>` +
       `</div>` +
       `<div class="lbs-toast" role="status" hidden></div>`
     );
@@ -1493,7 +1515,7 @@
     const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "folder";
     let id = `${parent}/u-${slug}`;
     for (let n = 2; lib.cats.has(id) || lib.subs.has(id); n++) id = `${parent}/u-${slug}-${n}`;
-    if (edit.on) {
+    if (toHouse()) {
       const hid = freshId(`${parent}/h-${slugify(name)}`);
       desk.adding = null;
       houseEdit(`Added “${name}”.`, (H) => {
@@ -2318,6 +2340,11 @@
    * Right-click a spine to pick a different logo (your pick is kept here and
    * becomes a vote once community voting exists). */
   const DEV_TOOLS = true; // dev: logo builder on (release builds set this false)
+  // One store: in the developer's build, every move, new folder and inventory
+  // change goes to the house plan, in and out of Dev mode (Dev mode only adds
+  // the power tools). Release builds keep personal shelves on top of it.
+  const ONE_STORE = DEV_TOOLS;
+  const toHouse = () => edit.on || ONE_STORE;
   const LOGO_KEY = `${NS}:store:logos:v1`;
   const LOGO_PICK_KEY = `${NS}:store:logo-picks:v1`;
   const SUGGEST_KEY = `${NS}:store:suggest:v1`;
@@ -4577,7 +4604,7 @@
     const pk = root && $(".lbs-pocket", root);
     const tab = root && $(".lbs-pocket-tab", root);
     if (!pk || !tab) return;
-    const held = mine.held || [];
+    const held = heldList();
     tab.querySelector("em").textContent = held.length ? fmt(held.length) : "";
     tab.classList.toggle("-open", ui.pocket);
     pk.hidden = !ui.pocket || edit.on;
@@ -4611,8 +4638,8 @@
     const chk = (key, on, label, sub) => `<label class="lbs-menu-row"><input type="checkbox" data-set="${key}"${on ? " checked" : ""}><span>${label}${sub ? `<small>${sub}</small>` : ""}</span></label>`;
     const n = Object.keys(mine.place).length;
     box.innerHTML =
-      `<h6>Shelves</h6>` +
-      `<div class="lbs-menu-seg" role="group" aria-label="Whose shelves"><button type="button" data-view="community" class="${mine.view !== "mine" ? "-on" : ""}">Community</button><button type="button" data-view="mine" class="${mine.view === "mine" ? "-on" : ""}">Mine${n ? ` <em>${fmt(n)}</em>` : ""}</button></div>` +
+      (ONE_STORE ? "" : `<h6>Shelves</h6>` +
+      `<div class="lbs-menu-seg" role="group" aria-label="Whose shelves"><button type="button" data-view="community" class="${mine.view !== "mine" ? "-on" : ""}">Community</button><button type="button" data-view="mine" class="${mine.view === "mine" ? "-on" : ""}">Mine${n ? ` <em>${fmt(n)}</em>` : ""}</button></div>`) +
       chk("hideBlocked", !!mine.hideBlocked, "Hide blocked films", "Their spot on the shelf stays empty") +
       chk("noDates", !mine.noDates, "Years on spines", "The release year at the foot of every box") +
       chk("overlay", !!mine.overlay, "Section colours from afar", "Colour and name each section when zoomed out") +
@@ -4784,7 +4811,7 @@
     const path = libUI.path;
     const right = path.length ? path[path.length - 1] : null;
     const left = path.length >= 2 ? path[path.length - 2] : null;
-    const held = new Set((mine.held || []).map(([x]) => x));
+    const held = new Set(heldList().map(([x]) => x));
     const sel = libUI.sel;
     const selAt = sel ? lib.place.get(sel[0]) : null;
     const selPath = selAt ? (() => { const p = partsOf(selAt); return [p.genre, p.cat, p.sub, p.niche].filter(Boolean); })() : [];
@@ -5574,13 +5601,13 @@
   // Each film once, with every value each filter group can see.
   function lvBase() {
     const H = house();
-    const heldList = edit.on ? [] : mine.held || [];
+    const heldList = edit.on ? [] : ONE_STORE ? house().held : mine.held || [];
     const key = `${lib.place.size}|${heldList.length}|${edit.on}`;
     if (lv.base && lv.baseLib === lib && lv.baseLay === wall.lay && lv.baseKey === key) return lv.base;
     const onWall = wall.lay ? wall.lay.idx : null;
     const F = buildFacts();
     const held = new Set(heldList.map(([x]) => x));
-    const byHand = new Set([...Object.keys(H.place), ...(mine.view === "mine" && !edit.on ? Object.keys(mine.place) : [])]);
+    const byHand = new Set([...Object.keys(H.place), ...(mine.view === "mine" && !edit.on && !ONE_STORE ? Object.keys(mine.place) : [])]);
     const gBit = Object.fromEntries(GENRES.map(([g], b) => [g, 1 << b]));
     if (lv.statFacts !== F) { lv.stat = new Map(); lv.statFacts = F; }
     const stat = lv.stat;
@@ -6321,7 +6348,7 @@
    * a piece off the wall (from afar, where pieces show as blocks) back here. */
   // Inventory: films you're carrying between the wall and the folders (and,
   // for a moderator, the sections still to place).
-  const heldList = () => (edit.on ? house().held : mine.held || []);
+  const heldList = () => (toHouse() ? house().held : mine.held || []);
   function renderTray() {
     const tray = root && $(".lbs-tray", root);
     if (!tray) return;
@@ -6354,7 +6381,7 @@
   // Put films in the inventory.
   function holdFilms(films) {
     const add = (list) => { for (const [slug, name] of films) if (!list.some(([x]) => x === slug)) list.push([slug, name]); };
-    if (edit.on) return houseEdit(films.length === 1 ? `‘${titleOf(films[0][1])}’ is in your inventory.` : `${films.length} films in your inventory.`, (H) => add(H.held));
+    if (toHouse()) { houseEdit(films.length === 1 ? `‘${titleOf(films[0][1])}’ is in your inventory.` : `${films.length} films in your inventory.`, (H) => add(H.held)); renderTray(); renderPocket(); return renderLibrary(); }
     add(mine.held);
     saveMine();
     renderTray();
@@ -6362,7 +6389,7 @@
     renderLibrary();
   }
   function releaseFilm(slug) {
-    if (edit.on) return; // house moves clear it themselves
+    if (toHouse()) { if (house().held.some(([x]) => x === slug)) houseEdit("", (H) => { H.held = H.held.filter(([x]) => x !== slug); }); renderTray(); renderPocket(); return renderLibrary(); }
     mine.held = mine.held.filter(([x]) => x !== slug);
     saveMine();
     renderLibrary();
@@ -6786,7 +6813,7 @@
       toast(`Moving ${fmt(films.length)} films…`);
       return setTimeout(() => moveFilms(films, target, { ...opts, fr: true, now: true }), 40);
     }
-    if (edit.on) {
+    if (toHouse()) {
       const label = films.length === 1 ? `‘${titleOf(films[0][1])}’` : `${films.length} films`;
       return houseEdit(`${label} → ${pathOf(sub).join(" › ")}`, (H) => {
         const moving = new Set(films.map(([slug]) => slug));
@@ -7019,7 +7046,7 @@
   function openFilmMenu(slug, name, x, y, many, frId) {
     closeFilmMenu();
     const b = (act, label, extra = "") => `<button type="button" role="menuitem" data-act="${act}"${slug ? ` data-slug="${esc(slug)}" data-name="${esc(name)}"` : ""}${extra}>${label}</button>`;
-    const held = slug && (mine.held || []).some(([s2]) => s2 === slug);
+    const held = slug && heldList().some(([s2]) => s2 === slug);
     const inStore = slug && lib.place.has(slug);
     const html = many
       ? `<b>${frId ? `${esc(lib.frs[frId].name)} · ` : ""}${fmt(lv.sel.size)} films</b>` + (frId ? `<button type="button" role="menuitem" data-act="fr-open" data-fr="${esc(frId)}">Open franchise</button>` : "") + b("lv-move", "Move to…") + b("lv-hold", "Add to inventory")+ b("lv-uncat", "Uncategorize") + b("lv-clear", "Deselect all")
