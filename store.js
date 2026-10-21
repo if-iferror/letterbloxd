@@ -384,7 +384,9 @@
   // index: a section's hand-made order (slugs); sort: each section's default
   // order ("title" | "year" | "index"); held: films taken off the wall into
   // the moderator's workspace.
-  const blankHouse = () => ({ v: 1, names: {}, hidden: [], genres: {}, cats: {}, subs: {}, place: {}, order: [], subOrder: {}, index: {}, sort: {}, held: [], wall: null, walls: {} });
+  // moved: folders dragged to a new parent ({ genre } for a category, { cat }
+  // or { cat, parent } for a subcat); removed: films taken out of the store.
+  const blankHouse = () => ({ v: 1, names: {}, hidden: [], genres: {}, cats: {}, subs: {}, place: {}, order: [], subOrder: {}, index: {}, sort: {}, held: [], wall: null, walls: {}, moved: {}, removed: {} });
   const fullHouse = (x) => ({ ...blankHouse(), ...(x || {}) });
   let houseShared = null;
   let houseLocal = readJSON(HOUSE_KEY, null);
@@ -666,6 +668,27 @@
         }
       }
     }
+    // Folders dragged somewhere else.
+    for (const [id, mv] of Object.entries(H.moved || {})) {
+      if (cats.has(id) && mv.genre) {
+        if (!genres.has(mv.genre) || mv.genre === UNCAT) continue;
+        const c = cats.get(id), og = genres.get(c.genre);
+        if (og) og.cats = og.cats.filter((x) => x !== id);
+        c.genre = mv.genre;
+        genres.get(mv.genre).cats.push(id);
+        continue;
+      }
+      const sc = subs.get(id);
+      if (!sc || !mv.cat || !cats.has(mv.cat)) continue;
+      if (mv.parent) { const p = subs.get(mv.parent); if (!p || p.parent || mv.parent === id || (sc.niches || []).length) continue; }
+      if (sc.parent) { const p = subs.get(sc.parent); if (p) p.niches = p.niches.filter((x) => x !== id); }
+      else { const c = cats.get(sc.cat); if (c) c.subs = c.subs.filter((x) => x !== id); }
+      sc.cat = mv.parent ? subs.get(mv.parent).cat : mv.cat;
+      sc.parent = mv.parent || undefined;
+      if (sc.parent) subs.get(sc.parent).niches.push(id);
+      else cats.get(sc.cat).subs.push(id);
+      for (const nid of sc.niches || []) { const n = subs.get(nid); if (n) n.cat = sc.cat; }
+    }
     // Deleted folders (never a genre, Uncategorized, or a "General" subcat).
     for (const id of H.hidden) {
       if (id === UNCAT || id === UNCAT_CAT || /\/general$/.test(id)) continue;
@@ -716,6 +739,8 @@
       const at = place.get(lead[0]);
       for (const [s, n] of fr.films) { place.set(s, at); if (!names.has(s)) names.set(s, n); }
     }
+    // Films taken out of the store.
+    for (const slug of Object.keys(H.removed || {})) place.delete(slug);
     // A film whose folder was deleted drops one level: to its category's
     // General; a deleted category's films go back to Uncategorized.
     const home = (sub) => {
@@ -937,6 +962,8 @@
           const films = inSel && lv.sel.size > 1 ? lvFilms() : xs.map((x) => [x, lib.names.get(x) || x]);
           return grabDown({ kind: "dvd", slug: films[0][0], name: films[0][1], films: films.length > 1 ? films : null, from: "lib" }, e);
         }
+        const lfold = e.target.closest(".lbs-library .lbs-folder[data-lfold]");
+        if (lfold && !e.target.closest("button, input")) { e.preventDefault(); return grabDown({ kind: "folder", id: lfold.dataset.id }, e); }
         const dv = e.target.closest(".lbs-tray .lbs-dvd, .lbs-pk, .lbs-sp-chip, .lbs-lib-film");
         if (dv && !e.target.closest("button")) { e.preventDefault(); grabDown({ kind: "dvd", slug: dv.dataset.slug, name: dv.dataset.name, from: dv.classList.contains("lbs-lib-film") ? "lib" : dv.classList.contains("lbs-sp-chip") ? "card" : "tray" }, e); }
       });
@@ -1505,7 +1532,7 @@
     name = name.trim().replace(/\s+/g, " ");
     if (!name) return;
     if (level === "genre") {
-      if (!edit.on) return toast("New genres are made in Dev mode.");
+      if (!toHouse()) return toast("New genres are made in Dev mode.");
       let gid = `g-${slugify(name)}`;
       for (let n = 2; lib.genres.has(gid); n++) gid = `g-${slugify(name)}-${n}`;
       houseEdit(`Added the genre “${name}”.`, (H) => { H.genres = { ...(H.genres || {}), [gid]: { name } }; H.hidden = H.hidden.filter((x) => x !== gid); });
@@ -4799,13 +4826,22 @@
     });
   }
   function renderLibrary() {
-    const box = root && $(".lbs-library", root);
-    if (!box || !lib) return;
+    const shell = root && $(".lbs-library", root);
+    if (!shell || !lib) return;
     root.classList.toggle("lbs-lib-open", libUI.open);
+    root.classList.toggle("lbs-lib-both", libUI.open && lv.mode === "both");
     root.querySelectorAll(".lbs-lib-btn").forEach((b) => b.classList.toggle("-on", libUI.open));
-    box.hidden = !libUI.open;
+    shell.hidden = !libUI.open;
     if (!libUI.open) return;
-    if (lv.mode === "list") return renderListView(box);
+    if (lv.mode === "list") return renderListView(shell);
+    let box = shell;
+    // Both: folders on the left, the list on the right; the list's filters
+    // decide which films the folders show.
+    if (lv.mode === "both") {
+      if (shell.dataset.mode !== "both") { shell.dataset.mode = "both"; shell.innerHTML = `<div class="lbs-lib-pane -f"></div><div class="lbs-lib-pane -l"></div>`; }
+      renderListView($(".lbs-lib-pane.-l", shell));
+      box = $(".lbs-lib-pane.-f", shell);
+    }
     box.dataset.mode = "folders";
     libUI.path = libUI.path.filter((id) => lib.genres.has(id) || lib.cats.has(id) || lib.subs.has(id) || (String(id).startsWith("fr:") && lib.frs[id.slice(3)]));
     const path = libUI.path;
@@ -4815,14 +4851,32 @@
     const sel = libUI.sel;
     const selAt = sel ? lib.place.get(sel[0]) : null;
     const selPath = selAt ? (() => { const p = partsOf(selAt); return [p.genre, p.cat, p.sub, p.niche].filter(Boolean); })() : [];
-    const canDel = (id) => edit.on && id !== UNCAT && id !== UNCAT_CAT && !/\/general$/.test(id);
-    const folderRow = (id, side) =>
-      `<li class="lbs-lib-row lbs-folder${path.includes(id) ? " -on" : ""}" data-act="lib-open" data-side="${side}" data-id="${esc(id)}" data-drop="${esc(id)}">` +
+    const canDel = (id) => toHouse() && id !== UNCAT && id !== UNCAT_CAT && !/\/general$/.test(id);
+    const canEdit = (id) => toHouse() && id !== UNCAT && id !== UNCAT_CAT && !/\/general$/.test(id);
+    // Side by side with the list: only the films its filters let through.
+    const allow = lv.mode === "both" && lv.match && (lvActive() || lv.q) ? lv.match : null;
+    let fcount = null;
+    if (allow) {
+      fcount = new Map();
+      const up = (k) => fcount.set(k, (fcount.get(k) || 0) + 1);
+      for (const slug of allow) {
+        const sub = lib.place.get(slug), s = sub && lib.subs.get(sub);
+        if (!s) continue;
+        up(sub); if (s.parent) up(s.parent);
+        const c = lib.cats.get(s.cat); up(s.cat); if (c) up(c.genre);
+      }
+    }
+    const folderRow = (id, side) => {
+      if (libUI.renaming === id) return `<li class="lbs-lib-new"><input type="text" class="lbs-lib-rename" data-id="${esc(id)}" maxlength="40" value="${esc(nameOf(id))}"></li>`;
+      const n = fcount ? fcount.get(id) || 0 : lib.count.get(id) || 0;
+      return `<li class="lbs-lib-row lbs-folder${path.includes(id) ? " -on" : ""}${fcount && !n ? " -dim" : ""}" data-act="lib-open" data-side="${side}" data-id="${esc(id)}" data-drop="${esc(id)}"${canEdit(id) && !lib.genres.has(id) ? ' data-lfold="1"' : ""}>` +
       `${ICON_FOLDER}<span>${esc(nameOf(id))}</span>` +
       (selPath.includes(id) ? `<em>here</em>` : "") +
-      `<small>${fmt(lib.count.get(id) || 0)}</small>` +
+      `<small>${fcount ? `${fmt(n)} / ${fmt(lib.count.get(id) || 0)}` : fmt(n)}</small>` +
+      (canEdit(id) ? `<button type="button" class="lbs-lib-ren" data-act="lib-ren" data-id="${esc(id)}" aria-label="Rename ${esc(nameOf(id))}" title="Rename">✎</button>` : "") +
       (canDel(id) ? `<button type="button" class="lbs-lib-del" data-act="lib-del" data-id="${esc(id)}" aria-label="Delete ${esc(nameOf(id))}" title="Delete">${ICON_CLOSE}</button>` : "") +
       `<b>›</b></li>`;
+    };
     const filmRow = ([slug, name]) =>
       `<li class="lbs-lib-row lbs-lib-film${sel && sel[0] === slug ? " -sel" : ""}" data-act="lib-film" data-film="${esc(slug)}" data-slug="${esc(slug)}" data-name="${esc(name)}" title="Drag onto a folder, the wall or your inventory">` +
       `<img data-lp="${esc(slug)}" src="${posterCache.has(slug) ? esc(posterCache.get(slug)[0]) : EMPTY}" alt="" draggable="false"><span>${esc(titleOf(name))}</span><small>${yearOf(name) || ""}</small>` +
@@ -4837,6 +4891,7 @@
     // where you're looking (Uncategorized holds tens of thousands).
     libUI.vcols = {};
     const filmItems = (id, films, side) => {
+      if (allow) films = films.filter((f) => allow.has(f[0]));
       let items, slugs;
       if (String(id).startsWith("fr:")) { items = films.map((f) => () => filmRow(f)); slugs = films.map((f) => f[0]); }
       else {
@@ -4858,13 +4913,13 @@
     };
     const column = (id, side) => {
       const k = kidsOf(id);
-      const lvl = side === "right" || (!id && edit.on) ? (id ? childLevel(id) : edit.on ? "genre" : null) : null;
+      const lvl = side === "right" || (!id && toHouse()) ? (id ? childLevel(id) : toHouse() ? "genre" : null) : null;
       const adding = lvl && (id ? libUI.adding === id : libUI.adding === "@root");
       return (
         `<div class="lbs-lib-col -${side}"><h5>${id ? esc(nameOf(id)) : "Genres"}${id ? `<small>${fmt(String(id).startsWith("fr:") ? k.films.length : lib.count.get(id) || 0)} films</small>` : ""}${String(id).startsWith("fr:") ? `<button type="button" class="lbs-frbadge" data-act="fr-open" data-fr="${esc(id.slice(3))}">Edit franchise</button>` : ""}</h5><ul>` +
         k.folders.map((f) => folderRow(f, side)).join("") +
         (lvl ? (adding ? `<li class="lbs-lib-new"><input type="text" class="lbs-lib-new-name" data-level="${lvl}" maxlength="40" placeholder="Name the new ${LEVEL_WORD[lvl]}"></li>` : `<li class="lbs-lib-add"><button type="button" data-act="lib-new">+ New ${LEVEL_WORD[lvl]}</button></li>`) : "") +
-        (k.films.length ? (k.folders.length || lvl ? `<li class="lbs-lib-sep">${fmt(k.films.length)} film${k.films.length === 1 ? "" : "s"}</li>` : "") + filmItems(id, k.films, side) : "") +
+        (k.films.length ? (k.folders.length || lvl ? `<li class="lbs-lib-sep">${allow ? `${fmt(k.films.filter((f) => allow.has(f[0])).length)} of ` : ""}${fmt(k.films.length)} film${k.films.length === 1 ? "" : "s"}</li>` : "") + filmItems(id, k.films, side) : "") +
         (!k.folders.length && !k.films.length && !lvl ? `<li class="lbs-lib-empty">Empty</li>` : "") +
         `</ul></div>`
       );
@@ -4897,7 +4952,7 @@
           `<button type="button" data-act="f-open" data-slug="${esc(sel[0])}" data-name="${esc(sel[1])}">Details</button>` +
           `<button type="button" data-act="lib-fr">${franchiseOf(sel[0]) ? "Franchise" : "Add to franchise"}</button>` +
           jumpBtn +
-          `<button type="button" class="-link" data-act="lib-remove">Request removal</button></div>`
+          (ONE_STORE ? `<button type="button" class="-link" data-act="lib-remove-now">Remove from store</button></div>` : `<button type="button" class="-link" data-act="lib-remove">Request removal</button></div>`)
         : `<div class="lbs-lib-acts"><p class="lbs-lib-tip">Click a film to select it, then open the folder it belongs in and Move here. Or drag it onto a folder, the wall, or your inventory.</p>` +
           jumpBtn + `</div>`) +
       `</div>`;
@@ -4930,8 +4985,8 @@
       let raf = 0;
       ul.addEventListener("scroll", () => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; paint(); }); });
     });
-    const inp = $(".lbs-lib-new-name", box);
-    if (inp) inp.focus();
+    const inp = $(".lbs-lib-new-name", box) || $(".lbs-lib-rename", box);
+    if (inp) { inp.focus(); if (inp.classList.contains("lbs-lib-rename")) inp.select(); }
   }
   /* ---------------- the Library's list view ----------------
    * Every film in the store in one list, with the folder it's in on the
@@ -5738,6 +5793,7 @@
     // it to see all its films beneath, the ones that don't match dimmed.
     lv.nFilms = rows.length;
     const matched = new Set(rows.map((r) => r.slug));
+    lv.match = matched;
     const out = [], done = new Set();
     for (const r of rows) {
       const fid = lib.frOf.get(r.slug);
@@ -5834,8 +5890,9 @@
     $(".lbs-lv-meta", box).innerHTML = `<b>${fmt(lv.nFilms)}</b> film${lv.nFilms === 1 ? "" : "s"}${lv.sel.size ? ` · ${fmt(lv.sel.size)} selected` : ""}${nAct || lv.q ? ` · <button type="button" data-act="lv-reset">Clear all filters</button>` : ""}`;
     lvFoot(box);
   }
+  const lvHost = () => root && ($(".lbs-library .lbs-lib-pane.-l", root) || $(".lbs-library", root));
   function lvRefreshSel() {
-    const box = root && $(".lbs-library", root);
+    const box = lvHost();
     if (!box || box.dataset.mode !== "list") return renderLibrary();
     if (box._selecting !== lv.selecting) { box._selecting = lv.selecting; lvPaint(); }
     else box.querySelectorAll(".lbs-lv-row").forEach((el) => {
@@ -5851,11 +5908,11 @@
     lvChrome(box);
   }
   function libModeHTML() {
-    return `<div class="lbs-seg lbs-lib-mode" role="group" aria-label="View"><button type="button" data-act="lib-mode" data-v="folders" class="${lv.mode === "folders" ? "-on" : ""}">Folders</button><button type="button" data-act="lib-mode" data-v="list" class="${lv.mode === "list" ? "-on" : ""}">List</button></div>`;
+    return `<div class="lbs-seg lbs-lib-mode" role="group" aria-label="View"><button type="button" data-act="lib-mode" data-v="folders" class="${lv.mode === "folders" ? "-on" : ""}">Folders</button><button type="button" data-act="lib-mode" data-v="list" class="${lv.mode === "list" ? "-on" : ""}">List</button><button type="button" data-act="lib-mode" data-v="both" class="${lv.mode === "both" ? "-on" : ""}" title="Folders and list side by side">Both</button></div>`;
   }
   // Only the rows in view are drawn (there can be 80,000).
   function lvPaint() {
-    const box = root && $(".lbs-library", root);
+    const box = lvHost();
     const list = box && $(".lbs-lv-list", box);
     if (!list) return;
     const sp = $(".lbs-lv-spacer", list);
@@ -6268,7 +6325,7 @@
     const where = (path) => (path[0] === "Uncategorized" ? "Uncategorized" : path.slice(1).join(" › "));
     const item = (slug, name, inStore, sub) => {
       const path = inStore ? whereIs(slug) : null;
-      return `<li data-act="find-pick" data-slug="${esc(slug)}" data-name="${esc(name)}"${sub ? ' class="-sub"' : ""}><img data-poster="${esc(slug)}" alt=""><div><b>${esc(titleOf(name))}</b> <span>${yearOf(name) || ""}</span><small>${path ? esc(where(path)) : "Not in the store"}</small>${inStore && !sub ? frBadge(slug) : ""}</div>${path ? "" : `<button type="button" class="lbs-find-req" data-act="req-add" data-slug="${esc(slug)}" data-name="${esc(name)}">Request addition</button>`}</li>`;
+      return `<li data-act="find-pick" data-slug="${esc(slug)}" data-name="${esc(name)}"${sub ? ' class="-sub"' : ""}><img data-poster="${esc(slug)}" alt=""><div><b>${esc(titleOf(name))}</b> <span>${yearOf(name) || ""}</span><small>${path ? esc(where(path)) : "Not in the store"}</small>${inStore && !sub ? frBadge(slug) : ""}</div>${path ? "" : ONE_STORE ? `<button type="button" class="lbs-find-req" data-act="f-addstore" data-slug="${esc(slug)}" data-name="${esc(name)}">Add to store…</button>` : `<button type="button" class="lbs-find-req" data-act="req-add" data-slug="${esc(slug)}" data-name="${esc(name)}">Request addition</button>`}</li>`;
     };
     // Franchises whose name matches, each with its matching films beneath it.
     const frHits = Object.entries(lib.frs || {}).filter(([, f]) => f.name.toLowerCase().includes(nq)).slice(0, 4);
@@ -6587,6 +6644,8 @@
         d.ghost = h("div", "lbs-piece lbs-piece-ghost", `<b>${esc(nameOf(cid))}</b>`);
         d.ghost.style.setProperty("--h", hueOfBlock(cid));
         d.ghost.style.width = `${Math.max(30, Math.min(CAP, grabSize(d)) * wall.cam.z)}px`;
+      } else if (d.kind === "folder") {
+        d.ghost = h("div", "lbs-ghost", `${ICON_FOLDER} ${esc(nameOf(d.id))}`);
       } else if (d.films && d.films.length > 1) {
         d.ghost = h("div", "lbs-ghost", `${fmt(d.films.length)} films`);
       } else {
@@ -6612,7 +6671,7 @@
     root.querySelectorAll(".lbs-pocket.-over, .lbs-pocket-tab.-over").forEach((el) => el.classList.remove("-over"));
     const pocketOver = d.kind === "dvd" && under && under.closest && under.closest(".lbs-pocket, .lbs-pocket-tab");
     if (pocketOver) { pocketOver.classList.add("-over"); wall.dropHint = null; }
-    const folder = d.kind === "dvd" && under?.closest?.(".lbs-folder[data-drop]");
+    const folder = (d.kind === "dvd" || d.kind === "folder") && under?.closest?.(".lbs-folder[data-drop], .lbs-crumb[data-drop]");
     // Hold a film over a folder to open it, as when dragging.
     if (folder && folder.dataset.drop && (lib.genres.has(folder.dataset.drop) || lib.cats.has(folder.dataset.drop))) {
       if (d.spring !== folder.dataset.drop) {
@@ -6653,6 +6712,11 @@
       if (hint && hint.group) { if (hint.ok) return placeGroup(hint); toast("The whole section doesn't fit there."); return drawSoon(); }
       if (hint && hint.ok) return placeGrab(d, hint);
       if (hint) toast("No room on that shelf.");
+      return drawSoon();
+    }
+    if (d.kind === "folder") {
+      const f = el && el.closest && el.closest(".lbs-folder[data-drop], .lbs-crumb[data-drop]");
+      if (f && f.dataset.drop && f.dataset.drop !== d.id) moveFolder(d.id, f.dataset.drop);
       return drawSoon();
     }
     // A DVD (or several, from the Library's list)
@@ -6742,6 +6806,57 @@
     });
   }
 
+  function renameFolder(id, name) {
+    name = String(name || "").trim().replace(/\s+/g, " ");
+    if (!name || name === nameOf(id)) return;
+    houseEdit(`Renamed to “${name}”.`, (H) => {
+      if (H.genres && H.genres[id]) H.genres[id] = { ...H.genres[id], name };
+      else if (H.cats[id]) H.cats[id] = { ...H.cats[id], name };
+      else if (H.subs[id]) H.subs[id] = { ...H.subs[id], name };
+      H.names[id] = name;
+    });
+  }
+  // Drag a folder onto another: a category into a genre, a subcat into a
+  // category (or into another subcat, as a niche).
+  const isAncestor = (a, id) => { const p = partsOf(id); return [p.genre, p.cat, p.sub].includes(a); };
+  function moveFolder(id, target) {
+    if (!id || !target || id === target) return;
+    if (isAncestor(id, target)) return toast("A folder can't go inside itself.");
+    const label = `“${nameOf(id)}” → ${pathOf(target).join(" › ")}`;
+    if (lib.cats.has(id)) {
+      if (!lib.genres.has(target) || target === UNCAT) return toast("A category goes into a genre.");
+      if (lib.cats.get(id).genre === target) return;
+      return houseEdit(label, (H) => { H.moved = { ...(H.moved || {}), [id]: { genre: target } }; H.order = H.order.filter((x) => x !== id); });
+    }
+    const sc = lib.subs.get(id);
+    if (!sc) return;
+    if (lib.cats.has(target)) {
+      if (target === UNCAT_CAT) return toast("Uncategorized only holds films.");
+      if (!sc.parent && sc.cat === target) return;
+      return houseEdit(label, (H) => { H.moved = { ...(H.moved || {}), [id]: { cat: target } }; });
+    }
+    const ts = lib.subs.get(target);
+    if (ts) {
+      if (ts.parent) return toast("That's already a niche: it can't hold folders.");
+      if ((sc.niches || []).length) return toast("Only a folder without folders inside it can become a niche.");
+      if (/\/general$/.test(target)) return toast("“General” only holds films.");
+      if (sc.parent === target) return;
+      return houseEdit(label, (H) => { H.moved = { ...(H.moved || {}), [id]: { cat: ts.cat, parent: target } }; });
+    }
+    if (lib.genres.has(target)) return toast("Put a subcat in a category, not straight into a genre.");
+  }
+  // Take films out of the store (search finds them again: Add to store).
+  function removeFilms(films) {
+    if (!films.length) return;
+    const label = films.length === 1 ? `Removed ‘${titleOf(films[0][1])}’ from the store.` : `Removed ${fmt(films.length)} films from the store.`;
+    houseEdit(label, (H) => {
+      H.removed = { ...(H.removed || {}) };
+      const gone = new Set(films.map(([x]) => x));
+      for (const [slug, name] of films) { H.removed[slug] = name; delete H.place[slug]; }
+      H.held = H.held.filter(([x]) => !gone.has(x));
+    });
+  }
+
   // A user's proposed folder becomes part of the house plan.
   function approveFolder(id) {
     const c = mine.cats[id], sc = mine.subs[id];
@@ -6818,7 +6933,7 @@
       return houseEdit(`${label} → ${pathOf(sub).join(" › ")}`, (H) => {
         const moving = new Set(films.map(([slug]) => slug));
         H.held = H.held.filter(([x]) => !moving.has(x));
-        for (const [slug, name] of films) H.place[slug] = [sub, name];
+        for (const [slug, name] of films) { H.place[slug] = [sub, name]; if (H.removed) delete H.removed[slug]; }
       });
     }
     const before = films.map(([slug]) => [slug, mine.place[slug]]);
@@ -7049,7 +7164,7 @@
     const held = slug && heldList().some(([s2]) => s2 === slug);
     const inStore = slug && lib.place.has(slug);
     const html = many
-      ? `<b>${frId ? `${esc(lib.frs[frId].name)} · ` : ""}${fmt(lv.sel.size)} films</b>` + (frId ? `<button type="button" role="menuitem" data-act="fr-open" data-fr="${esc(frId)}">Open franchise</button>` : "") + b("lv-move", "Move to…") + b("lv-hold", "Add to inventory")+ b("lv-uncat", "Uncategorize") + b("lv-clear", "Deselect all")
+      ? `<b>${frId ? `${esc(lib.frs[frId].name)} · ` : ""}${fmt(lv.sel.size)} films</b>` + (frId ? `<button type="button" role="menuitem" data-act="fr-open" data-fr="${esc(frId)}">Open franchise</button>` : "") + b("lv-move", "Move to…") + b("lv-hold", "Add to inventory")+ b("lv-uncat", "Uncategorize") + (ONE_STORE ? b("lv-remove", "Remove from store") : "") + b("lv-clear", "Deselect all")
       : `<b>${esc(titleOf(name))}</b>` +
         b("f-open", "Details") +
         (held ? b("f-return", "Take out of inventory") : b("f-hold", "Add to inventory", inStore ? "" : " disabled")) +
@@ -7057,7 +7172,8 @@
         b("f-editx", "Edit") +
         b("f-sort", "Sort") +
         (inStore && lib.place.get(slug) !== UNCAT_SUB ? b("f-uncat", "Uncategorize") : "") +
-        b("f-fr", frFor(slug) ? `Franchise · ${esc(frFor(slug).name)}` : "Add to franchise", inStore ? "" : " disabled");
+        b("f-fr", frFor(slug) ? `Franchise · ${esc(frFor(slug).name)}` : "Add to franchise", inStore ? "" : " disabled") +
+        (ONE_STORE ? (inStore ? b("f-remove", "Remove from store") : b("f-addstore", "Add to store…")) : "");
     const m = h("div", "lbs-ctx", html);
     m.setAttribute("role", "menu");
     root.append(m);
@@ -7535,6 +7651,7 @@
         holdFilms(films); ui.pocket = true; renderPocket();
         return toast(`${fmt(films.length)} film${films.length === 1 ? "" : "s"} in your inventory.`);
       }
+      if (act === "lv-remove") { const films = lvFilms(); if (!films.length) return; return ask(`Remove <b>${fmt(films.length)} film${films.length === 1 ? "" : "s"}</b> from the store? (Search finds them again: Add to store.)`, () => { lv.selecting = false; lvSetSel(new Set()); removeFilms(films); }, "Remove"); }
       if (act === "lv-uncat") { const films = lvFilms(); lv.selecting = false; lvSetSel(new Set()); return moveFilms(films, UNCAT); }
       if (act === "lib-new") { const col = btn.closest(".lbs-lib-col"); libUI.adding = col && col.classList.contains("-left") && libUI.path.length < 2 ? "@root" : libUI.path[libUI.path.length - 1] || "@root"; return renderLibrary(); }
       if (act === "lib-del") {
@@ -7550,6 +7667,8 @@
         return renderLibrary();
       }
       if (act === "lib-fr") return libUI.sel && openFranchise(libUI.sel[0], libUI.sel[1]);
+      if (act === "lib-remove-now") { const sl = libUI.sel; libUI.sel = null; return sl && removeFilms([sl]); }
+      if (act === "lib-ren") { e.stopPropagation(); libUI.renaming = btn.dataset.id; return renderLibrary(); }
       if (act === "lib-remove") return libUI.sel && requestRemoval("film", libUI.sel[0], titleOf(libUI.sel[1]));
       if (act === "lib-jump") {
         const fo = libUI.focus;
@@ -7566,6 +7685,8 @@
       if (act === "f-jump") return jumpTo(fs, fn);
       if (act === "f-fr") { closeFilm(); return openFranchise(fs, fn); }
       if (act === "f-uncat") return moveFilms([[fs, fn]], UNCAT);
+      if (act === "f-remove") { closeFilm(); return removeFilms([[fs, fn]]); }
+      if (act === "f-addstore") { closeFilm(); return openMovePick([[fs, fn]]); }
       if (act === "f-editx") { openFilm(fs, fn); ui.pane = "edit"; return renderFilm(); }
       if (act === "f-edit") { if (!ui.film || ui.film.slug !== fs) { ui.film = { slug: fs, name: fn }; filmDetails(fs).then((d) => ui.film && ui.film.slug === fs && renderFilm(d)); } ui.pane = ui.pane === "edit" ? null : "edit"; return renderFilm(); }
       if (act === "f-sort") { closeFilm(); $(".lbs-card", root).hidden = true; return openSort(fs, fn); }
@@ -7825,6 +7946,11 @@
         const li = items[at >= 0 ? at : 0];
         if (li) { e.preventDefault(); showCard(li.dataset.slug, li.dataset.name); }
       } else if (e.key === "Escape") { $(".lbs-find-list", root).hidden = true; $(".lbs-card", root).hidden = true; }
+      return;
+    }
+    if (e.target.classList.contains("lbs-lib-rename")) {
+      if (e.key === "Enter") { e.preventDefault(); const id = e.target.dataset.id, v = e.target.value; libUI.renaming = null; renameFolder(id, v); renderLibrary(); }
+      else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); libUI.renaming = null; renderLibrary(); }
       return;
     }
     if (e.target.classList.contains("lbs-lib-new-name")) {

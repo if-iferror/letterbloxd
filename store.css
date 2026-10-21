@@ -4836,3 +4836,43 @@ html.lbs-open {
   background: #40bcf4;
   color: #0b1014;
 }
+
+/* Library: rename, dragging folders, filtered folders */
+.lbs-lib-ren {
+  all: unset;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-left: 4px;
+  border-radius: 4px;
+  color: #789;
+  font-size: 12px;
+  cursor: pointer;
+  opacity: 0;
+}
+.lbs-lib-row:hover .lbs-lib-ren,
+.lbs-lib-ren:focus-visible { opacity: 1; }
+.lbs-lib-ren:hover { background: #2c3440; color: #fff; }
+.lbs-lib-rename {
+  width: 100%;
+  box-sizing: border-box;
+}
+.lbs-folder[data-lfold] { cursor: grab; }
+.lbs-lib-row.lbs-folder.-dim { opacity: 0.38; }
+.lbs-ghost svg { width: 14px; height: 14px; vertical-align: -2px; }
+
+/* Library: folders and list side by side */
+.lbs-root.lbs-lib-both { --lib-w: min(1180px, 82vw); }
+.lbs-library[data-mode="both"] { flex-direction: row; }
+.lbs-lib-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.lbs-lib-pane.-f { flex: 1 1 52%; border-right: 1px solid #2c3440; }
+.lbs-lib-pane.-l { flex: 1 1 48%; }
+.lbs-lib-pane.-l .lbs-lib-head .lbs-lib-mode,
+.lbs-lib-pane.-l .lbs-lib-head .lbs-lib-x { display: none; }
+.lbs-lib-pane .lbs-lib-cols { flex: 1; min-height: 0; }
