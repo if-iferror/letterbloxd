@@ -283,9 +283,27 @@
    * fill it; when it's full, it keeps a marker and IndexedDB keeps the rest.
    * The newer copy wins when the store opens. */
   const bigTimers = {};
+  /* Several store tabs share one saved store. Each tab remembers which saved
+   * version it holds (synced[key]); when another tab saves, this one loads
+   * that version (see the "storage" listener below), and a tab never saves
+   * over a newer version it hasn't seen: that is how two tabs used to
+   * overwrite each other's sorting. */
+  const synced = {};
+  const savedAt = (key) => {
+    const raw = localStorage.getItem(key);
+    if (!raw) return 0;
+    const i = raw.lastIndexOf('"_at":');
+    return i < 0 ? 0 : parseInt(raw.slice(i + 6), 10) || 0;
+  };
   function persist(key, obj) {
     if (BUILD_TAB && (key === MINE_KEY || key === HOUSE_KEY)) return true; // builder tab: read-only shelves
+    if ((key === MINE_KEY || key === HOUSE_KEY) && savedAt(key) > (synced[key] || 0)) {
+      // another tab saved since this one loaded: take its version, don't overwrite it
+      adoptSaved(key, true);
+      return false;
+    }
     if (obj) obj._at = Date.now();
+    if (key === MINE_KEY || key === HOUSE_KEY) synced[key] = obj ? obj._at : 0;
     let ok = true;
     if (!obj) { try { localStorage.removeItem(key); } catch {} }
     else if (!writeJSON(key, obj)) { ok = false; try { localStorage.setItem(key, JSON.stringify({ _idb: true, _at: obj._at })); } catch {} }
@@ -293,6 +311,27 @@
     bigTimers[key] = setTimeout(() => idbPut(`ls:${key}`, obj || null).catch(() => {}), ok ? 600 : 0);
     return true;
   }
+  async function adoptSaved(key, clash) {
+    const at = savedAt(key);
+    if (!at || at <= (synced[key] || 0)) return;
+    synced[key] = at; // claim it now so a burst of events loads it once
+    let obj = readJSON(key, null);
+    if (obj && obj._idb) {
+      obj = null;
+      for (let n = 0; n < 40 && !obj; n++) {
+        const v = await idbGet(`ls:${key}`).catch(() => null);
+        if (v && (v._at || 0) >= at) obj = v;
+        else await new Promise((ok) => setTimeout(ok, 250));
+      }
+      if (!obj) return;
+    }
+    if (!obj) return;
+    if (key === MINE_KEY) { mine = { place: {}, cats: {}, subs: {}, recent: [], view: "community", sort: {}, held: [], colors: {}, wash: {}, ...obj }; delete mine._idb; paintVer++; }
+    else houseLocal = obj;
+    if (root && lib) { if (lv) lv.stat = new Map(); refresh(); }
+    if (root) toast(clash ? "Another tab changed your store, so this tab now shows its version. Your last change here wasn't saved — please redo it." : "Updated with changes from your other tab.");
+  }
+  window.addEventListener("storage", (e) => { if (e.key === MINE_KEY || e.key === HOUSE_KEY) adoptSaved(e.key); });
   async function restoreBig(key, cur) {
     try {
       const saved = await idbGet(`ls:${key}`);
@@ -356,8 +395,10 @@
     // a marker with nothing behind it (IndexedDB unreadable): don't save over it
     mineReady = !mine._idb;
     delete mine._idb;
+    synced[MINE_KEY] = Math.max(mine._at || 0, savedAt(MINE_KEY));
     if (mine.lv) Object.assign(lv, { mode: mine.lv.mode || lv.mode, f: mine.lv.f || {}, all: mine.lv.all || {}, y0: mine.lv.y0 || "", y1: mine.lv.y1 || "", sort: mine.lv.sort || "pop", showFilters: !mine.lv.hideFilters });
     houseLocal = await restoreBig(HOUSE_KEY, houseLocal);
+    synced[HOUSE_KEY] = Math.max((houseLocal && houseLocal._at) || 0, savedAt(HOUSE_KEY));
   });
   const house = () => fullHouse(houseLocal || houseShared);
   // grab: "one" moves a single piece; "group" moves every piece of that section, keeping its shape.
