@@ -520,7 +520,7 @@
       lists.set(key, { name, set: new Set(gaps.map((d) => (i += d))) });
     }
     catalogue = { at: j.at, films: j.films, lists, info: Array.isArray(j.info) ? j.info : null, people: j.people || [], langNames: j.langNames || {}, kw: Array.isArray(j.kw) ? j.kw : null, fkw: Array.isArray(j.fkw) ? j.fkw : null,
-      co: j.co || null, fco: j.fco || null, cast: j.cast || null, fcast: j.fcast || null, certs: j.certs || null, fcert: j.fcert || null };
+      co: j.co || null, fco: j.fco || null, cast: j.cast || null, fcast: j.fcast || null, certs: j.certs || null, fcert: j.fcert || null, views: Array.isArray(j.views) ? j.views : null };
     catState = "ready";
     return true;
   }
@@ -927,6 +927,7 @@
   // The store's logo, an original mark (icons/bloxbuster-logo.svg, inlined: this script runs in the page).
   const LOGO_SVG = `<svg class="lbs-logo-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 300" role="img" aria-label="BLOXBUSTER"> <rect x="6" y="6" width="588" height="288" rx="26" fill="#17191c" stroke="#3a3f46" stroke-width="4"/> <circle cx="34" cy="34" r="7" fill="#2c3036"/><circle cx="566" cy="34" r="7" fill="#2c3036"/> <circle cx="34" cy="266" r="7" fill="#2c3036"/><circle cx="566" cy="266" r="7" fill="#2c3036"/> <rect x="58" y="34" width="484" height="146" rx="10" fill="#e23b2e"/> <rect x="58" y="34" width="484" height="16" rx="8" fill="#f0e6cf"/> <rect x="58" y="164" width="484" height="16" rx="8" fill="#f0e6cf"/> <text x="300" y="139" text-anchor="middle" font-family="Impact, 'Haettenschweiler', 'Arial Narrow Bold', 'Arial Black', sans-serif" font-weight="900" font-size="92" letter-spacing="2" fill="#fff4dc" textLength="440" lengthAdjust="spacingAndGlyphs">BLOXBUSTER</text> <rect x="160" y="198" width="280" height="76" rx="38" fill="#0b0c0e" stroke="#3a3f46" stroke-width="4"/> <g fill="#f2efe6"> <circle cx="228" cy="236" r="27"/><circle cx="372" cy="236" r="27"/> </g> <g fill="#17191c"> <circle cx="228" cy="236" r="12"/><circle cx="372" cy="236" r="12"/> </g> <g fill="#f2efe6"> <rect x="225" y="222" width="6" height="8"/><rect x="225" y="242" width="6" height="8"/><rect x="214" y="233" width="8" height="6"/><rect x="234" y="233" width="8" height="6"/> <rect x="369" y="222" width="6" height="8"/><rect x="369" y="242" width="6" height="8"/><rect x="358" y="233" width="8" height="6"/><rect x="378" y="233" width="8" height="6"/> </g> <rect x="270" y="226" width="60" height="20" rx="3" fill="#2c3036"/> </svg>`;
   const ICON_GEAR = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><circle cx="16" cy="7" r="2.4" fill="none" stroke="currentColor" stroke-width="2.2"/><circle cx="8" cy="17" r="2.4" fill="none" stroke="currentColor" stroke-width="2.2"/></svg>`;
+  const ICON_LOCK = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10V7a5 5 0 0 1 10 0v3h1.5A1.5 1.5 0 0 1 20 11.5v8A1.5 1.5 0 0 1 18.5 21h-13A1.5 1.5 0 0 1 4 19.5v-8A1.5 1.5 0 0 1 5.5 10zm2 0h6V7a3 3 0 0 0-6 0z" fill="currentColor"/></svg>`;
   const ICON_DROPPER = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.7 3.3a2.4 2.4 0 0 1 3.4 3.4l-2.6 2.6 1 1-1.5 1.5-1-1-7.6 7.6c-.4.4-.9.6-1.4.7l-2.3.4-1.3 1.3-1.4-1.4 1.3-1.3.4-2.3c.1-.5.3-1 .7-1.4l7.6-7.6-1-1L13.5 4l1 1zM8.6 13.6l-.6.6c-.1.1-.2.3-.2.4l-.2 1.4 1.4-.2c.1 0 .3-.1.4-.2l.6-.6z" fill="currentColor"/></svg>`;
   const ICON_SEARCH = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="M16 16l4.5 4.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>`;
 
@@ -963,7 +964,17 @@
           return grabDown({ kind: "dvd", slug: films[0][0], name: films[0][1], films: films.length > 1 ? films : null, from: "lib" }, e);
         }
         const lfold = e.target.closest(".lbs-library .lbs-folder[data-lfold]");
-        if (lfold && !e.target.closest("button, input")) { e.preventDefault(); return grabDown({ kind: "folder", id: lfold.dataset.id }, e); }
+        if (lfold && !e.target.closest("button, input")) {
+          e.preventDefault();
+          const id = lfold.dataset.id, ids = libUI.fsel.has(id) && libUI.fsel.size > 1 ? [...libUI.fsel] : [id];
+          return grabDown({ kind: "folder", id, ids }, e);
+        }
+        const lfilm = !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && e.target.closest(".lbs-library .lbs-lib-film");
+        if (lfilm && !e.target.closest("button") && libUI.msel.has(lfilm.dataset.slug) && libUI.msel.size > 1) {
+          e.preventDefault();
+          const films = [...libUI.msel];
+          return grabDown({ kind: "dvd", slug: films[0][0], name: films[0][1], films, from: "lib" }, e);
+        }
         const dv = e.target.closest(".lbs-tray .lbs-dvd, .lbs-pk, .lbs-sp-chip, .lbs-lib-film");
         if (dv && !e.target.closest("button")) { e.preventDefault(); grabDown({ kind: "dvd", slug: dv.dataset.slug, name: dv.dataset.name, from: dv.classList.contains("lbs-lib-film") ? "lib" : dv.classList.contains("lbs-sp-chip") ? "card" : "tray" }, e); }
       });
@@ -1031,10 +1042,15 @@
     if (catState === "loading") { hall.append(h("div", "lbs-loading", `<p>Opening the store…</p>`)); return; }
     if (stock && DESK_ONLY) {
       buildLibrary();
+      if (ONE_STORE && !BUILD_TAB && mineReady && houseLocal && !houseLocal.sweptGeneral) setTimeout(() => { try { sweepGeneral(); } catch (err) { console.warn("sweepGeneral", err); } }, 0);
       root.classList.add("lbs-desk-only");
       root.classList.toggle("lbs-browsing", !edit.on);
       if (!edit.on) desk.mode = "store";
       hall.innerHTML = deskHTML();
+      // Library, search and settings live in the top bar, to give the wall
+      // and the Library the whole height below it.
+      const fnd = $(".lbs-hall > .lbs-find", root), topbar = $(".lbs-top", root);
+      if (fnd && topbar) { fnd.classList.add("-intop"); topbar.insertBefore(fnd, $(".lbs-edit-toggle", topbar) || $(".lbs-close", topbar)); }
       desk.open = true;
       if (desk.folder === undefined) desk.folder = STOCKED;
       $(".lbs-drawer", root).hidden = false;
@@ -2975,6 +2991,26 @@
         st.phase = "done";
         await catSave();
       }
+      // 10 (on request). How many people have watched each film (Letterboxd's
+      //     "Watched by" count), for the Views filter.
+      if (st.phase === "views") {
+        st.views = st.views || {};
+        const lane = limiter(4);
+        const todo = [];
+        st.films.forEach(([slug], i) => { if (!(i in st.views)) todo.push([i, slug]); });
+        let n = 0;
+        await Promise.all(todo.map(([i, slug]) => lane(async () => {
+          if (!catJob.running) throw new Error("paused");
+          for (let tries = 0; tries < 4; tries++) {
+            try { st.views[i] = await catWatches(slug); catJob.reqs++; break; }
+            catch (err) { if (String(err).includes("paused")) throw err; await new Promise((ok) => setTimeout(ok, 1500 * (tries + 1))); }
+          }
+          if (!(i in st.views)) st.views[i] = 0;
+          if (++n % 400 === 0) { catJob.msg = `View counts: ${fmt(n)} / ${fmt(todo.length)}`; await catSave(); tick(); }
+        })));
+        st.phase = "done";
+        await catSave();
+      }
       // 9 (on request). Film facts from TMDB for every film it knows: the
       //    companies that made it (for Studio), the top-billed cast (for
       //    search), the US age rating, plus country and keywords again.
@@ -3071,6 +3107,7 @@
     if (st.phase === "lists") return `Reading lists: ${fmt(done)} / ${fmt(lists.length)}`;
     if (st.phase === "types") return "Reading Letterboxd's Short and TV marks…";
     if (st.phase === "lids") return `Film details: matching IDs, page ${fmt(st.lidPage || 0)} / ${fmt(st.cutPage)}`;
+    if (st.phase === "views") return `View counts: ${fmt(Object.keys(st.views || {}).length)} films so far`;
     if (st.phase === "facts") return `Film facts from TMDB: ${fmt(Object.keys(st.fx || {}).length)} films so far`;
     if (st.phase === "deep") return `Finding the rest on TMDB: ${fmt(Object.keys(st.tmdb || {}).length)} looked up · ${fmt(Object.values(st.tmdb || {}).filter(Boolean).length)} found`;
     if (st.phase === "keywords") return `TMDB keywords: ${fmt(Object.keys(st.kw || {}).length)} films so far`;
@@ -3093,7 +3130,7 @@
       (catJob.error ? `<p class="-err">${esc(catJob.error)}</p>` : "") +
       `<div class="lbs-logobuild-row">` +
       (catJob.running ? `<button type="button" data-act="cat-stop">Pause</button>` : st && st.phase === "done" && neededLists().every((k) => st.lists[k]) ? "" : `<button type="button" data-act="cat-start" class="-go">${st && (st.films.length || Object.keys(st.probes).length) ? "Continue" : "Start"}</button>`) +
-      (st && st.phase === "done" ? `<button type="button" data-act="cat-save" class="-go">Download catalogue</button><button type="button" data-act="cat-try">Try it here</button>` + (catJob.running ? "" : `<button type="button" data-act="cat-details" title="Runtime, primary language and directors for every film (about an hour)">${st.info ? "Re-read film details" : "Read film details"}</button><button type="button" data-act="cat-keywords" title="TMDB keywords for every film, for the Tags filter (about an hour; needs your TMDB key)">${st.kw ? "Finish TMDB keywords" : "Read TMDB keywords"}</button><button type="button" data-act="cat-deep" title="Find the films the Logo builder never matched on TMDB, with their keywords and country (about two hours)">${st.tmdb ? "Finish finding the rest on TMDB" : "Find the rest on TMDB"}</button><button type="button" data-act="cat-facts" title="Studios, top-billed cast and US age rating for every film TMDB knows (run after Find the rest; about 1–2 hours)">${st.fx ? "Finish film facts from TMDB" : "Film facts from TMDB"}</button>`) : "") +
+      (st && st.phase === "done" ? `<button type="button" data-act="cat-save" class="-go">Download catalogue</button><button type="button" data-act="cat-try">Try it here</button>` + (catJob.running ? "" : `<button type="button" data-act="cat-details" title="Runtime, primary language and directors for every film (about an hour)">${st.info ? "Re-read film details" : "Read film details"}</button><button type="button" data-act="cat-keywords" title="TMDB keywords for every film, for the Tags filter (about an hour; needs your TMDB key)">${st.kw ? "Finish TMDB keywords" : "Read TMDB keywords"}</button><button type="button" data-act="cat-deep" title="Find the films the Logo builder never matched on TMDB, with their keywords and country (about two hours)">${st.tmdb ? "Finish finding the rest on TMDB" : "Find the rest on TMDB"}</button><button type="button" data-act="cat-facts" title="Studios, top-billed cast and US age rating for every film TMDB knows (run after Find the rest; about 1–2 hours)">${st.fx ? "Finish film facts from TMDB" : "Film facts from TMDB"}</button><button type="button" data-act="cat-views" title="How many people watched each film, for the Views filter (Letterboxd, about two hours)">${st.views ? "Finish view counts" : "Read view counts"}</button>`) : "") +
       (!BUILD_TAB ? `<p class="lbs-menu-note">Long runs: <a href="/films/#store-builder" target="_blank" rel="noopener">open the builder in its own tab</a> and keep sorting here. That tab never saves your shelves.</p>` : `<p class="lbs-menu-note">Builder tab: your shelves are read-only here, so sort in your other tab.</p>`) +
       (!catJob.running && st ? `<button type="button" data-act="cat-reset">Start over</button>` : "") +
       `<button type="button" data-act="cat-close">Close</button></div>`;
@@ -3119,6 +3156,7 @@
       out.people = people;
       out.langNames = st.langNames || {};
     }
+    if (st.views) out.views = st.films.map((f, i) => st.views[i] || 0);
     if (st.fx) {
       // Companies (2+ films) and top-billed cast (2+ films): names once, and
       // each film's as indexes (fco / fcast; 0 for none); US age ratings.
@@ -4399,6 +4437,13 @@
           // The main other title: Letterboxd shows it right under the film's
           // name (the original-language title, e.g. "El habitante").
           original: (d.querySelector("h2.originalname")?.textContent || "").trim(),
+          // The trailer Letterboxd links on the film's page (a YouTube video).
+          trailer: (() => {
+            const a = d.querySelector(".js-video-zoom[href], [data-trailer-url], a[href*='youtube.com/embed/'], a[href*='youtube.com/watch']");
+            const u = a ? a.getAttribute("href") || a.getAttribute("data-trailer-url") || "" : "";
+            const m = (u + " " + t).match(/youtube(?:-nocookie)?\.com\/(?:embed\/|watch\?v=)([\w-]{11})/);
+            return m ? m[1] : "";
+          })(),
           originalLang: d.querySelector("h2.originalname")?.getAttribute("lang") || "",
           // Letterboxd's ids for this film, for Watched / Like / Watchlist.
           ...(() => {
@@ -4545,6 +4590,7 @@
     like: `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20.5s-7.5-4.6-9.2-9.4C1.7 7.8 4 4.5 7.4 4.5c2 0 3.4 1.1 4.6 2.7 1.2-1.6 2.6-2.7 4.6-2.7 3.4 0 5.7 3.3 4.6 6.6-1.7 4.8-9.2 9.4-9.2 9.4z" fill="currentColor"/></svg>`,
     wl: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 7.5V12l3 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`,
     block: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="M6 6l12 12" stroke="currentColor" stroke-width="2.2"/></svg>`,
+    trailer: `<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="5" width="19" height="14" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M10 9v6l5-3z" fill="currentColor"/></svg>`,
     more: `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5.5" cy="12" r="2" fill="currentColor"/><circle cx="12" cy="12" r="2" fill="currentColor"/><circle cx="18.5" cy="12" r="2" fill="currentColor"/></svg>`,
   };
   function lbRowHTML(slug, name, det) {
@@ -4559,6 +4605,7 @@
       b("lb-like", "like", me.liked ? "Liked" : "Like", me.liked, "-like") +
       b("lb-wl", "wl", "Watchlist", me.inWatchlist, "-wl") +
       (ni && ni.toggle ? b("lb-block", "block", blocked ? "Blocked" : "Block", blocked, "-block") : "") +
+      (det.trailer ? `<button type="button" class="lbs-lb -trailer" data-act="lb-trailer" data-yt="${esc(det.trailer)}" data-name="${esc(name)}" title="Trailer">${LB_ICONS.trailer}<span>Trailer</span></button>` : "") +
       `<span class="lbs-lb-wrap"><button type="button" class="lbs-lb -more" data-act="lb-more" aria-haspopup="menu" title="More">${LB_ICONS.more}<span>More</span></button>` +
       `<div class="lbs-lb-menu lbs-menu" role="menu" hidden>` +
       `<a href="/film/${esc(slug)}/" target="_blank" rel="noopener">Rate, review or log ↗</a>` +
@@ -4785,7 +4832,11 @@
   // sel: the selected film (what Move here moves). focus: whatever you clicked
   // last, a film or a folder: that's where Jump to section takes you.
   const LIB_VMAX = 150, LIB_VROW = 42; // past this many, a column draws only the rows in view
-  const libUI = { open: !!mine.libOpen, path: [STOCKED], sel: null, focus: null, adding: null };
+  const libUI = { open: !!mine.libOpen, path: [STOCKED], sel: null, focus: null, adding: null, msel: new Map(), fsel: new Set(), anchor: null, noFilter: !!(mine.lv && mine.lv.noFilter) };
+  // "General" folders don't show in the Library: their films sit right in the
+  // folder above (a genre's under its "rest" category, a category's in /general).
+  const isGeneral = (id) => /\/general$/.test(id) || (/\/rest$/.test(id) && lib.cats.has(id) && lib.cats.get(id).subs.every((x) => /\/general$/.test(x)));
+  const looseOf = (id) => (lib.genres.has(id) ? `${id}/rest/general` : lib.cats.has(id) ? `${id}/general` : null);
   function kidsOf(id) {
     if (!id) return { folders: [...lib.genres.keys()], films: [] };
     if (id === UNCAT) return { folders: [], films: lib.inSub.get(UNCAT_SUB) || [] };
@@ -4793,8 +4844,13 @@
     const p = partsOf(id);
     if (p.niche) return { folders: [], films: lib.inSub.get(id) || [] };
     if (p.sub) return { folders: (lib.subs.get(id).niches || []).slice(), films: lib.inSub.get(id) || [] };
-    if (p.cat) return { folders: lib.cats.get(id).subs.slice(), films: [] };
-    if (p.genre) return { folders: lib.genres.get(id).cats.slice(), films: [] };
+    if (p.cat) return { folders: lib.cats.get(id).subs.filter((x) => !isGeneral(x)), films: lib.inSub.get(looseOf(id)) || [] };
+    if (p.genre) {
+      const rest = `${id}/rest`, rc = lib.cats.get(rest);
+      // a genre's own "rest" category: its extra folders show here, its films too
+      const extra = rc ? rc.subs.filter((x) => !isGeneral(x)) : [];
+      return { folders: [...lib.genres.get(id).cats.filter((x) => !isGeneral(x) && x !== rest), ...extra], films: lib.inSub.get(looseOf(id)) || [] };
+    }
     return { folders: [], films: [] };
   }
   const childLevel = (id) => { if (!id || id === UNCAT) return null; const p = partsOf(id); return p.niche ? null : p.sub ? "niche" : p.cat ? "sub" : p.genre ? "cat" : null; };
@@ -4843,18 +4899,20 @@
       box = $(".lbs-lib-pane.-f", shell);
     }
     box.dataset.mode = "folders";
-    libUI.path = libUI.path.filter((id) => lib.genres.has(id) || lib.cats.has(id) || lib.subs.has(id) || (String(id).startsWith("fr:") && lib.frs[id.slice(3)]));
+    libUI.path = libUI.path.filter((id) => (lib.genres.has(id) || lib.cats.has(id) || lib.subs.has(id) || (String(id).startsWith("fr:") && lib.frs[id.slice(3)])) && !isGeneral(id));
     const path = libUI.path;
     const right = path.length ? path[path.length - 1] : null;
     const left = path.length >= 2 ? path[path.length - 2] : null;
     const held = new Set(heldList().map(([x]) => x));
     const sel = libUI.sel;
     const selAt = sel ? lib.place.get(sel[0]) : null;
-    const selPath = selAt ? (() => { const p = partsOf(selAt); return [p.genre, p.cat, p.sub, p.niche].filter(Boolean); })() : [];
+    const selPath = selAt ? (() => { const p = partsOf(selAt); return [p.genre, p.cat, p.sub, p.niche].filter((x) => x && !isGeneral(x)); })() : [];
+    const msel = libUI.msel, fsel = libUI.fsel;
     const canDel = (id) => toHouse() && id !== UNCAT && id !== UNCAT_CAT && !/\/general$/.test(id);
     const canEdit = (id) => toHouse() && id !== UNCAT && id !== UNCAT_CAT && !/\/general$/.test(id);
-    // Side by side with the list: only the films its filters let through.
-    const allow = lv.mode === "both" && lv.match && (lvActive() || lv.q) ? lv.match : null;
+    // Side by side with the list: only the films its filters let through
+    // (unless the folders are set to ignore the filters).
+    const allow = lv.mode === "both" && !libUI.noFilter && lv.match && (lvActive() || lv.q) ? lv.match : null;
     let fcount = null;
     if (allow) {
       fcount = new Map();
@@ -4869,7 +4927,7 @@
     const folderRow = (id, side) => {
       if (libUI.renaming === id) return `<li class="lbs-lib-new"><input type="text" class="lbs-lib-rename" data-id="${esc(id)}" maxlength="40" value="${esc(nameOf(id))}"></li>`;
       const n = fcount ? fcount.get(id) || 0 : lib.count.get(id) || 0;
-      return `<li class="lbs-lib-row lbs-folder${path.includes(id) ? " -on" : ""}${fcount && !n ? " -dim" : ""}" data-act="lib-open" data-side="${side}" data-id="${esc(id)}" data-drop="${esc(id)}"${canEdit(id) && !lib.genres.has(id) ? ' data-lfold="1"' : ""}>` +
+      return `<li class="lbs-lib-row lbs-folder${path.includes(id) ? " -on" : ""}${fsel.has(id) ? " -msel" : ""}${fcount && !n ? " -dim" : ""}" data-act="lib-open" data-side="${side}" data-id="${esc(id)}" data-drop="${esc(id)}"${canEdit(id) && !lib.genres.has(id) ? ' data-lfold="1"' : ""}>` +
       `${ICON_FOLDER}<span>${esc(nameOf(id))}</span>` +
       (selPath.includes(id) ? `<em>here</em>` : "") +
       `<small>${fcount ? `${fmt(n)} / ${fmt(lib.count.get(id) || 0)}` : fmt(n)}</small>` +
@@ -4878,7 +4936,7 @@
       `<b>›</b></li>`;
     };
     const filmRow = ([slug, name]) =>
-      `<li class="lbs-lib-row lbs-lib-film${sel && sel[0] === slug ? " -sel" : ""}" data-act="lib-film" data-film="${esc(slug)}" data-slug="${esc(slug)}" data-name="${esc(name)}" title="Drag onto a folder, the wall or your inventory">` +
+      `<li class="lbs-lib-row lbs-lib-film${msel.has(slug) || (sel && sel[0] === slug) ? " -sel" : ""}" data-act="lib-film" data-film="${esc(slug)}" data-slug="${esc(slug)}" data-name="${esc(name)}" title="Drag onto a folder, the wall or your inventory">` +
       `<img data-lp="${esc(slug)}" src="${posterCache.has(slug) ? esc(posterCache.get(slug)[0]) : EMPTY}" alt="" draggable="false"><span>${esc(titleOf(name))}</span><small>${yearOf(name) || ""}</small>` +
       (held.has(slug) ? `<em class="-inv">In inventory</em>` : "") + `</li>`;
     // A franchise is a folder of its own, where its films sit, in franchise order.
@@ -4937,11 +4995,17 @@
       `<div class="lbs-lib-head">` +
       `<button type="button" class="lbs-lib-up" data-act="lib-up" aria-label="Up a level" title="Up a level"${path.length ? "" : " disabled"}>${ICON_LEFT}</button>` + libModeHTML() +
       `<div class="lbs-lib-crumbs"><button type="button" data-act="lib-root">Library</button>${path.map((id, i) => `<i>›</i><button type="button" data-act="lib-to" data-i="${i}" data-drop="${esc(id)}" class="lbs-crumb">${esc(nameOf(id))}</button>`).join("")}</div>` +
+      (lv.mode === "both" ? `<button type="button" class="lbs-lib-nofilter${libUI.noFilter ? "" : " -on"}" data-act="lib-nofilter" title="${libUI.noFilter ? "The folders show every film. Click to let the list's filters narrow them." : "The list's filters narrow the folders. Click to show every film."}">Filtered</button>` : "") +
       `<button type="button" class="lbs-lib-x" data-act="lib" aria-label="Close the Library">${ICON_CLOSE}</button></div>` +
       (pick ? `<div class="lbs-lib-pick">Moving <b>${pick.films.length === 1 ? esc(titleOf(pick.films[0][1])) : `${fmt(pick.films.length)} films`}</b>: open the folder ${pick.films.length === 1 ? "it belongs" : "they belong"} in${edit.on ? ", or make one" : ", or make a new one"}.</div>` : "") +
       `<div class="lbs-lib-cols">${column(left, "left")}${path.length ? column(right, "right") : `<div class="lbs-lib-col -right"><p class="lbs-lib-hint">Pick a genre</p></div>`}</div>` +
       `<div class="lbs-lib-foot">` +
-      (pick
+      (!pick && (msel.size > 1 || fsel.size)
+        ? `<div class="lbs-lib-acts"><b class="lbs-lib-mcount">${[msel.size > 1 ? `${fmt(msel.size)} films` : "", fsel.size ? `${fmt(fsel.size)} folder${fsel.size === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · ")} selected</b>` +
+          (msel.size > 1 ? `<button type="button" class="-go" data-act="lib-mmove">Move to…</button><button type="button" data-act="lib-mhold">Add to inventory</button>` : `<span class="lbs-lib-tip">Drag them onto a folder.</span>`) +
+          (msel.size > 1 && ONE_STORE ? `<button type="button" class="-link" data-act="lib-mremove">Remove from store</button>` : "") +
+          `<button type="button" class="-link" data-act="lib-mnone">Deselect</button></div>`
+        : pick
         ? `<div class="lbs-lib-acts"><button type="button" class="-go" data-act="lib-pick-go"${pickTo ? "" : " disabled"}>${pickTo ? `Move ${pick.films.length === 1 ? "it" : `all ${fmt(pick.films.length)}`} to ${esc(pathOf(pickTo).slice(-2).join(" › "))}` : `Open a folder to move ${pick.films.length === 1 ? "it" : "them"} into`}</button>` +
           `<button type="button" data-act="lib-pick-cancel">Cancel</button></div>`
         : sel
@@ -5006,7 +5070,7 @@
     sel: new Set(), selecting: false, anchor: null, cursor: null,
     base: null, baseKey: null, rows: [], pos: new Map(),
   };
-  const saveLv = () => { mine.lv = { mode: lv.mode, f: lv.f, all: lv.all, y0: lv.y0, y1: lv.y1, sort: lv.sort, hideFilters: !lv.showFilters }; saveMine(); };
+  const saveLv = () => { mine.lv = { mode: lv.mode, f: lv.f, all: lv.all, y0: lv.y0, y1: lv.y1, sort: lv.sort, hideFilters: !lv.showFilters, noFilter: libUI.noFilter }; saveMine(); };
 
   // What the catalogue knows about each film: genres, countries, languages,
   // and (once the builder has read film details) runtime and primary language.
@@ -5500,10 +5564,13 @@
 
   const CERTS = [["G", "G"], ["PG", "PG"], ["PG-13", "PG-13"], ["R", "R"], ["NC-17", "NC-17"], ["NR", "Not rated"]];
   const certBucket = (c) => (["G", "PG", "PG-13", "R", "NC-17"].includes(c) ? c : c === "X" ? "NC-17" : c === "M" || c === "GP" ? "PG" : "NR");
-  const RATING_BANDS = [["4", "4★ and up"], ["35", "3.5–4★"], ["3", "3–3.5★"], ["25", "2.5–3★"], ["0", "Under 2.5★"]];
-  const ratingBand = (r) => (r >= 400 ? "4" : r >= 350 ? "35" : r >= 300 ? "3" : r >= 250 ? "25" : "0");
-  const RUNTIME_BANDS = [["s", "Under 90 min"], ["m", "90 min – 2 h"], ["l", "2 – 2½ h"], ["xl", "2½ h and up"]];
-  const runtimeBand = (m) => (m < 90 ? "s" : m < 120 ? "m" : m < 150 ? "l" : "xl");
+  // Letterboxd rating: one band per half star (4.5–5★ … 0–½★).
+  const halfStar = (h) => (h === 0 ? "0" : `${Math.floor(h / 2) || ""}${h % 2 ? "½" : ""}`);
+  const RATING_BANDS = [9, 8, 7, 6, 5, 4, 3, 2, 1, 0].map((k) => [String(k), `${halfStar(k)}–${halfStar(k + 1)}★`]);
+  const ratingBand = (r) => String(Math.min(9, Math.floor(r / 50)));
+  // Runtime: 15-minute steps to 90, then half hours.
+  const RUNTIME_BANDS = [["0", "0–15 min"], ["15", "15–30 min"], ["30", "30–45 min"], ["45", "45–60 min"], ["60", "60–75 min"], ["75", "75–90 min"], ["m", "90 min – 2 h"], ["l", "2 – 2½ h"], ["xl", "2½ h and up"]];
+  const runtimeBand = (m) => (m < 90 ? String(Math.floor(m / 15) * 15) : m < 120 ? "m" : m < 150 ? "l" : "xl");
   // A film's people and companies, as filter keys: d: director, c: cast, k: company
   function whoOf(C, i) {
     const out = [];
@@ -5647,7 +5714,21 @@
       tags = { keys: KW_TAGS.map(([id]) => id), names: KW_TAGS.map(([, label]) => label), per };
     }
 
-    facts = { cat: C, idx, genre, country, origin, lang, primary, short, tv, theme, mini, tags, studio, runtime: C.info ? (i) => (C.info[i] && C.info[i][1]) || 0 : null };
+    // View counts (the builder's "Read view counts"): bands cut where the
+    // films actually fall, at round numbers.
+    let views = null;
+    if (Array.isArray(C.views)) {
+      const vs = C.views.filter((x) => x > 0).sort((a, b) => a - b);
+      if (vs.length > 100) {
+        const nice = (x) => { const e = 10 ** Math.floor(Math.log10(x)); const m = x / e; return (m < 1.5 ? 1 : m < 2.25 ? 2 : m < 3.5 ? 2.5 : m < 7.5 ? 5 : 10) * e; };
+        const cuts = [...new Set([0.35, 0.6, 0.8, 0.92, 0.98, 0.995].map((q) => nice(vs[Math.floor(q * (vs.length - 1))])))].sort((a, b) => a - b);
+        const k = (x) => (x >= 1e6 ? `${+(x / 1e6).toFixed(1)}M` : x >= 1e3 ? `${+(x / 1e3).toFixed(1)}k` : String(x));
+        const bands = cuts.map((c, n) => [String(n + 1), n === cuts.length - 1 ? `${k(c)}+ views` : `${k(c)}–${k(cuts[n + 1])}`]).reverse();
+        bands.push(["0", `Under ${k(cuts[0])}`]);
+        views = { bands, of: (x) => { let n = 0; while (n < cuts.length && x >= cuts[n]) n++; return String(n); } };
+      }
+    }
+    facts = { cat: C, idx, genre, country, origin, lang, primary, short, tv, theme, mini, tags, studio, views, runtime: C.info ? (i) => (C.info[i] && C.info[i][1]) || 0 : null };
     return facts;
   }
 
@@ -5695,6 +5776,7 @@
           studio: i != null && F.studio && F.studio.per[i] ? F.studio.per[i].map(String) : [],
           cert: i != null && F.cat.fcert && F.cat.fcert[i] ? [certBucket(F.cat.certs[F.cat.fcert[i] - 1])] : [],
           rating: i != null ? (F.cat.films[i][2] || 0) : 0,
+          vband: i != null && F.views && F.cat.views[i] ? [F.views.of(F.cat.views[i])] : [],
           rband: i != null && F.cat.films[i][2] ? [ratingBand(F.cat.films[i][2])] : [],
           rtband: i != null && F.runtime && F.runtime(i) ? [runtimeBand(F.runtime(i))] : [],
           who: i != null ? whoOf(F.cat, i) : [],
@@ -5709,7 +5791,7 @@
       out.push({
         slug, name: S.name, year: S.year, i: S.i, key: S.key, rating: S.rating,
         path: [p.genre, p.cat, p.sub, p.niche].filter(Boolean),
-        v: { status, sgenre: [p.genre], scat: p.cat ? [p.cat] : [], ssub: [p.sub, p.niche].filter(Boolean), genre: S.genre, type: S.type, decade: S.decade, lang: S.lang, country: S.country, pcountry: S.pcountry, tag: S.tag, studio: S.studio, cert: S.cert, rband: S.rband, rtband: S.rtband, who: S.who, theme: S.theme, mini: S.mini },
+        v: { status, sgenre: [p.genre], scat: p.cat ? [p.cat] : [], ssub: [p.sub, p.niche].filter(Boolean), genre: S.genre, type: S.type, decade: S.decade, lang: S.lang, country: S.country, pcountry: S.pcountry, tag: S.tag, studio: S.studio, cert: S.cert, rband: S.rband, rtband: S.rtband, vband: S.vband, lock: [String(lockOf(slug))], who: S.who, theme: S.theme, mini: S.mini },
       });
     }
     lv.base = out; lv.baseLib = lib; lv.baseLay = wall.lay; lv.baseKey = key;
@@ -5736,14 +5818,16 @@
     if (F && F.studio) gs.push({ id: "studio", label: "Studio", vals: F.studio.keys.map((k, n) => [String(n), F.studio.names[n], STUDIOS[n][2].replace(/\\/g, "").replace(/\|/g, " ").toLowerCase()]), many: true, find: "studio (try Disney, A24, Bad Robot…)" });
     if (F && F.cat.fcert) gs.push({ id: "cert", label: "Age rating (US)", vals: CERTS });
     gs.push({ id: "rband", label: "Letterboxd rating", vals: RATING_BANDS });
+    if (F && F.views) gs.push({ id: "vband", label: "Views (Letterboxd)", vals: F.views.bands });
+    gs.push({ id: "lock", label: "Locks", vals: [["0", "Unlocked"], ["1", "1 lock"], ["2", "2 locks"], ["3", "3 locks"], ["4", "4 locks"]] });
     if (F && F.runtime) gs.push({ id: "rtband", label: "Runtime", vals: RUNTIME_BANDS });
     // Search also matches the tag's keywords (its slug), plus a few common words.
     const THEME_WORDS = { "biography-artists-musician-songs-emotional": "biopic biographical" };
     const tagVals = (T) => T.keys.map((k, n) => [String(n), T.names[n], `${k.replace(/-/g, " ")} ${THEME_WORDS[k] || ""}`.toLowerCase()]);
-    if (F && F.tags) gs.push({ id: "tag", label: "Tags", vals: F.tags.keys.map((k, n) => [String(n), F.tags.names[n], KW_TAGS[n][2].replace(/\\/g, "").replace(/\|/g, " ").toLowerCase()]), many: true, find: "tag (try LGBTQ, heist, musical…)" });
+    if (F && F.tags) gs.push({ id: "tag", label: "Tags", vals: F.tags.keys.map((k, n) => [String(n), F.tags.names[n], KW_TAGS[n][2].replace(/\\/g, "").replace(/\|/g, " ").toLowerCase()]), many: true, clip: 2, find: "tag (try LGBTQ, heist, musical…)" });
     else gs.push({ id: "tag", label: "Tags", vals: [], note: "Tags need TMDB keywords (Catalogue builder › Read TMDB keywords)" });
-    if (F && F.theme && F.theme.keys.length) gs.push({ id: "theme", label: "Theme", vals: tagVals(F.theme), many: true, find: "theme" });
-    if (F && F.mini && F.mini.keys.length) gs.push({ id: "mini", label: "Mini-theme", vals: tagVals(F.mini), many: true, find: "mini-theme (try biopic, heist, zombies…)" });
+    if (F && F.theme && F.theme.keys.length) gs.push({ id: "theme", label: "Theme", vals: tagVals(F.theme), many: true, clip: 2, find: "theme" });
+    if (F && F.mini && F.mini.keys.length) gs.push({ id: "mini", label: "Mini-theme", vals: tagVals(F.mini), many: true, clip: 2, find: "mini-theme (try biopic, heist, zombies…)" });
     gs.push({ id: "type", label: "Type", vals: LV_TYPES, note: F && (F.short || F.runtime) ? "" : "Feature and Short need film details (Catalogue builder › Film details)" });
     const decs = [];
     for (let d = 1890; d <= 2020; d += 10) decs.push([`${d}s`, `${d}s`]);
@@ -5820,7 +5904,7 @@
       if (g.many) vals.sort((a, b) => (c.get(b[0]) || 0) - (c.get(a[0]) || 0));
       const ql = (lv.more[g.id + ":q"] || "").toLowerCase();
       if (ql) vals = vals.filter(([, n, kw]) => n.toLowerCase().includes(ql) || (kw && kw.includes(ql)));
-      const shown = g.many && !lv.more[g.id] ? vals.filter(([v], n) => n < 16 || st[v]) : vals;
+      const shown = g.many && !lv.more[g.id] ? vals.filter(([v], n) => n < (g.clip || 16) || st[v]) : vals;
       const chip = ([v, label]) => {
         const s = st[v] || 0, n = c.get(v) || 0;
         return `<button type="button" class="lbs-chip${s === 1 ? " -in" : s === -1 ? " -out" : ""}${n || s ? "" : " -zero"}" data-act="lv-chip" data-g="${g.id}" data-v="${esc(v)}" title="Click: only these · again: exclude · again: off">${s === -1 ? "−" : s === 1 ? "+" : ""}${esc(label)}<em>${fmt(n)}</em></button>`;
@@ -5847,12 +5931,12 @@
     if (box.dataset.mode !== "list") {
       box.dataset.mode = "list";
       box.innerHTML =
-        `<div class="lbs-lib-head">${libModeHTML()}<span class="lbs-lv-headbtns"></span><span class="lbs-lib-gap"></span>` +
+        `<div class="lbs-lib-head -lv">${libModeHTML()}` +
+        `<label class="lbs-lv-search">${ICON_SEARCH}<input type="search" class="lbs-lv-q" placeholder="Filter by title" autocomplete="off" spellcheck="false"></label>` +
+        `<div class="lbs-seg lbs-lv-sort"></div><button type="button" class="lbs-lv-ftoggle" data-act="lv-filters"></button>` +
         `<button type="button" class="lbs-lib-x" data-act="lib" aria-label="Close the Library">${ICON_CLOSE}</button></div>` +
-        `<div class="lbs-lv-tools"><label class="lbs-lv-search">${ICON_SEARCH}<input type="search" class="lbs-lv-q" placeholder="Filter by title" autocomplete="off" spellcheck="false"></label>` +
-        `<div class="lbs-seg lbs-lv-sort"></div><button type="button" class="lbs-lv-ftoggle" data-act="lv-filters"></button></div>` +
         `<div class="lbs-lv-filters"></div>` +
-        `<div class="lbs-lv-meta"></div>` +
+        `<div class="lbs-lv-meta"><span class="lbs-lv-headbtns"></span><span class="lbs-lv-metatext"></span></div>` +
         `<div class="lbs-lv-list" tabindex="0" role="listbox" aria-multiselectable="true"><div class="lbs-lv-spacer"></div></div>` +
         `<div class="lbs-lib-foot"></div>`;
       const list = $(".lbs-lv-list", box);
@@ -5887,7 +5971,7 @@
     $(".lbs-lv-headbtns", box).innerHTML =
       `<button type="button" class="lbs-lv-check${lv.selecting ? " -on" : ""}" data-act="lv-selmode" aria-pressed="${lv.selecting}" title="Select films (Shift- or Option-click also starts this)">✓</button>` +
       (lv.selecting ? `<button type="button" class="lbs-lv-all" data-act="${allSel ? "lv-none" : "lv-all"}">${allSel ? "Deselect all in list" : "Select all in list"}</button>` : "");
-    $(".lbs-lv-meta", box).innerHTML = `<b>${fmt(lv.nFilms)}</b> film${lv.nFilms === 1 ? "" : "s"}${lv.sel.size ? ` · ${fmt(lv.sel.size)} selected` : ""}${nAct || lv.q ? ` · <button type="button" data-act="lv-reset">Clear all filters</button>` : ""}`;
+    $(".lbs-lv-metatext", box).innerHTML = `<b>${fmt(lv.nFilms)}</b> film${lv.nFilms === 1 ? "" : "s"}${lv.sel.size ? ` · ${fmt(lv.sel.size)} selected` : ""}${nAct || lv.q ? ` · <button type="button" data-act="lv-reset">Clear all filters</button>` : ""}`;
     lvFoot(box);
   }
   const lvHost = () => root && ($(".lbs-library .lbs-lib-pane.-l", root) || $(".lbs-library", root));
@@ -6611,6 +6695,7 @@
 
   function dropDvd(slug, name, t) {
     const cid = t.cid;
+    if (!t.same && lockBlocks(slug, t.sub || `${cid}/general`)) { toast(`‘${titleOf(name)}’ is locked to ${lockAnc(slug).slice(0, lockOf(slug)).map(nameOf).join(" › ")}.`); return drawSoon(); }
     const order = sectionOrder(cid).map((f) => f.slug).filter((x) => x !== slug);
     let at = t.target ? order.indexOf(t.target) + (t.after ? 1 : 0) : order.length;
     if (at < 0) at = order.length;
@@ -6647,7 +6732,7 @@
         d.ghost.style.setProperty("--h", hueOfBlock(cid));
         d.ghost.style.width = `${Math.max(30, Math.min(CAP, grabSize(d)) * wall.cam.z)}px`;
       } else if (d.kind === "folder") {
-        d.ghost = h("div", "lbs-ghost", `${ICON_FOLDER} ${esc(nameOf(d.id))}`);
+        d.ghost = h("div", "lbs-ghost", `${ICON_FOLDER} ${d.ids && d.ids.length > 1 ? `${fmt(d.ids.length)} folders` : esc(nameOf(d.id))}`);
       } else if (d.films && d.films.length > 1) {
         d.ghost = h("div", "lbs-ghost", `${fmt(d.films.length)} films`);
       } else {
@@ -6716,9 +6801,12 @@
       if (hint) toast("No room on that shelf.");
       return drawSoon();
     }
+    // Every finished drag leaves nothing selected.
+    if (d.kind !== "piece") setTimeout(() => { deselectAll(); renderLibrary(); }, 0);
     if (d.kind === "folder") {
       const f = el && el.closest && el.closest(".lbs-folder[data-drop], .lbs-crumb[data-drop]");
-      if (f && f.dataset.drop && f.dataset.drop !== d.id) moveFolder(d.id, f.dataset.drop);
+      const to = f && f.dataset.drop;
+      if (to) moveFolders((d.ids || [d.id]).filter((x) => x !== to), to);
       return drawSoon();
     }
     // A DVD (or several, from the Library's list)
@@ -6818,6 +6906,39 @@
       H.names[id] = name;
     });
   }
+  function deselectAll() {
+    libUI.sel = null; libUI.msel = new Map(); libUI.fsel = new Set(); libUI.anchor = null; libUI.focus = null;
+    lv.sel = new Set(); lv.selecting = false; lv.anchor = null;
+  }
+  function moveFolders(ids, target) { for (const id of ids) moveFolder(id, target); }
+  /* Once: folders someone made and named "General" are emptied into the
+   * folder above (films there sit loose, under its folders) and removed. */
+  function sweepGeneral() {
+    const H0 = house();
+    if (!H0 || H0.sweptGeneral) return;
+    const named = (id) => /^general$/i.test(String(nameOf(id) || "").trim());
+    const cats = [...lib.cats.keys()].filter((id) => named(id) && !isGeneral(id) && !/\/rest$/.test(id) && id !== UNCAT_CAT);
+    const subs = [...lib.subs.keys()].filter((id) => named(id) && !/\/general$/.test(id));
+    let films = 0;
+    houseEdit(cats.length || subs.length ? `Emptied ${fmt(cats.length + subs.length)} “General” folder${cats.length + subs.length === 1 ? "" : "s"} into the folder above.` : "", (H) => {
+      H.sweptGeneral = true;
+      H.moved = { ...(H.moved || {}) };
+      const out = (fromSubs, to) => { for (const sid of fromSubs) for (const [slug, name] of lib.inSub.get(sid) || []) { H.place[slug] = [to, name]; films++; } };
+      for (const sid of subs) {
+        const sc = lib.subs.get(sid);
+        out([sid], sc.parent ? sc.parent : `${sc.cat}/general`);
+        for (const n of sc.niches || []) H.moved[n] = { cat: sc.cat };
+        if (!H.hidden.includes(sid)) H.hidden.push(sid);
+      }
+      for (const cid of cats) {
+        const c = lib.cats.get(cid);
+        out([`${cid}/general`], `${c.genre}/rest/general`);
+        for (const sid of c.subs) if (!/\/general$/.test(sid)) H.moved[sid] = { cat: `${c.genre}/rest` };
+        if (!H.hidden.includes(cid)) H.hidden.push(cid);
+      }
+    });
+    return films;
+  }
   // Drag a folder onto another: a category into a genre, a subcat into a
   // category (or into another subcat, as a niche).
   const isAncestor = (a, id) => { const p = partsOf(id); return [p.genre, p.cat, p.sub].includes(a); };
@@ -6826,6 +6947,7 @@
     if (isAncestor(id, target)) return toast("A folder can't go inside itself.");
     const label = `“${nameOf(id)}” → ${pathOf(target).join(" › ")}`;
     if (lib.cats.has(id)) {
+      if (lib.cats.has(target) || lib.subs.has(target)) return demoteCat(id, target, label);
       if (!lib.genres.has(target) || target === UNCAT) return toast("A category goes into a genre.");
       if (lib.cats.get(id).genre === target) return;
       return houseEdit(label, (H) => { H.moved = { ...(H.moved || {}), [id]: { genre: target } }; H.order = H.order.filter((x) => x !== id); });
@@ -6845,7 +6967,42 @@
       if (sc.parent === target) return;
       return houseEdit(label, (H) => { H.moved = { ...(H.moved || {}), [id]: { cat: ts.cat, parent: target } }; });
     }
-    if (lib.genres.has(target)) return toast("Put a subcat in a category, not straight into a genre.");
+    if (lib.genres.has(target)) return promoteSub(id, target, label);
+  }
+  // Folders change level when they move: a subcat dropped on a genre becomes
+  // a category (its niches become its subcats); a category dropped on a
+  // category becomes a subcat (its subcats become niches); dropped on a
+  // subcat, it becomes a niche. The films come along.
+  const filmsOf = (sid) => lib.inSub.get(sid) || [];
+  function promoteSub(id, genre, label) {
+    if (genre === UNCAT) return toast("Uncategorized only holds films.");
+    const sc = lib.subs.get(id);
+    houseEdit(label, (H) => {
+      const cid = freshId(`${genre}/h-${slugify(nameOf(id))}`);
+      H.cats[cid] = { genre, name: nameOf(id) };
+      H.moved = { ...(H.moved || {}) };
+      for (const [slug, name] of filmsOf(id)) H.place[slug] = [`${cid}/general`, name];
+      for (const n of sc.niches || []) H.moved[n] = { cat: cid };
+      if (!H.hidden.includes(id)) H.hidden.push(id);
+    });
+  }
+  function demoteCat(id, target, label) {
+    if (target === UNCAT_CAT) return toast("Uncategorized only holds films.");
+    const c = lib.cats.get(id), subs = c.subs.filter((x) => !/\/general$/.test(x));
+    const toSub = lib.subs.get(target);
+    if (toSub) {
+      if (toSub.parent) return toast("That's already a niche: it can't hold folders.");
+      if (subs.length) return toast("Only a category without subcats can become a niche.");
+    } else if (subs.some((x) => (lib.subs.get(x).niches || []).length)) return toast("Its subcats have niches of their own, and folders only go four levels deep.");
+    houseEdit(label, (H) => {
+      const cat = toSub ? toSub.cat : target;
+      const nid = freshId(`${target}/h-${slugify(nameOf(id))}`);
+      H.subs[nid] = toSub ? { cat, parent: target, name: nameOf(id) } : { cat, name: nameOf(id) };
+      H.moved = { ...(H.moved || {}) };
+      for (const [slug, name] of filmsOf(`${id}/general`)) H.place[slug] = [nid, name];
+      for (const sid of subs) H.moved[sid] = { cat, parent: nid };
+      if (!H.hidden.includes(id)) H.hidden.push(id);
+    });
   }
   // Take films out of the store (search finds them again: Add to store).
   function removeFilms(films) {
@@ -6915,9 +7072,41 @@
   /* ---------------- moving films ---------------- */
 
   // `films` = [[slug, name]]; `target` = any folder id.
+  /* Locks: a film can be locked to its folders, level by level (genre, then
+   * category, subcat, niche). Lock 1 keeps it in its genre; lock 2 in its
+   * category too; and so on. A locked film can still move deeper or sideways
+   * inside the locked folders. */
+  const visAnc = (sub) => {
+    if (!sub || sub === UNCAT_SUB || !lib.subs.has(sub)) return [];
+    const p = partsOf(sub);
+    return [p.genre, p.cat, p.sub, p.niche].filter((x) => x && x !== `${p.genre}/rest` && !/\/general$/.test(x));
+  };
+  const lockAnc = (slug) => visAnc(lib.place.get(slug));
+  const lockOf = (slug) => { const L = (house().locks || {})[slug] || 0; return L ? Math.min(L, lockAnc(slug).length) : 0; };
+  function lockBlocks(slug, sub) {
+    const L = lockOf(slug);
+    if (!L) return false;
+    const a = lockAnc(slug), t = visAnc(sub);
+    for (let k = 0; k < L; k++) if (t[k] !== a[k]) return true;
+    return false;
+  }
+  function setLocks(slugs, level) {
+    const name = slugs.length === 1 ? `‘${titleOf(lib.names.get(slugs[0]) || slugs[0])}’` : `${fmt(slugs.length)} films`;
+    houseEdit(level ? `${name}: locked to ${lockAnc(slugs[0]).slice(0, level).map(nameOf).join(" › ")}${slugs.length > 1 ? " (each in its own)" : ""}.` : `${name}: unlocked.`, (H) => {
+      H.locks = { ...(H.locks || {}) };
+      for (const x of slugs) { const L = Math.min(level, lockAnc(x).length); if (L) H.locks[x] = L; else delete H.locks[x]; }
+    });
+  }
   function moveFilms(films, target, opts = {}) {
     const sub = landingSub(target);
     if (!sub || !films.length) return;
+    // locked films stay inside their locked folders
+    const stay = films.filter(([x]) => lockBlocks(x, sub));
+    if (stay.length) {
+      films = films.filter(([x]) => !lockBlocks(x, sub));
+      toast(stay.length === 1 ? `‘${titleOf(stay[0][1])}’ is locked to ${lockAnc(stay[0][0]).slice(0, lockOf(stay[0][0])).map(nameOf).join(" › ")}, so it stayed.` : `${fmt(stay.length)} locked films stayed in their folders.`);
+      if (!films.length) return renderLibrary();
+    }
     // Moving part of a franchise: ask (move all of it, or take these out of it).
     if (!opts.fr && lib.frOf) {
       const inSet = new Set(films.map(([x]) => x));
@@ -7165,9 +7354,17 @@
     const b = (act, label, extra = "") => `<button type="button" role="menuitem" data-act="${act}"${slug ? ` data-slug="${esc(slug)}" data-name="${esc(name)}"` : ""}${extra}>${label}</button>`;
     const held = slug && heldList().some(([s2]) => s2 === slug);
     const inStore = slug && lib.place.has(slug);
+    // Locks, like a star rating: click the 2nd to lock levels 1–2.
+    const lockSlugs = many ? [...lv.sel].filter((x) => lib.place.has(x)) : inStore ? [slug] : [];
+    const avail = lockSlugs.length ? Math.min(...lockSlugs.map((x) => lockAnc(x).length)) : 0;
+    const cur = lockSlugs.length && lockSlugs.every((x) => lockOf(x) === lockOf(lockSlugs[0])) ? lockOf(lockSlugs[0]) : 0;
+    const anc = lockSlugs.length === 1 ? lockAnc(lockSlugs[0]) : [];
+    const locks = lockSlugs.length
+      ? `<div class="lbs-ctx-locks" role="group" aria-label="Locks">` + [1, 2, 3, 4].map((k) => `<button type="button" class="lbs-lock${k <= cur ? " -on" : ""}" data-act="f-lock" data-k="${k}" data-slugs="${esc(lockSlugs.join(" "))}"${k > avail ? " disabled" : ""} title="${k > avail ? "Not that many folders deep" : `Lock to ${anc.length ? esc(anc.slice(0, k).map(nameOf).join(" › ")) : `level ${k}`}`}">${ICON_LOCK}</button>`).join("") + `</div>`
+      : "";
     const html = many
-      ? `<b>${frId ? `${esc(lib.frs[frId].name)} · ` : ""}${fmt(lv.sel.size)} films</b>` + (frId ? `<button type="button" role="menuitem" data-act="fr-open" data-fr="${esc(frId)}">Open franchise</button>` : "") + b("lv-move", "Move to…") + b("lv-hold", "Add to inventory")+ b("lv-uncat", "Uncategorize") + (ONE_STORE ? b("lv-remove", "Remove from store") : "") + b("lv-clear", "Deselect all")
-      : `<b>${esc(titleOf(name))}</b>` +
+      ? `<b>${frId ? `${esc(lib.frs[frId].name)} · ` : ""}${fmt(lv.sel.size)} films</b>` + locks + (frId ? `<button type="button" role="menuitem" data-act="fr-open" data-fr="${esc(frId)}">Open franchise</button>` : "") + b("lv-move", "Move to…") + b("lv-hold", "Add to inventory")+ b("lv-uncat", "Uncategorize") + (ONE_STORE ? b("lv-remove", "Remove from store") : "") + b("lv-clear", "Deselect all")
+      : `<b>${esc(titleOf(name))}</b>` + locks +
         b("f-open", "Details") +
         (held ? b("f-return", "Take out of inventory") : b("f-hold", "Add to inventory", inStore ? "" : " disabled")) +
         b("f-jump", "Jump to section", inStore ? "" : " disabled") +
@@ -7184,6 +7381,30 @@
     m.style.top = `${Math.min(y - rr.top, rr.height - m.offsetHeight - 6)}px`;
     m.querySelector("button:not([disabled])")?.focus({ preventScroll: true });
   }
+  /* A trailer in a small floating player: drag it by its bar, ✕ to close. */
+  function openTrailer(yt, name) {
+    if (!yt) return;
+    let w = $(".lbs-trailer", root);
+    if (!w) {
+      w = h("div", "lbs-trailer", "");
+      root.append(w);
+      w.addEventListener("mousedown", (e) => {
+        const bar = e.target.closest(".lbs-trailer-bar");
+        if (!bar || e.target.closest("button")) return;
+        e.preventDefault();
+        const r = w.getBoundingClientRect(), rr = root.getBoundingClientRect(), dx = e.clientX - r.left, dy = e.clientY - r.top;
+        w.classList.add("-moving");
+        const mv = (ev) => { w.style.left = `${Math.max(0, Math.min(rr.width - r.width, ev.clientX - rr.left - dx))}px`; w.style.top = `${Math.max(0, Math.min(rr.height - 40, ev.clientY - rr.top - dy))}px`; w.style.right = "auto"; w.style.bottom = "auto"; };
+        const up = () => { w.classList.remove("-moving"); window.removeEventListener("mousemove", mv); window.removeEventListener("mouseup", up); };
+        window.addEventListener("mousemove", mv);
+        window.addEventListener("mouseup", up);
+      });
+    }
+    w.innerHTML = `<div class="lbs-trailer-bar"><b>${esc(titleOf(name || ""))}</b><span>Trailer</span><button type="button" data-act="tr-close" aria-label="Close the trailer">${ICON_CLOSE}</button></div>` +
+      `<iframe src="https://www.youtube-nocookie.com/embed/${encodeURIComponent(yt)}?autoplay=1&rel=0" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen title="Trailer"></iframe>`;
+    w.hidden = false;
+  }
+  function closeTrailer() { const w = root && $(".lbs-trailer", root); if (w) { w.innerHTML = ""; w.hidden = true; } }
   function closeFilmMenu() { root && root.querySelectorAll(".lbs-ctx").forEach((m) => m.remove()); }
   window.addEventListener("mousedown", (e) => { if (!e.target.closest || !e.target.closest(".lbs-ctx")) closeFilmMenu(); }, true);
   window.addEventListener("wheel", () => closeFilmMenu(), { passive: true, capture: true });
@@ -7589,6 +7810,14 @@
       const fs = btn.dataset.slug, fn = btn.dataset.name || (ui.film && ui.film.name) || fs;
       if (act === "f-close") return closeFilm();
       if (act === "f-open") return openFilm(fs, fn);
+      if (act === "lb-trailer") return openTrailer(btn.dataset.yt, btn.dataset.name);
+      if (act === "tr-close") return closeTrailer();
+      if (act === "f-lock") {
+        const slugs = btn.dataset.slugs.split(" ").filter(Boolean), k = +btn.dataset.k;
+        const cur = slugs.every((x) => lockOf(x) === lockOf(slugs[0])) ? lockOf(slugs[0]) : 0;
+        closeFilmMenu();
+        return setLocks(slugs, k === cur ? k - 1 : k); // click the top lit lock again to step back one
+      }
       if (act === "f-hold") {
         if (!lib.place.has(fs)) return toast(`‘${titleOf(fn)}’ isn't in the store yet, so it can't go in your inventory.`);
         holdFilms([[fs, fn]]); ui.pocket = true; renderPocket(); return toast(`‘${titleOf(fn)}’ is in your inventory.`);
@@ -7601,6 +7830,12 @@
       if (act === "lib-open") {
         if (wall.dragged) return;
         const fid = btn.dataset.id;
+        // Cmd/Ctrl-click (or Shift-click) a folder: highlight it, Finder style
+        if ((e.metaKey || e.ctrlKey || e.shiftKey) && btn.dataset.lfold) {
+          if (libUI.fsel.has(fid)) libUI.fsel.delete(fid); else libUI.fsel.add(fid);
+          return renderLibrary();
+        }
+        libUI.fsel = new Set();
         libUI.adding = null;
         if (btn.dataset.side === "left") libUI.path = libUI.path.length >= 2 ? [...libUI.path.slice(0, -1), fid] : [fid];
         else libUI.path = [...libUI.path, fid];
@@ -7609,12 +7844,36 @@
       }
       if (act === "lib-film") {
         if (wall.dragged) return;
-        libUI.sel = libUI.sel && libUI.sel[0] === fs ? null : [fs, fn];
+        const M = libUI.msel;
+        if (e.shiftKey && libUI.anchor) {
+          // Shift-click: everything between the last click and this one
+          const col = btn.closest(".lbs-lib-col"), side = col && col.classList.contains("-left") ? "left" : "right";
+          const order = (libUI.vcols[side] && libUI.vcols[side].slugs) || [...col.querySelectorAll(".lbs-lib-film")].map((x) => x.dataset.slug);
+          const a = order.indexOf(libUI.anchor), b = order.indexOf(fs);
+          if (a >= 0 && b >= 0) for (const x of order.slice(Math.min(a, b), Math.max(a, b) + 1)) M.set(x, lib.names.get(x) || x);
+          else M.set(fs, fn);
+        } else if (e.metaKey || e.ctrlKey || e.altKey) {
+          // Cmd/Ctrl/Option-click: highlight or unhighlight this one
+          if (M.has(fs)) M.delete(fs); else M.set(fs, fn);
+          libUI.anchor = fs;
+        } else {
+          const only = M.size === 1 && M.has(fs);
+          libUI.msel = new Map(only ? [] : [[fs, fn]]);
+          libUI.anchor = fs;
+          libUI.fsel = new Set();
+          // one click previews the film on the left (as Details would)
+          if (!only) openFilm(fs, fn); else closeFilm();
+        }
+        const m = libUI.msel;
+        libUI.sel = m.size === 1 ? [...m][0] : null;
         libUI.focus = libUI.sel ? { film: libUI.sel } : null;
-        // one click previews the film on the left (as Details would)
-        if (libUI.sel) openFilm(fs, fn); else closeFilm();
         return renderLibrary();
       }
+      if (act === "lib-nofilter") { libUI.noFilter = !libUI.noFilter; mine.lv = { ...(mine.lv || {}), noFilter: libUI.noFilter }; saveMine(); return renderLibrary(); }
+      if (act === "lib-mnone") { deselectAll(); return renderLibrary(); }
+      if (act === "lib-mmove") return openMovePick([...libUI.msel]);
+      if (act === "lib-mhold") { const films = [...libUI.msel]; deselectAll(); return holdFilms(films); }
+      if (act === "lib-mremove") { const films = [...libUI.msel]; return ask(`Remove <b>${fmt(films.length)} films</b> from the store? (Search finds them again: Add to store.)`, () => { deselectAll(); removeFilms(films); }, "Remove"); }
       if (act === "lib-unsel") { libUI.sel = null; lv.sel = new Set(); return renderLibrary(); }
       if (act === "lib-mode") { libUI.picking = null; lv.mode = btn.dataset.v; saveLv(); return renderLibrary(); }
       if (act === "lib-pick-cancel") { closeMovePick(); return renderLibrary(); }
@@ -7775,6 +8034,7 @@
       catJob.st.phase = catJob.st.info && catJob.st.info.some(Boolean) ? "details" : "lids";
       return runCatJob();
     }
+    if (act === "cat-views") { if (!catJob.st) return; catJob.st.phase = "views"; return runCatJob(); }
     if (act === "cat-facts") { if (!catJob.st) return; catJob.st.phase = "facts"; return runCatJob(); }
     if (act === "cat-deep") { if (!catJob.st) return; catJob.st.phase = "deep"; return runCatJob(); }
     if (act === "cat-keywords") { if (!catJob.st) return; catJob.st.phase = "keywords"; return runCatJob(); }
