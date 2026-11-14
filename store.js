@@ -4478,7 +4478,6 @@
     ui.details.set(slug, p);
     return p;
   }
-  const caseName = (y) => FORMATS.find(([k]) => k === fmtOf(y))[1];
   const whereIs = (slug) => { const sub = lib.place.get(slug); return sub && lib.subs.has(sub) ? pathOf(sub) : null; };
   const filmActs = (slug, name, extra = "") => {
     const a = (act, label, cls = "") => `<button type="button" class="lbs-fact ${cls}" data-act="${act}" data-slug="${esc(slug)}" data-name="${esc(name)}">${label}</button>`;
@@ -4585,7 +4584,7 @@
       `<div class="lbs-finfo">` +
       `<h2>${esc(titleOf(name))} <span>${y || ""}</span></h2>` +
       (det.original && det.original.toLowerCase() !== titleOf(name).toLowerCase() ? `<p class="lbs-forig" lang="${esc(det.originalLang || "")}">${esc(det.original)}</p>` : "") +
-      `<p class="lbs-fmeta">${[det.director && `Directed by <b>${esc(det.director)}</b>`, det.runtime && `${det.runtime} min`, det.rating && `★ ${esc(det.rating)}`, caseName(y)].filter(Boolean).join(" · ")}</p>` +
+      `<p class="lbs-fmeta">${[det.director && `Directed by <b>${esc(det.director)}</b>`, det.runtime && `${det.runtime} min`, det.rating && `★ ${esc(det.rating)}`].filter(Boolean).join(" · ")}</p>` +
       (det.tagline ? `<p class="lbs-ftag">${esc(det.tagline)}</p>` : "") +
       (det.synopsis ? `<p class="lbs-fsyn">${esc(det.synopsis)}</p>` : !ui.film.det ? `<p class="lbs-fsyn -wait">Loading details…</p>` : "") +
       (det.cast && det.cast.length ? `<p class="lbs-fcast">With ${det.cast.map(esc).join(", ")}</p>` : "") +
@@ -4595,6 +4594,8 @@
       pane +
       `</div></div>`;
     v.hidden = false;
+    // The Both view docks the preview under the list: the list makes room for it.
+    if (!v._ro && "ResizeObserver" in window) { v._ro = new ResizeObserver(() => root.style.setProperty("--fvh", `${v.hidden ? 0 : v.offsetHeight}px`)); v._ro.observe(v); }
     fillPosters(v, true);
     if (det.lid && !ui.film.me && !ui.film.meAsked) lbState(slug, det.lid);
   }
