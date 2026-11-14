@@ -4594,8 +4594,6 @@
       pane +
       `</div></div>`;
     v.hidden = false;
-    // The Both view docks the preview under the list: the list makes room for it.
-    if (!v._ro && "ResizeObserver" in window) { v._ro = new ResizeObserver(() => root.style.setProperty("--fvh", `${v.hidden ? 0 : v.offsetHeight}px`)); v._ro.observe(v); }
     fillPosters(v, true);
     if (det.lid && !ui.film.me && !ui.film.meAsked) lbState(slug, det.lid);
   }
@@ -4920,7 +4918,10 @@
     libUI.path = libUI.path.filter((id) => (lib.genres.has(id) || lib.cats.has(id) || lib.subs.has(id) || (String(id).startsWith("fr:") && lib.frs[id.slice(3)])) && !isGeneral(id));
     const path = libUI.path;
     const right = path.length ? path[path.length - 1] : null;
-    const left = path.length >= 2 ? path[path.length - 2] : null;
+    // Finder columns: the open folder and the ones above it, three across when
+    // there's room. Every column works the same way.
+    const ncols = box.clientWidth >= 620 ? 3 : 2;
+    const shown = [null, ...path].slice(-ncols);
     const held = new Set(heldList().map(([x]) => x));
     const sel = libUI.sel;
     const selAt = sel ? lib.place.get(sel[0]) : null;
@@ -4989,10 +4990,10 @@
     };
     const column = (id, side) => {
       const k = kidsOf(id);
-      const lvl = side === "right" || (!id && toHouse()) ? (id ? childLevel(id) : toHouse() ? "genre" : null) : null;
+      const lvl = String(id).startsWith("fr:") ? null : id ? childLevel(id) : toHouse() ? "genre" : null;
       const adding = lvl && (id ? libUI.adding === id : libUI.adding === "@root");
       return (
-        `<div class="lbs-lib-col -${side}" data-colid="${esc(id || "")}"><h5>${id ? esc(nameOf(id)) : "Genres"}${id ? `<small>${fmt(String(id).startsWith("fr:") ? k.films.length : lib.count.get(id) || 0)} films</small>` : ""}${String(id).startsWith("fr:") ? `<button type="button" class="lbs-frbadge" data-act="fr-open" data-fr="${esc(id.slice(3))}">Edit franchise</button>` : ""}</h5><ul>` +
+        `<div class="lbs-lib-col -${side === "right" ? "right" : "left"}" data-side="${side}" data-colid="${esc(id || "")}"><h5>${id ? esc(nameOf(id)) : "Genres"}${id ? `<small>${fmt(String(id).startsWith("fr:") ? k.films.length : lib.count.get(id) || 0)} films</small>` : ""}${String(id).startsWith("fr:") ? `<button type="button" class="lbs-frbadge" data-act="fr-open" data-fr="${esc(id.slice(3))}">Edit franchise</button>` : ""}</h5><ul>` +
         k.folders.map((f) => folderRow(f, side)).join("") +
         (lvl ? (adding ? `<li class="lbs-lib-new"><input type="text" class="lbs-lib-new-name" data-level="${lvl}" maxlength="40" placeholder="Name the new ${LEVEL_WORD[lvl]}"></li>` : `<li class="lbs-lib-add"><button type="button" data-act="lib-new">+ New ${LEVEL_WORD[lvl]}</button></li>`) : "") +
         (k.films.length ? (k.folders.length || lvl ? `<li class="lbs-lib-sep">${allow ? `${fmt(k.films.filter((f) => allow.has(f[0])).length)} of ` : ""}${fmt(k.films.length)} film${k.films.length === 1 ? "" : "s"}</li>` : "") + filmItems(id, k.films, side) : "") +
@@ -5020,7 +5021,10 @@
       (lv.mode === "both" ? `<button type="button" class="lbs-lib-nofilter${libUI.noFilter ? "" : " -on"}" data-act="lib-nofilter" title="${libUI.noFilter ? "The folders show every film. Click to let the list's filters narrow them." : "The list's filters narrow the folders. Click to show every film."}">Filtered</button>` : "") +
       `<button type="button" class="lbs-lib-x" data-act="lib" aria-label="Close the Library">${ICON_CLOSE}</button></div>` +
       (pick ? `<div class="lbs-lib-pick">Moving <b>${pick.films.length === 1 ? esc(titleOf(pick.films[0][1])) : `${fmt(pick.films.length)} films`}</b>: open the folder ${pick.films.length === 1 ? "it belongs" : "they belong"} in${edit.on ? ", or make one" : ", or make a new one"}.</div>` : "") +
-      `<div class="lbs-lib-cols">${column(left, "left")}${path.length ? column(right, "right") : `<div class="lbs-lib-col -right"><p class="lbs-lib-hint">Pick a genre</p></div>`}</div>` +
+      `<div class="lbs-lib-cols${ncols === 3 ? " -three" : ""}">` +
+      shown.map((id, i) => column(id, i === shown.length - 1 && path.length ? "right" : `c${i}`)).join("") +
+      (shown.length < ncols ? `<div class="lbs-lib-col -right -hint" style="grid-column:span ${ncols - shown.length}">${path.length ? "" : `<p class="lbs-lib-hint">Pick a genre</p>`}</div>` : "") +
+      `</div>` +
       `<div class="lbs-lib-foot">` +
       (!pick && (msel.size > 1 || fsel.size)
         ? `<div class="lbs-lib-acts"><b class="lbs-lib-mcount">${[msel.size > 1 ? `${fmt(msel.size)} films` : "", fsel.size ? `${fmt(fsel.size)} folder${fsel.size === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · ")} selected</b>` +
@@ -7778,8 +7782,10 @@
         const again = libUI.lastOpen && libUI.lastOpen.id === fid && Date.now() - libUI.lastOpen.t < 450;
         libUI.lastOpen = { id: fid, t: Date.now() };
         if (again && btn.dataset.lfold && btn.querySelector(".lbs-lib-ren")) { libUI.lastOpen = null; libUI.renaming = fid; return renderLibrary(); }
-        if (btn.dataset.side === "left") libUI.path = libUI.path.length >= 2 ? [...libUI.path.slice(0, -1), fid] : [fid];
-        else libUI.path = [...libUI.path, fid];
+        // open it under the column it sits in (deeper columns close)
+        const pc = btn.closest(".lbs-lib-col"), par = pc ? pc.dataset.colid : "";
+        const pi = par ? libUI.path.indexOf(par) : -1;
+        libUI.path = [...libUI.path.slice(0, pi + 1), fid];
         mine.lv = { ...(mine.lv || {}), path: libUI.path.slice() };
         libUI.focus = { folder: fid };
         return renderLibrary();
@@ -7789,7 +7795,7 @@
         const M = libUI.msel;
         if (e.shiftKey && libUI.anchor) {
           // Shift-click: everything between the last click and this one
-          const col = btn.closest(".lbs-lib-col"), side = col && col.classList.contains("-left") ? "left" : "right";
+          const col = btn.closest(".lbs-lib-col"), side = (col && col.dataset.side) || "right";
           const order = (libUI.vcols[side] && libUI.vcols[side].slugs) || [...col.querySelectorAll(".lbs-lib-film")].map((x) => x.dataset.slug);
           const a = order.indexOf(libUI.anchor), b = order.indexOf(fs);
           if (a >= 0 && b >= 0) for (const x of order.slice(Math.min(a, b), Math.max(a, b) + 1)) M.set(x, lib.names.get(x) || x);
@@ -7858,7 +7864,7 @@
       }
       if (act === "lv-remove") { const films = lvFilms(); if (!films.length) return; return ask(`Remove <b>${fmt(films.length)} film${films.length === 1 ? "" : "s"}</b> from the store? (Search finds them again: Add to store.)`, () => { lv.selecting = false; lvSetSel(new Set()); removeFilms(films); }, "Remove"); }
       if (act === "lv-uncat") { const films = lvFilms(); lv.selecting = false; lvSetSel(new Set()); return moveFilms(films, UNCAT); }
-      if (act === "lib-new") { const col = btn.closest(".lbs-lib-col"); libUI.adding = col && col.classList.contains("-left") && libUI.path.length < 2 ? "@root" : libUI.path[libUI.path.length - 1] || "@root"; return renderLibrary(); }
+      if (act === "lib-new") { const col = btn.closest(".lbs-lib-col"); libUI.adding = (col && col.dataset.colid) || "@root"; return renderLibrary(); }
       if (act === "lib-del") {
         e.stopPropagation();
         const did = btn.dataset.id, n = lib.count.get(did) || 0;

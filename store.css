@@ -4748,7 +4748,7 @@ html.lbs-open {
 .lbs-ghost svg { width: 14px; height: 14px; vertical-align: -2px; }
 
 /* Library: folders and list side by side */
-.lbs-root.lbs-lib-both { --lib-w: min(1080px, 66vw); }
+.lbs-root.lbs-lib-both { --lib-w: calc(100vw - clamp(300px, 24vw, 380px)); }
 .lbs-library[data-mode="both"] { flex-direction: row; }
 .lbs-lib-pane {
   display: flex;
@@ -4756,44 +4756,20 @@ html.lbs-open {
   min-width: 0;
   min-height: 0;
 }
-.lbs-lib-pane.-f { flex: 1 1 52%; border-right: 1px solid #2c3440; }
-.lbs-lib-pane.-l { flex: 1 1 48%; }
+.lbs-lib-pane.-f { flex: 1 1 58%; border-right: 1px solid #2c3440; }
+.lbs-lib-pane.-l { flex: 1 1 42%; }
 .lbs-lib-pane.-l .lbs-lib-head .lbs-lib-mode,
 .lbs-lib-pane.-l .lbs-lib-head .lbs-lib-x { display: none; }
 .lbs-lib-pane .lbs-lib-cols { flex: 1; min-height: 0; }
 
 /* The film preview beside a wide Library: stack the box over the details */
-/* In the Both view the preview is a small card docked under the list,
-   bottom right, so the wall and both panes stay in view. */
-.lbs-root.lbs-lib-both .lbs-filmview {
-  inset: auto 0 var(--deskbar, 40px) auto !important;
-  width: calc(var(--lib-w) * 0.48);
-  z-index: 26;
-  display: block;
-  background: none;
-  backdrop-filter: none;
-}
-.lbs-lib-both .lbs-lib-pane.-l { padding-bottom: var(--fvh, 0px); }
-.lbs-lib-both .lbs-filmview .lbs-fwrap {
-  width: 100%;
-  max-height: 46vh;
-  gap: 14px;
-  padding: 12px 14px 10px;
-  border-radius: 0;
-  box-shadow: 0 -1px 0 #2c3440, 0 -10px 30px rgba(0, 0, 0, 0.45);
-  border-left: 1px solid #2c3440;
-}
-.lbs-lib-both .lbs-filmview .lbs-fbox { zoom: 0.42; padding: 6px 6px 18px 26px; }
-.lbs-lib-both .lbs-filmview :is(.lbs-ftag, .lbs-fsyn, .lbs-fcast, .lbs-forig, .lbs-lbnote) { display: none; }
-.lbs-lib-both .lbs-filmview .lbs-finfo { font-size: 12px; line-height: 1.4; padding-right: 22px; }
-.lbs-lib-both .lbs-filmview .lbs-finfo h2 { font-size: 17px; }
-.lbs-lib-both .lbs-filmview .lbs-fmeta { margin: 2px 0; }
-.lbs-lib-both .lbs-filmview .lbs-fwhere { margin: 4px 0 8px; }
-.lbs-lib-both .lbs-filmview .lbs-lbrow { margin: 0 0 8px; }
-.lbs-lib-both .lbs-filmview .lbs-lb { min-width: 0; padding: 5px 7px; flex-direction: row; gap: 5px; }
-.lbs-lib-both .lbs-filmview .lbs-lb svg { width: 15px; height: 15px; }
-.lbs-lib-both .lbs-filmview .lbs-facts { gap: 4px; }
-.lbs-lib-both .lbs-filmview .lbs-fact { padding: 4px 9px; font-size: 11.5px; }
+/* The film preview beside a wide Library: a slim column, the box over the details */
+.lbs-lib-both .lbs-filmview { place-items: stretch; }
+.lbs-lib-both .lbs-filmview .lbs-fwrap { flex-direction: column; align-items: stretch; gap: 10px; width: 100%; height: 100%; max-height: none; overflow: auto; padding: 16px 18px 20px; border-radius: 0; box-shadow: none; box-sizing: border-box; }
+.lbs-lib-both .lbs-filmview .lbs-fbox { align-self: center; zoom: 0.72; padding: 10px 10px 24px 34px; }
+.lbs-lib-both .lbs-filmview .lbs-finfo { font-size: 13px; }
+.lbs-lib-both .lbs-filmview .lbs-finfo h2 { font-size: 21px; padding-right: 24px; }
+.lbs-lib-both .lbs-filmview .lbs-lb { min-width: 0; flex: 1; }
 
 /* Library: Finder-style highlights, and the Both view's filter switch */
 .lbs-lib-row.lbs-folder.-msel { background: #1f4a66; box-shadow: inset 0 0 0 1px #40bcf4; }
@@ -4926,3 +4902,23 @@ html.lbs-open {
 }
 .lbs-lib-row.-dropbefore::before { top: -2px; }
 .lbs-lib-row.-dropafter::after { bottom: -2px; }
+
+/* Three Finder columns when there's room */
+.lbs-lib-cols.-three { grid-template-columns: minmax(0, 0.9fr) minmax(0, 0.95fr) minmax(0, 1.15fr); }
+/* Folder rows: rename / delete float over the end of the row on hover, so the
+   name gets the whole width the rest of the time */
+.lbs-lib-row.lbs-folder { position: relative; }
+.lbs-lib-row.lbs-folder > :is(.lbs-lib-ren, .lbs-lib-del) { display: none; margin: 0; }
+.lbs-lib-row.lbs-folder:hover > :is(.lbs-lib-ren, .lbs-lib-del),
+.lbs-lib-row.lbs-folder > :is(.lbs-lib-ren, .lbs-lib-del):focus-visible { display: grid; opacity: 1; position: absolute; top: 50%; transform: translateY(-50%); background: #1e252c; }
+.lbs-lib-row.lbs-folder.-on > :is(.lbs-lib-ren, .lbs-lib-del) { background: #2c3440; }
+.lbs-lib-row.lbs-folder > .lbs-lib-del { right: 6px; }
+.lbs-lib-row.lbs-folder > .lbs-lib-ren { right: 28px; }
+.lbs-lib-row.lbs-folder > .lbs-lib-ren:only-of-type { right: 6px; }
+.lbs-lib-row.lbs-folder:hover:has(.lbs-lib-ren) > small,
+.lbs-lib-row.lbs-folder:hover:has(.lbs-lib-ren) > b { visibility: hidden; }
+.lbs-lib-row.lbs-folder > .lbs-lib-del:hover { background: #6b2420; color: #fff; }
+.lbs-lib-row.lbs-folder > .lbs-lib-ren:hover { background: #3a4552; color: #fff; }
+/* The Library's footer keeps one height whatever it shows (a tip, a picked
+   film, a count), so the list above doesn't jump as you click */
+.lbs-lib-foot { box-sizing: border-box; min-height: 112px; }
