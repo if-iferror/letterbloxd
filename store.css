@@ -535,7 +535,6 @@ html.lbs-open {
   font-size: 13px;
 }
 
-
 /* ---------- the sorting desk ---------- */
 /* Desk only: the desk fills the store */
 .lbs-root.lbs-desk-only .lbs-drawer {
@@ -611,8 +610,7 @@ html.lbs-open {
   white-space: nowrap;
 }
 .lbs-deskbar-path i,
-.lbs-where i,
-.lbs-crumbs i {
+.lbs-where i {
   font-style: normal;
   color: #567;
 }
@@ -742,8 +740,7 @@ html.lbs-open {
   border-radius: 4px;
   background: #1e252c;
 }
-.lbs-where,
-.lbs-crumbs {
+.lbs-where {
   display: flex;
   align-items: center;
   gap: 2px;
@@ -859,8 +856,7 @@ html.lbs-open {
   color: #fff !important;
 }
 .lbs-rows-more,
-.lbs-rows-empty,
-.lbs-col-hint {
+.lbs-rows-empty {
   padding: 10px 8px;
   color: #678;
   font-size: 12px;
@@ -900,21 +896,7 @@ html.lbs-open {
   width: 14px;
   height: 14px;
 }
-.lbs-cols {
-  flex: 1;
-  min-height: 0;
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 1px;
-  border-radius: 4px;
-  overflow: hidden;
-  background: #2c3440;
-}
-.lbs-cols:has(.lbs-hits) {
-  display: block;
-  background: none;
-  overflow-y: auto;
-}
+
 .lbs-col,
 .lbs-hits {
   margin: 0;
@@ -947,20 +929,13 @@ html.lbs-open {
   height: 14px;
   color: #567;
 }
-.lbs-folder-name,
-.lbs-hit-path {
+.lbs-folder-name {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.lbs-hit-path {
-  color: #789;
-}
-.lbs-hit-path b {
-  color: #def;
-  font-weight: 600;
-}
+
 .lbs-n {
   color: #567;
   font-size: 11px;
@@ -1033,19 +1008,7 @@ html.lbs-open {
 }
 
 /* Recent destinations */
-.lbs-recent {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 30px;
-  margin-top: 8px;
-  overflow: hidden;
-  font-size: 11.5px;
-  white-space: nowrap;
-}
-.lbs-recent .lbs-hint {
-  margin: 0 2px 0 0;
-}
+
 .lbs-chip {
   all: unset;
   padding: 4px 9px;
@@ -1092,7 +1055,7 @@ html.lbs-open {
   position: absolute;
   left: 50%;
   bottom: calc(var(--deskbar, 40px) + 46px);
-  z-index: 9;
+  z-index: 55; /* over the Library and the inventory */
   display: flex;
   align-items: center;
   gap: 14px;
@@ -1139,10 +1102,9 @@ html.lbs-open {
 .lbs-where[hidden],
 .lbs-rows[hidden],
 .lbs-stage[hidden],
-.lbs-aisles[hidden],
 .lbs-canvas[hidden],
 .lbs-zoom[hidden],
-.lbs-tip[hidden] {
+.lbs-tip[hidden]{
   display: none !important;
 }
 .lbs-mode {
@@ -1194,17 +1156,7 @@ html.lbs-open {
   font-style: normal;
   color: #567;
 }
-.lbs-lod {
-  margin-left: 8px;
-  padding: 1px 6px;
-  border-radius: 2px;
-  background: #2c3440;
-  color: #9ab;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
+
 .lbs-zoom {
   display: inline-flex;
   gap: 2px;
@@ -1235,69 +1187,6 @@ html.lbs-open {
   border-radius: 4px;
   outline: none;
   touch-action: none;
-}
-
-/* Aisles: one box per genre */
-.lbs-aisles {
-  flex: 1;
-  min-height: 0;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 10px;
-  align-content: start;
-  overflow-y: auto;
-}
-.lbs-aisle-box {
-  all: unset;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  min-height: 92px;
-  padding: 12px;
-  border-radius: 5px;
-  background: #1a2026;
-  box-shadow: 0 0 0 1px #2c3440 inset;
-  cursor: pointer;
-}
-.lbs-aisle-box:hover {
-  box-shadow: 0 0 0 1px #567 inset;
-}
-.lbs-aisle-box.-live {
-  grid-column: span 2;
-  grid-row: span 2;
-  background: linear-gradient(160deg, #23303b, #1a2026);
-  box-shadow: 0 0 0 1px #40bcf4 inset;
-}
-.lbs-aisle-sign {
-  color: #fff;
-  font-size: 13px;
-  font-weight: 800;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-}
-.lbs-aisle-box.-live .lbs-aisle-sign {
-  font-size: 22px;
-}
-.lbs-aisle-posters {
-  display: flex;
-  gap: 8px;
-}
-.lbs-aisle-posters img {
-  width: 30%;
-  aspect-ratio: 2 / 3;
-  border-radius: 3px;
-  object-fit: cover;
-  background: #2c3440;
-  box-shadow: 0 6px 14px rgba(0, 0, 0, 0.6);
-}
-.lbs-aisle-empty {
-  flex: 1;
-  color: #567;
-  font-size: 11px;
-}
-.lbs-aisle-n {
-  color: #789;
-  font-size: 11px;
 }
 
 /* Hover card for a spine */
@@ -1454,9 +1343,7 @@ html.lbs-open {
   background: #00b020;
   color: #fff;
 }
-.lbs-logos-btn {
-  margin-left: 8px;
-}
+
 .lbs-credit {
   position: absolute;
   left: 8px;
@@ -1602,7 +1489,6 @@ html.lbs-open {
   background: #a3282f;
   color: #fff;
 }
-
 
 /* The bucket of pieces */
 .lbs-tray {
@@ -1950,8 +1836,7 @@ html.lbs-open {
 .lbs-card[hidden],
 .lbs-pocket[hidden],
 .lbs-filmview[hidden],
-.lbs-sortpanel[hidden],
-.lbs-ask[hidden] {
+.lbs-ask[hidden]{
   display: none;
 }
 .lbs-find-list {
@@ -2144,11 +2029,7 @@ html.lbs-open {
 .lbs-fwhere b {
   color: #fff;
 }
-.lbs-flink {
-  display: inline-block;
-  margin-top: 14px;
-  color: #40bcf4 !important;
-}
+
 .lbs-fpane {
   margin-top: 14px;
   padding: 12px;
@@ -2393,8 +2274,8 @@ html.lbs-open {
   left: 0;
   right: 0;
   bottom: var(--deskbar, 40px);
-  z-index: 15;
-  height: 210px;
+  z-index: 50; /* over the wall, the Library and the film preview */
+  animation: lbs-rise 0.16s ease-out;
   display: flex;
   flex-direction: column;
   padding: 10px 16px 12px;
@@ -2458,76 +2339,9 @@ html.lbs-open {
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-.lbs-pk-over {
-  position: absolute;
-  inset: 0 0 auto 0;
-  height: 150px;
-  display: none;
-  flex-direction: column;
-  justify-content: center;
-  gap: 3px;
-  padding: 6px;
-  border-radius: 3px;
-  background: rgba(10, 13, 16, 0.82);
-  box-sizing: border-box;
-}
-.lbs-pk:hover .lbs-pk-over {
-  display: flex;
-}
-.lbs-pk-over button {
-  border: 0;
-  border-radius: 3px;
-  padding: 3px 4px;
-  background: #2c3440;
-  color: #def;
-  font: 600 10.5px Arial, sans-serif;
-  cursor: pointer;
-}
-.lbs-pk-over .lbs-pk-return {
-  padding: 7px 4px;
-  background: #00b020;
-  color: #fff;
-  font-size: 11.5px;
-}
 
 /* Sort panel (right) */
-.lbs-sortpanel {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: var(--deskbar, 40px);
-  z-index: 25;
-  width: min(560px, 92%);
-  display: flex;
-  flex-direction: column;
-  background: #14181c;
-  border-left: 1px solid #2c3440;
-  box-shadow: -24px 0 60px rgba(0, 0, 0, 0.6);
-  box-sizing: border-box;
-  color: #9ab;
-  font-size: 13px;
-}
-.lbs-sp-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  padding: 18px 18px 12px;
-}
-.lbs-sp-film {
-  display: flex;
-  gap: 14px;
-  align-items: center;
-  min-width: 0;
-}
-.lbs-sp-film img {
-  flex: none;
-  width: 46px;
-  height: 69px;
-  border-radius: 3px;
-  object-fit: cover;
-  background: #2c3440;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
-}
+
 .lbs-sp-chip {
   min-width: 0;
   cursor: grab;
@@ -2588,117 +2402,7 @@ html.lbs-open {
   letter-spacing: 0;
   text-transform: none;
 }
-.lbs-sp-cols {
-  flex: 1;
-  min-height: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  border-top: 1px solid #222a32;
-}
-.lbs-sp-col {
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  border-right: 1px solid #222a32;
-}
-.lbs-sp-col:last-child {
-  border-right: 0;
-  background: #171c21;
-}
-.lbs-sp-col h5 {
-  margin: 0;
-  padding: 12px 16px 6px;
-  overflow: hidden;
-  color: #678;
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-.lbs-sp-col ul {
-  flex: 1;
-  overflow-y: auto;
-  margin: 0;
-  padding: 0 8px 12px;
-  list-style: none;
-}
-.lbs-sp-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
-  border-radius: 6px;
-  color: #cdd6df;
-  cursor: pointer;
-}
-.lbs-sp-row:hover {
-  background: #1e252c;
-}
-.lbs-sp-row.-sel {
-  background: #2c3440;
-  color: #fff;
-}
-.lbs-sp-row i {
-  flex: none;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-}
-.lbs-sp-row span {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-.lbs-sp-row small {
-  color: #567;
-  font-size: 11.5px;
-}
-.lbs-sp-row em {
-  padding: 1px 6px;
-  border-radius: 8px;
-  background: rgba(64, 188, 244, 0.18);
-  color: #40bcf4;
-  font-style: normal;
-  font-size: 10.5px;
-  font-weight: 700;
-}
-.lbs-sp-row.-over {
-  box-shadow: inset 0 0 0 2px #40bcf4;
-}
-.lbs-sp-hint {
-  padding: 10px;
-  color: #567;
-}
-.lbs-sp-add button {
-  all: unset;
-  display: block;
-  padding: 8px 10px;
-  color: #40bcf4;
-  cursor: pointer;
-}
-.lbs-sp-new-row input {
-  width: 100%;
-  margin: 4px 0;
-  padding: 8px 10px;
-  border: 0;
-  border-radius: 6px;
-  background: #2c3440;
-  color: #fff;
-  font: 13px Arial, sans-serif;
-  box-sizing: border-box;
-}
-.lbs-sp-foot {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 14px 18px;
-  border-top: 1px solid #222a32;
-  background: #14181c;
-}
+
 .lbs-sp-move {
   padding: 9px 16px;
   border: 0;
@@ -2713,15 +2417,7 @@ html.lbs-open {
   color: #678;
   cursor: default;
 }
-.lbs-sp-ghost {
-  padding: 9px 14px;
-  border: 0;
-  border-radius: 6px;
-  background: #2c3440;
-  color: #def;
-  font: 600 13px Arial, sans-serif;
-  cursor: pointer;
-}
+
 .lbs-sp-link {
   margin-left: auto;
   border: 0;
@@ -3234,9 +2930,9 @@ html.lbs-open {
   display: none;
 }
 
-/* ---- Inventory: taller, wraps into rows; covers drag, two buttons under each ---- */
+/* ---- Inventory: a screen-wide drawer, rows of covers, two buttons under each ---- */
 .lbs-pocket {
-  height: min(58vh, 560px);
+  height: min(40vh, 340px);
 }
 .lbs-pocket-list {
   flex-wrap: wrap;
@@ -3421,25 +3117,6 @@ html.lbs-open {
   color: #789;
   font-size: 11.5px;
 }
-.lbs-falt {
-  margin: 0 0 10px;
-  color: #9ab;
-  font-size: 12.5px;
-  line-height: 1.5;
-}
-.lbs-falt span {
-  display: block;
-  color: #678;
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-.lbs-falt button {
-  all: unset;
-  color: #40bcf4;
-  cursor: pointer;
-}
 
 /* ---- Franchise builder: where each film lives ---- */
 .lbs-fr-results small,
@@ -3547,44 +3224,6 @@ html.lbs-open {
   height: var(--D);
   margin-left: calc(var(--D) * 0.08);
 }
-.lbs-can-rim,
-.lbs-can-lid {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-}
-/* the rim: the side of the cylinder, curving away to the left */
-.lbs-can-rim {
-  transform: translateX(calc(var(--D) * -0.075));
-  background: linear-gradient(90deg, #3c4248, #8d959d 40%, #b9c0c6 70%, #6c737a);
-  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
-}
-/* the lid: brushed steel with pressed rings, the poster pasted on */
-.lbs-can-lid {
-  background:
-    radial-gradient(circle, transparent 46%, rgba(0, 0, 0, 0.25) 46.6%, transparent 47.4%, transparent 60%, rgba(255, 255, 255, 0.25) 60.6%, transparent 61.5%, transparent 92%, rgba(0, 0, 0, 0.35) 93%, rgba(255, 255, 255, 0.4) 95%, rgba(0, 0, 0, 0.45) 99%),
-    conic-gradient(from 200deg, #aab1b8, #e6eaed, #9aa2a9, #d4d9dd, #a3aab1, #e6eaed, #aab1b8);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25);
-}
-.lbs-can-lid img {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 55.47%; /* a 2:3 poster whose corners touch the rim */
-  height: 83.21%;
-  transform: translate(-50%, -50%);
-  object-fit: cover;
-  border-radius: 2px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
-}
-.lbs-can-lid i {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  background: linear-gradient(135deg, rgba(255, 255, 255, 0.28), transparent 45%);
-  z-index: 1;
-  pointer-events: none;
-}
 
 /* ================= The Library (Finder-style columns, right side) ================= */
 .lbs-root {
@@ -3619,12 +3258,8 @@ html.lbs-open {
 }
 /* Open: the panel keeps the right side; the wall, film view, inventory shift left */
 .lbs-lib-open .lbs-drawer,
-.lbs-lib-open .lbs-filmview,
-.lbs-lib-open .lbs-pocket {
+.lbs-lib-open .lbs-filmview {
   right: var(--lib-w) !important;
-}
-.lbs-lib-open .lbs-pocket-tab {
-  left: calc((100% - var(--lib-w)) / 2) !important;
 }
 .lbs-library {
   position: absolute;
@@ -3812,12 +3447,7 @@ html.lbs-open {
   box-shadow: inset 0 0 0 2px #40bcf4;
   background: #1e2a33;
 }
-.lbs-lib-dot {
-  flex: none;
-  width: 4px;
-  height: 18px;
-  border-radius: 2px;
-}
+
 .lbs-lib-film img {
   flex: none;
   width: 24px;
@@ -3909,8 +3539,7 @@ html.lbs-open {
   flex-wrap: wrap;
   gap: 6px;
 }
-.lbs-lib-acts button,
-.lbs-lib-jump {
+.lbs-lib-acts button {
   border: 0;
   border-radius: 4px;
   padding: 7px 12px;
@@ -3919,8 +3548,7 @@ html.lbs-open {
   font: 700 12px Arial, sans-serif;
   cursor: pointer;
 }
-.lbs-lib-acts button:hover:not(:disabled),
-.lbs-lib-jump:hover:not(:disabled) {
+.lbs-lib-acts button:hover:not(:disabled) {
   background: #456;
   color: #fff;
 }
@@ -3928,8 +3556,7 @@ html.lbs-open {
   background: #00b020;
   color: #fff;
 }
-.lbs-lib-acts button:disabled,
-.lbs-lib-jump:disabled {
+.lbs-lib-acts button:disabled {
   opacity: 0.4;
   cursor: default;
 }
@@ -3938,17 +3565,7 @@ html.lbs-open {
   background: none;
   color: #ff8a80;
 }
-.lbs-lib-jump {
-  width: 100%;
-  padding: 9px 12px;
-  background: #e23b2e;
-  color: #fff4dc;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
-.lbs-lib-jump:hover:not(:disabled) {
-  background: #f04a3c;
-}
+
 .lbs-lib-tip {
   margin: 0;
   color: #789;
@@ -4088,9 +3705,7 @@ html.lbs-open {
 .lbs-seg button:hover:not(.-on) {
   color: #fff;
 }
-.lbs-lib-gap {
-  flex: 1;
-}
+
 .lbs-lv-headbtns {
   display: inline-flex;
   align-items: center;
@@ -4125,12 +3740,7 @@ html.lbs-open {
 .lbs-lv-all:hover {
   background: #456;
 }
-.lbs-lv-tools {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px 6px;
-}
+
 .lbs-lv-search {
   flex: 1;
   display: flex;
@@ -4394,76 +4004,6 @@ html.lbs-open {
   color: #fff;
 }
 
-/* Move to… */
-.lbs-mvpick {
-  position: absolute;
-  z-index: 5;
-  left: 12px;
-  right: 12px;
-  bottom: 12px;
-  max-height: 70%;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 10px;
-  border-radius: 8px;
-  background: #1e252c;
-  box-shadow: 0 0 0 1px #384350, 0 16px 40px rgba(0, 0, 0, 0.6);
-}
-.lbs-mvpick-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  color: #fff;
-}
-.lbs-mvpick-q {
-  padding: 6px 10px !important;
-  border: 0 !important;
-  border-radius: 6px;
-  background: #0f1317 !important;
-  box-shadow: inset 0 0 0 1px #2c3440 !important;
-  color: #fff !important;
-  font: 13px Arial, sans-serif !important;
-}
-.lbs-mvpick-list {
-  flex: 1;
-  min-height: 120px;
-  overflow-y: auto;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-.lbs-mvpick-list li {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 5px 8px;
-  border-radius: 4px;
-  color: #def;
-  cursor: pointer;
-}
-.lbs-mvpick-list li:hover {
-  background: #2c3440;
-}
-.lbs-mvpick-list li small {
-  color: #678;
-}
-.lbs-mvpick-list li.-d0 { font-weight: 700; }
-.lbs-mvpick-list li.-d1 { padding-left: 22px; }
-.lbs-mvpick-list li.-d2 { padding-left: 38px; color: #bcd; }
-.lbs-mvpick-list li.-d3 { padding-left: 54px; color: #9ab; }
-.lbs-mvpick-list li.lbs-mvpick-h {
-  padding-top: 8px;
-  color: #789;
-  font: 700 10.5px Arial, sans-serif;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  cursor: default;
-}
-.lbs-mvpick-list li.lbs-mvpick-h:hover {
-  background: none;
-}
-
 /* ================= Right-click menu ================= */
 .lbs-ctx {
   position: absolute;
@@ -4521,16 +4061,6 @@ html.lbs-open {
   opacity: 0.35;
   cursor: default;
 }
-
-
-
-
-
-
-
-
-
-
 
 /* Editing the store: no find bar (the desk has its own search); the Library
    button sits in the header instead. Browsing: it sits by the search. */
@@ -4662,16 +4192,6 @@ html.lbs-open {
   color: #fff;
 }
 
-
-
-
-
-
-
-
-
-
-
 /* the one shared system colour input (see openNativePicker) */
 .lbs-native-color {
   position: fixed !important;
@@ -4762,7 +4282,6 @@ html.lbs-open {
 .lbs-lib-pane.-l .lbs-lib-head .lbs-lib-x { display: none; }
 .lbs-lib-pane .lbs-lib-cols { flex: 1; min-height: 0; }
 
-/* The film preview beside a wide Library: stack the box over the details */
 /* The film preview beside a wide Library: a slim column, the box over the details */
 .lbs-lib-both .lbs-filmview { place-items: stretch; }
 .lbs-lib-both .lbs-filmview .lbs-fwrap { flex-direction: column; align-items: stretch; gap: 10px; width: 100%; height: 100%; max-height: none; overflow: auto; padding: 16px 18px 20px; border-radius: 0; box-shadow: none; box-sizing: border-box; }
@@ -4922,3 +4441,4 @@ html.lbs-open {
 /* The Library's footer keeps one height whatever it shows (a tip, a picked
    film, a count), so the list above doesn't jump as you click */
 .lbs-lib-foot { box-sizing: border-box; min-height: 112px; }
+@keyframes lbs-rise { from { transform: translateY(100%); } to { transform: none; } }

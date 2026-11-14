@@ -983,7 +983,7 @@
           const films = [...libUI.msel];
           return grabDown({ kind: "dvd", slug: films[0][0], name: films[0][1], films, from: "lib" }, e);
         }
-        const dv = e.target.closest(".lbs-tray .lbs-dvd, .lbs-pk, .lbs-sp-chip, .lbs-lib-film");
+        const dv = e.target.closest(".lbs-tray .lbs-dvd, .lbs-pk, .lbs-lib-film");
         if (dv && !e.target.closest("button")) { e.preventDefault(); grabDown({ kind: "dvd", slug: dv.dataset.slug, name: dv.dataset.name, from: dv.classList.contains("lbs-lib-film") ? "lib" : dv.classList.contains("lbs-sp-chip") ? "card" : "tray" }, e); }
       });
       root.addEventListener("dblclick", (e) => {
@@ -4434,7 +4434,7 @@
    * click a spine for the full box and its details, carry films around in
    * your inventory (the tab at the bottom). Taking a film off the shelf is
    * just for you and doesn't change the store. */
-  const ui = { film: null, pane: null, details: new Map(), pocket: false, sortFilm: null, sortFolder: STOCKED, sortAdding: null, findSeq: 0, card: null };
+  const ui = { film: null, pane: null, details: new Map(), pocket: false, findSeq: 0, card: null };
 
   async function filmDetails(slug) {
     if (ui.details.has(slug)) return ui.details.get(slug);
@@ -4562,6 +4562,18 @@
     fb.style.zoom = Math.max(0.5, Math.min(roomW / w, roomH / h, 1.6)).toFixed(3);
   }
   window.addEventListener("resize", () => { if (ui.film) fitFilmBox(); });
+  // A pop-up inside a scrolling panel: lift it out of the panel's clip, open it
+  // above its button (below if there's no room), and keep it inside the panel.
+  function floatMenu(m, anchor) {
+    Object.assign(m.style, { position: "fixed", left: "0px", top: "0px", right: "auto", bottom: "auto" });
+    const o = m.getBoundingClientRect(), a = anchor.getBoundingClientRect();
+    const box = (anchor.closest(".lbs-filmview, .lbs-library") || root).getBoundingClientRect();
+    let y = a.top - o.height - 4;
+    if (y < box.top + 8) y = a.bottom + 4;
+    const x = Math.max(box.left + 8, Math.min(a.right - o.width, box.right - o.width - 8));
+    m.style.left = `${x - o.left}px`;
+    m.style.top = `${y - o.top}px`;
+  }
   function closeFilm() {
     ui.film = null;
     const v = root && $(".lbs-filmview", root);
@@ -6242,7 +6254,6 @@
     const many = lv.sel.size > 1 && lv.sel.has(slug);
     openMovePick(many ? lvFilms() : [[slug, name || lib.names.get(slug) || slug]]);
   };
-  const renderSortPanel = () => renderLibrary();
 
   /* Franchises: films that belong together on the shelf, in a set order.
    * They all sit where the first one would, as one block, with a sticker
@@ -7500,7 +7511,7 @@
 
   // Right-click a film: Move to…
   function onContextMenu(e) {
-    const any = e.target.closest && e.target.closest(".lbs-lib-film, .lbs-lv-row, .lbs-pk, .lbs-find-list li[data-slug], .lbs-sp-chip, .lbs-dvd");
+    const any = e.target.closest && e.target.closest(".lbs-lib-film, .lbs-lv-row, .lbs-pk, .lbs-find-list li[data-slug], .lbs-dvd");
     if (any && any.dataset.slug) {
       e.preventDefault();
       // In the list, a right-click on a selected row acts on the whole selection.
@@ -7910,7 +7921,7 @@
       if (act === "find-as") { toggleMenu(".lbs-find-types", false); return $(".lbs-find-q", root)?.focus(); }
       if (act === "req-send") return sendAddition(btn);
       if (act === "lb-watch" || act === "lb-like" || act === "lb-wl" || act === "lb-block") return lbAction(act, btn);
-      if (act === "lb-more") { const m = btn.parentElement.querySelector(".lbs-lb-menu"); if (m) { const was = m.hidden; root.querySelectorAll(".lbs-menu").forEach((x) => (x.hidden = true)); m.hidden = !was; } return; }
+      if (act === "lb-more") { const m = btn.parentElement.querySelector(".lbs-lb-menu"); if (m) { const was = m.hidden; root.querySelectorAll(".lbs-menu").forEach((x) => (x.hidden = true)); m.hidden = !was; if (!m.hidden) floatMenu(m, btn); } return; }
       if (act === "f-jump") return jumpTo(fs, fn);
       if (act === "f-fr") { closeFilm(); return openFranchise(fs, fn); }
       if (act === "f-uncat") return moveFilms([[fs, fn]], UNCAT);
@@ -7925,12 +7936,6 @@
       if (act === "mine-save") return backupMine();
       if (act === "find-pick") return showCard(fs, fn);
       if (act === "card-close") { $(".lbs-card", root).hidden = true; return; }
-      if (act === "sp-close") { ui.sortFilm = null; return renderSortPanel(); }
-      if (act === "sp-cat") { ui.sortCat = id; ui.sortSub = null; ui.sortAdding = null; return renderSortPanel(); }
-      if (act === "sp-sub") { ui.sortSub = id; return renderSortPanel(); }
-      if (act === "sp-move") { if (!ui.sortSub) return; moveFilms([ui.sortFilm], ui.sortSub); ui.sortSub = null; return renderSortPanel(); }
-      if (act === "sp-add") { ui.sortAdding = btn.dataset.level; return renderSortPanel(); }
-      if (act === "fr-open") return openFranchise(ui.sortFilm[0], ui.sortFilm[1]);
       if (act === "fr-close") { ui.fr = null; return renderFranchise(); }
       if (act === "fr-drop") { ui.fr.films.splice(+btn.dataset.i, 1); return renderFranchise(); }
       if (act === "fr-add") {
@@ -7957,7 +7962,6 @@
       if (act === "fr-open") { closeFilm(); $(".lbs-find-list", root).hidden = true; $(".lbs-card", root).hidden = true; return openFranchiseById(btn.dataset.fr); }
       if (act === "fr-logo") { ui.fr.logo = btn.dataset.path; return renderFranchise(); }
       if (act === "fr-delete") { delete franchises()[ui.fr.id]; saveMine(); shareEdit("franchise", ui.fr.id, null); ui.fr = null; renderFranchise(); refresh(); return toast("Franchise undone."); }
-      if (act === "req-remove-film") return requestRemoval("film", ui.sortFilm[0], titleOf(ui.sortFilm[1]));
       if (act === "req-remove-this") return requestRemoval("film", fs, titleOf(fn));
       if (act === "req-remove") { $(".lbs-sortpick", root).hidden = true; return requestRemoval("section", id, nameOf(id)); }
       if (act === "req-add") { e.stopPropagation(); return requestAddition(fs, fn, btn); }
@@ -8134,7 +8138,6 @@
     if (e.target.classList.contains("lbs-fr-q")) return franchiseSearch(e.target.value);
     if (e.target.classList.contains("lbs-fr-name")) { if (ui.fr) ui.fr.name = e.target.value; return; }
     if (e.target.classList.contains("lbs-fr-color")) { if (ui.fr) ui.fr.color = e.target.value.slice(1); return; }
-    if (e.target.classList.contains("lbs-sp-genre-pick")) { ui.sortGenre = e.target.value; ui.sortCat = null; ui.sortSub = null; return renderSortPanel(); }
     if (e.target.classList.contains("lbs-find-q")) return runFind(e.target.value);
     if (e.target.classList.contains("lbs-f-color")) {
       const cs = e.target.dataset.slug;
@@ -8191,18 +8194,6 @@
         if (parent && name.trim()) addFolder(level, parent, name);
         renderLibrary();
       } else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); libUI.adding = null; renderLibrary(); }
-      return;
-    }
-    if (e.target.classList.contains("lbs-sp-new")) {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        const level = e.target.dataset.level;
-        const parent = level === "cat" ? ui.sortGenre : ui.sortCat;
-        addFolder(level, parent, e.target.value);
-        ui.sortAdding = null;
-        if (desk.folder && desk.folder !== parent) { if (level === "cat") ui.sortCat = desk.folder; else ui.sortSub = desk.folder; }
-        renderSortPanel();
-      } else if (e.key === "Escape") { e.preventDefault(); ui.sortAdding = null; renderSortPanel(); }
       return;
     }
     if (e.target.classList.contains("lbs-rename")) {
