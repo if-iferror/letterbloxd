@@ -399,6 +399,7 @@
     delete mine._idb;
     synced[MINE_KEY] = Math.max(mine._at || 0, savedAt(MINE_KEY));
     if (mine.lv) Object.assign(lv, { mode: mine.lv.mode || lv.mode, f: mine.lv.f || {}, all: mine.lv.all || {}, y0: mine.lv.y0 || "", y1: mine.lv.y1 || "", sort: mine.lv.sort || "pop", showFilters: !mine.lv.hideFilters });
+    if (mine.lv) { libUI.noFilter = !!mine.lv.noFilter; if (Array.isArray(mine.lv.path) && mine.lv.path.length) libUI.path = mine.lv.path.slice(); }
     houseLocal = await restoreBig(HOUSE_KEY, houseLocal);
     synced[HOUSE_KEY] = Math.max((houseLocal && houseLocal._at) || 0, savedAt(HOUSE_KEY));
     await mergeMineIntoHouse();
@@ -936,7 +937,6 @@
   const LOGO_SVG = `<svg class="lbs-logo-svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 300" role="img" aria-label="BLOXBUSTER"> <rect x="6" y="6" width="588" height="288" rx="26" fill="#17191c" stroke="#3a3f46" stroke-width="4"/> <circle cx="34" cy="34" r="7" fill="#2c3036"/><circle cx="566" cy="34" r="7" fill="#2c3036"/> <circle cx="34" cy="266" r="7" fill="#2c3036"/><circle cx="566" cy="266" r="7" fill="#2c3036"/> <rect x="58" y="34" width="484" height="146" rx="10" fill="#e23b2e"/> <rect x="58" y="34" width="484" height="16" rx="8" fill="#f0e6cf"/> <rect x="58" y="164" width="484" height="16" rx="8" fill="#f0e6cf"/> <text x="300" y="139" text-anchor="middle" font-family="Impact, 'Haettenschweiler', 'Arial Narrow Bold', 'Arial Black', sans-serif" font-weight="900" font-size="92" letter-spacing="2" fill="#fff4dc" textLength="440" lengthAdjust="spacingAndGlyphs">BLOXBUSTER</text> <rect x="160" y="198" width="280" height="76" rx="38" fill="#0b0c0e" stroke="#3a3f46" stroke-width="4"/> <g fill="#f2efe6"> <circle cx="228" cy="236" r="27"/><circle cx="372" cy="236" r="27"/> </g> <g fill="#17191c"> <circle cx="228" cy="236" r="12"/><circle cx="372" cy="236" r="12"/> </g> <g fill="#f2efe6"> <rect x="225" y="222" width="6" height="8"/><rect x="225" y="242" width="6" height="8"/><rect x="214" y="233" width="8" height="6"/><rect x="234" y="233" width="8" height="6"/> <rect x="369" y="222" width="6" height="8"/><rect x="369" y="242" width="6" height="8"/><rect x="358" y="233" width="8" height="6"/><rect x="378" y="233" width="8" height="6"/> </g> <rect x="270" y="226" width="60" height="20" rx="3" fill="#2c3036"/> </svg>`;
   const ICON_GEAR = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h2M10 17h10" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><circle cx="16" cy="7" r="2.4" fill="none" stroke="currentColor" stroke-width="2.2"/><circle cx="8" cy="17" r="2.4" fill="none" stroke="currentColor" stroke-width="2.2"/></svg>`;
   const ICON_LOCK = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10V7a5 5 0 0 1 10 0v3h1.5A1.5 1.5 0 0 1 20 11.5v8A1.5 1.5 0 0 1 18.5 21h-13A1.5 1.5 0 0 1 4 19.5v-8A1.5 1.5 0 0 1 5.5 10zm2 0h6V7a3 3 0 0 0-6 0z" fill="currentColor"/></svg>`;
-  const ICON_DROPPER = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.7 3.3a2.4 2.4 0 0 1 3.4 3.4l-2.6 2.6 1 1-1.5 1.5-1-1-7.6 7.6c-.4.4-.9.6-1.4.7l-2.3.4-1.3 1.3-1.4-1.4 1.3-1.3.4-2.3c.1-.5.3-1 .7-1.4l7.6-7.6-1-1L13.5 4l1 1zM8.6 13.6l-.6.6c-.1.1-.2.3-.2.4l-.2 1.4 1.4-.2c.1 0 .3-.1.4-.2l.6-.6z" fill="currentColor"/></svg>`;
   const ICON_SEARCH = `<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="M16 16l4.5 4.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>`;
 
   function openStore() {
@@ -5087,7 +5087,7 @@
     sel: new Set(), selecting: false, anchor: null, cursor: null,
     base: null, baseKey: null, rows: [], pos: new Map(),
   };
-  const saveLv = () => { mine.lv = { mode: lv.mode, f: lv.f, all: lv.all, y0: lv.y0, y1: lv.y1, sort: lv.sort, hideFilters: !lv.showFilters, noFilter: libUI.noFilter }; saveMine(); };
+  const saveLv = () => { mine.lv = { mode: lv.mode, f: lv.f, all: lv.all, y0: lv.y0, y1: lv.y1, sort: lv.sort, hideFilters: !lv.showFilters, noFilter: libUI.noFilter, path: libUI.path.slice() }; saveMine(); };
 
   // What the catalogue knows about each film: genres, countries, languages,
   // and (once the builder has read film details) runtime and primary language.
@@ -7565,105 +7565,12 @@
     }
   }, true);
 
-  /* Colour pickers are drawn in the page. (The system picker on macOS is a
-   * separate window whose eyedropper can capture every click on the screen
-   * if the page redraws under it.) A hidden input keeps the value and gets
-   * the same "input" events the old colour inputs did. */
+  /* A colour swatch: a hidden input keeps the value (and gets the "input"
+   * events), the button opens the system picker (see openNativePicker). */
   function swatchHTML(cls, value, attrs = "", disabled = false) {
     const v = /^#[0-9a-f]{6}$/i.test(value) ? value : "#2c3440";
     return `<input type="hidden" class="${cls}" value="${esc(v)}" ${attrs}${disabled ? " disabled" : ""}><button type="button" class="lbs-swatch" data-act="cpick" style="--c:${esc(v)}"${disabled ? " disabled" : ""} aria-label="Pick a colour"></button>`;
   }
-  const hexToRgb = (hx) => [1, 3, 5].map((i) => parseInt(hx.slice(i, i + 2), 16));
-  const rgbToHex = (r, g, b) => "#" + [r, g, b].map((v) => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, "0")).join("");
-  function rgbToHsv([r, g, b]) {
-    r /= 255; g /= 255; b /= 255;
-    const mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn;
-    let hh = 0;
-    if (d) hh = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
-    return [(hh * 60 + 360) % 360, mx ? d / mx : 0, mx];
-  }
-  function hsvToRgb(hh, sv, v) {
-    const c = v * sv, x = c * (1 - Math.abs(((hh / 60) % 2) - 1)), m = v - c;
-    const [r, g, b] = hh < 60 ? [c, x, 0] : hh < 120 ? [x, c, 0] : hh < 180 ? [0, c, x] : hh < 240 ? [0, x, c] : hh < 300 ? [x, 0, c] : [c, 0, x];
-    return [(r + m) * 255, (g + m) * 255, (b + m) * 255];
-  }
-  const CPICK_PRESETS = ["#17191c", "#2c3440", "#f0e6cf", "#ffffff", "#e23b2e", "#f08a24", "#f5c518", "#3fa34d", "#2f80c2", "#40bcf4", "#7b4bb8", "#c2185b"];
-  let cpick = null; // { input, btn, h, s, v, box }
-  function openColorPicker(btn) {
-    closeColorPicker();
-    const input = btn.previousElementSibling;
-    if (!input || input.disabled) return;
-    const [hh, ss, v] = rgbToHsv(hexToRgb(/^#[0-9a-f]{6}$/i.test(input.value) ? input.value : "#2c3440"));
-    const box = h("div", "lbs-cpick",
-      `<div class="lbs-cpick-sv"><i></i></div>` +
-      `<input type="range" class="lbs-cpick-hue" min="0" max="359" step="1" aria-label="Hue">` +
-      `<div class="lbs-cpick-row"><span class="lbs-cpick-now"></span><input type="text" class="lbs-cpick-hex" maxlength="7" spellcheck="false" aria-label="Hex colour"><button type="button" class="lbs-cpick-drop" title="Eyedropper: pick a colour from a poster, logo or the wall (Esc to cancel)" aria-label="Eyedropper">${ICON_DROPPER}</button><button type="button" class="lbs-cpick-done">Done</button></div>` +
-      `<div class="lbs-cpick-presets">${CPICK_PRESETS.map((c) => `<button type="button" data-c="${c}" style="--c:${c}" aria-label="${c}"></button>`).join("")}</div>`);
-    root.append(box);
-    cpick = { input, btn, h: hh, s: ss, v, box, cls: input.className, slug: input.dataset.slug };
-    // keep its own events to itself
-    box.addEventListener("input", (e) => e.stopPropagation());
-    box.addEventListener("click", (e) => {
-      e.stopPropagation();
-      const p = e.target.closest("[data-c]");
-      if (p) return setPickHex(p.dataset.c);
-      if (e.target.closest(".lbs-cpick-drop")) return cpick.dropping ? stopDropper() : startDropper();
-      if (e.target.closest(".lbs-cpick-done")) closeColorPicker();
-    });
-    box.querySelector(".lbs-cpick-hue").addEventListener("input", (e) => { cpick.h = +e.target.value; pickChanged(); });
-    box.querySelector(".lbs-cpick-hex").addEventListener("input", (e) => { const t = e.target.value.trim(); if (/^#?[0-9a-f]{6}$/i.test(t)) setPickHex(t[0] === "#" ? t : "#" + t, true); });
-    box.querySelector(".lbs-cpick-hex").addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Enter" || e.key === "Escape") closeColorPicker(); });
-    const sv = box.querySelector(".lbs-cpick-sv");
-    const svAt = (e) => { const r = sv.getBoundingClientRect(); cpick.s = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)); cpick.v = 1 - Math.max(0, Math.min(1, (e.clientY - r.top) / r.height)); pickChanged(); };
-    sv.addEventListener("mousedown", (e) => {
-      e.preventDefault();
-      svAt(e);
-      const move = (ev) => { if (!(ev.buttons & 1) || !cpick) return up(); svAt(ev); };
-      const up = () => { window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", up); };
-      window.addEventListener("mousemove", move);
-      window.addEventListener("mouseup", up);
-    });
-    const r = btn.getBoundingClientRect(), rr = root.getBoundingClientRect();
-    box.style.left = `${Math.max(8, Math.min(r.left - rr.left, rr.width - 236))}px`;
-    box.style.top = `${r.bottom - rr.top + 6 + 260 > rr.height ? Math.max(8, r.top - rr.top - 266) : r.bottom - rr.top + 6}px`;
-    paintPick(false);
-  }
-  function setPickHex(hx, fromField) {
-    [cpick.h, cpick.s, cpick.v] = rgbToHsv(hexToRgb(hx));
-    pickChanged(fromField);
-  }
-  function paintPick(fromField) {
-    const { box, h: hh, s: sv, v } = cpick;
-    const hex = rgbToHex(...hsvToRgb(hh, sv, v));
-    box.querySelector(".lbs-cpick-sv").style.setProperty("--hue", `hsl(${hh} 100% 50%)`);
-    const k = box.querySelector(".lbs-cpick-sv i");
-    k.style.left = `${sv * 100}%`; k.style.top = `${(1 - v) * 100}%`;
-    box.querySelector(".lbs-cpick-hue").value = Math.round(hh);
-    box.querySelector(".lbs-cpick-now").style.background = hex;
-    if (!fromField) box.querySelector(".lbs-cpick-hex").value = hex;
-    return hex;
-  }
-  function pickChanged(fromField) {
-    if (!cpick) return;
-    // The panel behind it may have been redrawn: find its new swatch.
-    if (!root.contains(cpick.input)) {
-      const fresh = [...root.querySelectorAll(`input.${cpick.cls}`)].find((x) => (x.dataset.slug || "") === (cpick.slug || ""));
-      if (!fresh) return closeColorPicker();
-      cpick.input = fresh; cpick.btn = fresh.nextElementSibling;
-    }
-    const hex = paintPick(fromField);
-    cpick.input.value = hex;
-    cpick.btn.style.setProperty("--c", hex);
-    cpick.input.dispatchEvent(new Event("input", { bubbles: true }));
-  }
-  function closeColorPicker() {
-    if (!cpick) return;
-    stopDropper();
-    cpick.box.remove();
-    cpick = null;
-  }
-  window.addEventListener("mousedown", (e) => { if (cpick && !cpick.dropping && !e.target.closest(".lbs-cpick, .lbs-swatch")) closeColorPicker(); }, true);
-
   /* The system colour picker (with its eyedropper), made safe. What locked
    * the Mac up was the page throwing away the <input type="color"> the picker
    * belonged to (the panel re-renders) while the picker was open: the picker
@@ -7705,126 +7612,6 @@
     nativeColor.style.left = `${Math.round(r.left)}px`;
     nativeColor.style.top = `${Math.round(r.bottom)}px`;
     try { nativeColor.showPicker(); } catch { nativeColor.click(); }
-  }
-
-  /* The eyedropper, drawn in the page too (the system one is what locked the
-   * Mac up). It reads the pixel under the pointer from posters, logos and the
-   * wall, or the colour of whatever else is there; a loupe follows the
-   * pointer; click to take it, Esc / right-click / leaving the window cancels.
-   * Nothing outside this tab is involved, so it can't hold the computer. */
-  const dropCanvas = document.createElement("canvas");
-  dropCanvas.width = dropCanvas.height = 1;
-  const dropCtx = dropCanvas.getContext("2d", { willReadFrequently: true });
-  const LOUPE_N = 11, LOUPE_PX = 10; // an 11x11 patch, 10x bigger
-  function readable(source) {
-    try { dropCtx.clearRect(0, 0, 1, 1); dropCtx.drawImage(source, 0, 0, 1, 1, 0, 0, 1, 1); dropCtx.getImageData(0, 0, 1, 1); return true; } catch { return false; }
-  }
-  function pixelFrom(source, sx, sy) {
-    dropCtx.clearRect(0, 0, 1, 1);
-    dropCtx.drawImage(source, Math.floor(sx), Math.floor(sy), 1, 1, 0, 0, 1, 1);
-    const [r, g, b, a] = dropCtx.getImageData(0, 0, 1, 1).data;
-    return a > 8 ? rgbToHex(r, g, b) : null;
-  }
-  // What's under the pointer: { hex, source, sx, sy, k } where source/sx/sy
-  // say which picture and which pixel (k: picture pixels per screen pixel),
-  // or { hex } for a plain coloured element, or { locked: true }.
-  function sampleAt(x, y) {
-    const els = document.elementsFromPoint(x, y).filter((el) => !el.closest(".lbs-cpick, .lbs-loupe"));
-    let locked = false;
-    for (const el of els) {
-      const r = el.getBoundingClientRect();
-      if (!r.width || !r.height) continue;
-      let source = null, sx = 0, sy = 0, k = 1;
-      if (el.tagName === "CANVAS") {
-        source = el; k = el.width / r.width;
-        sx = (x - r.left) * k; sy = (y - r.top) * (el.height / r.height);
-      } else if (el.tagName === "IMG" && el.complete && el.naturalWidth) {
-        const fit = getComputedStyle(el).objectFit;
-        const nw = el.naturalWidth, nh = el.naturalHeight;
-        const sc = fit === "cover" ? Math.max(r.width / nw, r.height / nh) : fit === "contain" || fit === "scale-down" ? Math.min(r.width / nw, r.height / nh) : null;
-        const kx = sc ? 1 / sc : nw / r.width, ky = sc ? 1 / sc : nh / r.height;
-        sx = sc ? (x - r.left - (r.width - nw * sc) / 2) * kx : (x - r.left) * kx;
-        sy = sc ? (y - r.top - (r.height - nh * sc) / 2) * ky : (y - r.top) * ky;
-        if (sx < 0 || sy < 0 || sx >= nw || sy >= nh) continue;
-        source = el; k = kx;
-      }
-      if (source) {
-        if (!readable(source)) { locked = true; continue; }
-        const hex = pixelFrom(source, sx, sy);
-        if (hex) return { hex, source, sx, sy, k };
-        continue; // transparent here: look underneath
-      }
-      const bg = getComputedStyle(el).backgroundColor;
-      const m = bg && bg.match(/rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+))?/);
-      if (m && (m[4] == null || +m[4] > 0.5)) return { hex: rgbToHex(+m[1], +m[2], +m[3]), locked };
-    }
-    return { hex: null, locked };
-  }
-  let dropper = null; // { loupe, last, handlers }
-  function startDropper() {
-    if (!cpick || dropper) return;
-    cpick.dropping = true;
-    cpick.box.classList.add("-dropping");
-    const before = cpick.box.querySelector(".lbs-cpick-now").style.background;
-    const S = LOUPE_N * LOUPE_PX;
-    const loupe = h("div", "lbs-loupe", `<canvas width="${S}" height="${S}"></canvas><div><i></i><span></span></div>`);
-    document.body.append(loupe);
-    const lc = loupe.querySelector("canvas").getContext("2d");
-    lc.imageSmoothingEnabled = false;
-    root.classList.add("lbs-dropping");
-    let raf = 0, at = null;
-    const paint = () => {
-      raf = 0;
-      if (!dropper || !at) return;
-      const { x, y } = at;
-      const got = sampleAt(x, y);
-      dropper.last = got.hex;
-      // the magnifier: the patch around the pixel, big and unsmoothed
-      lc.fillStyle = "#0b1014"; lc.fillRect(0, 0, S, S);
-      if (got.source) {
-        const half = (LOUPE_N / 2) * got.k;
-        lc.drawImage(got.source, got.sx - half, got.sy - half, LOUPE_N * got.k, LOUPE_N * got.k, 0, 0, S, S);
-      } else if (got.hex) { lc.fillStyle = got.hex; lc.fillRect(0, 0, S, S); }
-      lc.strokeStyle = "#fff"; lc.lineWidth = 2;
-      const c0 = Math.floor(LOUPE_N / 2) * LOUPE_PX;
-      lc.strokeRect(c0, c0, LOUPE_PX, LOUPE_PX);
-      lc.strokeStyle = "rgba(0,0,0,.6)"; lc.lineWidth = 1;
-      lc.strokeRect(c0 - 1.5, c0 - 1.5, LOUPE_PX + 3, LOUPE_PX + 3);
-      loupe.querySelector("i").style.background = got.hex || "transparent";
-      loupe.querySelector("span").textContent = got.hex ? got.hex : got.locked ? "can't read this picture" : "nothing here";
-      // live preview in the picker (taken only when you click)
-      cpick.box.querySelector(".lbs-cpick-now").style.background = got.hex || before;
-      // keep the loupe on screen
-      const lw = loupe.offsetWidth, lh = loupe.offsetHeight;
-      const lx = x + 20 + lw > innerWidth ? x - 20 - lw : x + 20, ly = y + 20 + lh > innerHeight ? y - 20 - lh : y + 20;
-      loupe.style.transform = `translate(${lx}px, ${ly}px)`;
-    };
-    const show = (e) => { at = { x: e.clientX, y: e.clientY }; if (!raf) raf = requestAnimationFrame(paint); };
-    const block = (e) => { if (e.target.closest && e.target.closest(".lbs-cpick")) return; e.preventDefault(); e.stopPropagation(); };
-    const down = (e) => {
-      if (e.target.closest && e.target.closest(".lbs-cpick")) return;
-      block(e);
-      if (e.button !== 0) return stopDropper();
-      at = { x: e.clientX, y: e.clientY }; paint();
-      const hex = dropper && dropper.last;
-      stopDropper();
-      if (hex) setPickHex(hex);
-    };
-    const key = (e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); stopDropper(); } };
-    const handlers = [["pointermove", show], ["pointerdown", down], ["mousedown", block], ["mouseup", block], ["click", block], ["contextmenu", block], ["keydown", key], ["blur", () => stopDropper()]];
-    handlers.forEach(([t, f]) => window.addEventListener(t, f, true));
-    dropper = { loupe, last: null, handlers, restore: () => { if (cpick) cpick.box.querySelector(".lbs-cpick-now").style.background = before; } };
-  }
-  function stopDropper() {
-    if (!dropper) return;
-    const d = dropper;
-    dropper = null;
-    d.loupe.remove();
-    d.restore();
-    root.classList.remove("lbs-dropping");
-    // let the click that ended it finish before the page hears clicks again
-    setTimeout(() => d.handlers.forEach(([t, f]) => window.removeEventListener(t, f, true)), 0);
-    if (cpick) { cpick.dropping = false; cpick.box.classList.remove("-dropping"); }
   }
 
   /* Drags of rows, folders and franchise films, done with the mouse rather
@@ -7896,8 +7683,6 @@
   window.addEventListener("blur", cancelAllDrags);
   window.addEventListener("keydown", (e) => {
     if (e.key !== "Escape") return;
-    if (dropper) { e.stopPropagation(); e.preventDefault(); return stopDropper(); }
-    if (cpick) { e.stopPropagation(); e.preventDefault(); return closeColorPicker(); }
     if (mdnd || grab) { e.stopPropagation(); e.preventDefault(); cancelAllDrags(); }
   }, true);
 
@@ -7982,8 +7767,14 @@
         }
         libUI.fsel = new Set();
         libUI.adding = null;
+        // Double-click a folder to rename it, as in Finder. (Counted here: the
+        // first click redraws the row, so the browser's dblclick never comes.)
+        const again = libUI.lastOpen && libUI.lastOpen.id === fid && Date.now() - libUI.lastOpen.t < 450;
+        libUI.lastOpen = { id: fid, t: Date.now() };
+        if (again && btn.dataset.lfold && btn.querySelector(".lbs-lib-ren")) { libUI.lastOpen = null; libUI.renaming = fid; return renderLibrary(); }
         if (btn.dataset.side === "left") libUI.path = libUI.path.length >= 2 ? [...libUI.path.slice(0, -1), fid] : [fid];
         else libUI.path = [...libUI.path, fid];
+        mine.lv = { ...(mine.lv || {}), path: libUI.path.slice() };
         libUI.focus = { folder: fid };
         return renderLibrary();
       }
@@ -8463,11 +8254,41 @@
 
   window.addEventListener("hashchange", syncToHash);
   window.addEventListener("popstate", syncToHash);
+  /* Keys, store-wide:
+   *   Esc       steps back one layer at a time (typing, trailer, film,
+   *             selection, Library), never out of the store itself
+   *   ⌘Z        undoes the last change to the shelves
+   *   / or ⌘K   jumps to search
+   *   ⌘A        in the Library's folders: selects every film in the open folder */
+  const typing = (el) => el && (el.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(el.tagName));
   document.addEventListener("keydown", (e) => {
-    if (e.key !== "Escape" || !root || root.hidden) return;
-    if (desk.moving) { desk.moving = null; return renderDesk(); }
-    if (desk.open && !DESK_ONLY) return setDesk(false);
-    leaveStore();
+    if (!root || root.hidden) return;
+    const mod = e.metaKey || e.ctrlKey, inField = typing(document.activeElement);
+    if (e.key === "Escape") {
+      if (desk.moving) { desk.moving = null; return renderDesk(); }
+      if (desk.open && !DESK_ONLY) return setDesk(false);
+      if (inField) return document.activeElement.blur();
+      const tr = $(".lbs-trailer", root);
+      if (tr && !tr.hidden) return closeTrailer();
+      const fv = $(".lbs-filmview", root);
+      if (fv && !fv.hidden) return closeFilm();
+      if (libUI.msel.size || libUI.fsel.size || libUI.sel || lv.sel.size) { deselectAll(); return renderLibrary(); }
+      if (libUI.open) return setLibrary(false);
+      return; // leaving the store is the ✕ in the top bar
+    }
+    if (inField) return;
+    if (mod && !e.shiftKey && e.key.toLowerCase() === "z" && edit.undo.length) { e.preventDefault(); undoHouse(); return toast("Undone."); }
+    if ((e.key === "/" && !mod) || (mod && e.key.toLowerCase() === "k")) { const q = $(".lbs-find-q", root); if (q) { e.preventDefault(); q.focus(); q.select(); } return; }
+    if (mod && e.key.toLowerCase() === "a" && libUI.open && lv.mode !== "list" && !(document.activeElement && document.activeElement.closest && document.activeElement.closest(".lbs-lv-list"))) {
+      const col = $(".lbs-library .lbs-lib-col.-right", root);
+      const side = "right";
+      const slugs = (libUI.vcols && libUI.vcols[side] && libUI.vcols[side].slugs) || (col ? [...col.querySelectorAll(".lbs-lib-film")].map((r) => r.dataset.slug) : []);
+      if (!slugs.length) return;
+      e.preventDefault();
+      libUI.msel = new Map(slugs.map((x) => [x, lib.names.get(x) || x]));
+      libUI.sel = null;
+      return renderLibrary();
+    }
   });
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
   else boot();

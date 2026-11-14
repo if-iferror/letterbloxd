@@ -4521,94 +4521,17 @@ html.lbs-open {
   opacity: 0.35;
   cursor: default;
 }
-.lbs-cpick {
-  position: absolute;
-  z-index: 70;
-  width: 220px;
-  padding: 10px;
-  border-radius: 8px;
-  background: #1e252c;
-  box-shadow: 0 0 0 1px #384350, 0 16px 40px rgba(0, 0, 0, 0.6);
-}
-.lbs-cpick-sv {
-  position: relative;
-  height: 140px;
-  border-radius: 5px;
-  background: linear-gradient(to top, #000, transparent), linear-gradient(to right, #fff, var(--hue, red));
-  cursor: crosshair;
-}
-.lbs-cpick-sv i {
-  position: absolute;
-  width: 12px;
-  height: 12px;
-  margin: -6px 0 0 -6px;
-  border-radius: 50%;
-  box-shadow: 0 0 0 2px #fff, 0 0 0 3px rgba(0, 0, 0, 0.5);
-  pointer-events: none;
-}
-.lbs-cpick-hue {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 100%;
-  height: 12px;
-  margin: 10px 0 8px;
-  border-radius: 6px;
-  background: linear-gradient(to right, red, #ff0, lime, cyan, blue, #f0f, red);
-  outline: none;
-}
-.lbs-cpick-hue::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
-}
-.lbs-cpick-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.lbs-cpick-now {
-  width: 26px;
-  height: 26px;
-  border-radius: 4px;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25);
-}
-.lbs-cpick-hex {
-  flex: 1;
-  min-width: 0;
-  padding: 4px 6px !important;
-  border: 0 !important;
-  border-radius: 4px;
-  background: #0f1317 !important;
-  box-shadow: inset 0 0 0 1px #2c3440 !important;
-  color: #fff !important;
-  font: 12px monospace !important;
-}
-.lbs-cpick-done {
-  all: unset;
-  padding: 4px 10px;
-  border-radius: 4px;
-  background: #40bcf4;
-  color: #0b1014;
-  font: 700 12px Arial, sans-serif;
-  cursor: pointer;
-}
-.lbs-cpick-presets {
-  display: grid;
-  grid-template-columns: repeat(6, 1fr);
-  gap: 5px;
-  margin-top: 8px;
-}
-.lbs-cpick-presets button {
-  all: unset;
-  height: 20px;
-  border-radius: 3px;
-  background: var(--c);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2);
-  cursor: pointer;
-}
+
+
+
+
+
+
+
+
+
+
+
 /* Editing the store: no find bar (the desk has its own search); the Library
    button sits in the header instead. Browsing: it sits by the search. */
 .lbs-root:not(.lbs-browsing) .lbs-hall > .lbs-find {
@@ -4739,53 +4662,15 @@ html.lbs-open {
   color: #fff;
 }
 
-.lbs-cpick-drop {
-  all: unset;
-  display: grid;
-  place-items: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 4px;
-  background: #2c3440;
-  color: #cfd8e0;
-  cursor: pointer;
-}
-.lbs-cpick-drop svg { width: 15px; height: 15px; }
-.lbs-cpick-drop:hover { background: #384350; color: #fff; }
-.lbs-cpick.-dropping .lbs-cpick-drop { background: #40bcf4; color: #0b1014; }
-.lbs-dropping, .lbs-dropping * { cursor: crosshair !important; }
-.lbs-loupe {
-  position: fixed;
-  left: 0;
-  top: 0;
-  z-index: 2147483647;
-  padding: 6px;
-  border-radius: 10px;
-  background: #1e252c;
-  box-shadow: 0 0 0 1px #384350, 0 10px 28px rgba(0, 0, 0, 0.6);
-  color: #cfd8e0;
-  font: 12px monospace;
-  pointer-events: none;
-}
-.lbs-loupe canvas {
-  display: block;
-  width: 110px;
-  height: 110px;
-  border-radius: 6px;
-  image-rendering: pixelated;
-}
-.lbs-loupe div {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 6px;
-}
-.lbs-loupe i {
-  width: 18px;
-  height: 18px;
-  border-radius: 4px;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.3);
-}
+
+
+
+
+
+
+
+
+
 
 /* the one shared system colour input (see openNativePicker) */
 .lbs-native-color {
