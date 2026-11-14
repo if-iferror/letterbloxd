@@ -520,7 +520,7 @@
       lists.set(key, { name, set: new Set(gaps.map((d) => (i += d))) });
     }
     catalogue = { at: j.at, films: j.films, lists, info: Array.isArray(j.info) ? j.info : null, people: j.people || [], langNames: j.langNames || {}, kw: Array.isArray(j.kw) ? j.kw : null, fkw: Array.isArray(j.fkw) ? j.fkw : null,
-      co: j.co || null, fco: j.fco || null, cast: j.cast || null, fcast: j.fcast || null, certs: j.certs || null, fcert: j.fcert || null, views: Array.isArray(j.views) ? j.views : null };
+      co: j.co || null, fco: j.fco || null, cast: j.cast || null, fcast: j.fcast || null, certs: j.certs || null, fcert: j.fcert || null, fage: Array.isArray(j.fage) ? j.fage : null, views: Array.isArray(j.views) ? j.views : null };
     catState = "ready";
     return true;
   }
@@ -3023,7 +3023,7 @@
         const bearer = key.length > 40, lane = limiter(10);
         const todo = [];
         st.films.forEach(([slug], i) => {
-          if (i in st.fx) return;
+          if (st.fx[i] === 0 || (st.fx[i] && st.fx[i].length > 3)) return; // done (now with world age ratings)
           const e = logoEntry(slug), id = (e && e[0]) || (st.tmdb && st.tmdb[i]);
           if (id) todo.push([i, id]);
         });
@@ -3045,7 +3045,14 @@
             let cert = "";
             const us = ((j.release_dates && j.release_dates.results) || []).find((x) => x.iso_3166_1 === "US");
             if (us) { const ds = us.release_dates || []; const pick = ds.find((d) => d.certification && d.type === 3) || ds.find((d) => d.certification); cert = pick ? pick.certification.trim() : ""; }
-            st.fx[i] = [co, cast, cert];
+            // the youngest age each country's rating allows, for the Audience filter
+            const ages = {};
+            for (const r0 of (j.release_dates && j.release_dates.results) || []) {
+              const tbl = AGE_TABLES[r0.iso_3166_1];
+              if (!tbl) continue;
+              for (const d of r0.release_dates || []) { const a = tbl[String(d.certification || "").trim().toUpperCase()]; if (a != null) ages[r0.iso_3166_1] = Math.min(ages[r0.iso_3166_1] ?? 99, a); }
+            }
+            st.fx[i] = [co, cast, cert, ages];
             if (j.origin_country) st.origin[i] = j.origin_country;
             const ks = (j.keywords && j.keywords.keywords) || [];
             if (ks.length || !(i in st.kw)) { for (const k of ks) st.kwNames[k.id] = k.name; st.kw[i] = ks.map((k) => k.id); }
@@ -3130,7 +3137,7 @@
       (catJob.error ? `<p class="-err">${esc(catJob.error)}</p>` : "") +
       `<div class="lbs-logobuild-row">` +
       (catJob.running ? `<button type="button" data-act="cat-stop">Pause</button>` : st && st.phase === "done" && neededLists().every((k) => st.lists[k]) ? "" : `<button type="button" data-act="cat-start" class="-go">${st && (st.films.length || Object.keys(st.probes).length) ? "Continue" : "Start"}</button>`) +
-      (st && st.phase === "done" ? `<button type="button" data-act="cat-save" class="-go">Download catalogue</button><button type="button" data-act="cat-try">Try it here</button>` + (catJob.running ? "" : `<button type="button" data-act="cat-details" title="Runtime, primary language and directors for every film (about an hour)">${st.info ? "Re-read film details" : "Read film details"}</button><button type="button" data-act="cat-keywords" title="TMDB keywords for every film, for the Tags filter (about an hour; needs your TMDB key)">${st.kw ? "Finish TMDB keywords" : "Read TMDB keywords"}</button><button type="button" data-act="cat-deep" title="Find the films the Logo builder never matched on TMDB, with their keywords and country (about two hours)">${st.tmdb ? "Finish finding the rest on TMDB" : "Find the rest on TMDB"}</button><button type="button" data-act="cat-facts" title="Studios, top-billed cast and US age rating for every film TMDB knows (run after Find the rest; about 1–2 hours)">${st.fx ? "Finish film facts from TMDB" : "Film facts from TMDB"}</button><button type="button" data-act="cat-views" title="How many people watched each film, for the Views filter (Letterboxd, about two hours)">${st.views ? "Finish view counts" : "Read view counts"}</button>`) : "") +
+      (st && st.phase === "done" ? `<button type="button" data-act="cat-save" class="-go">Download catalogue</button><button type="button" data-act="cat-try">Try it here</button>` + (catJob.running ? "" : `<button type="button" data-act="cat-details" title="Runtime, primary language and directors for every film (about an hour)">${st.info ? "Re-read film details" : "Read film details"}</button><button type="button" data-act="cat-keywords" title="TMDB keywords for every film, for the Tags filter (about an hour; needs your TMDB key)">${st.kw ? "Finish TMDB keywords" : "Read TMDB keywords"}</button><button type="button" data-act="cat-deep" title="Find the films the Logo builder never matched on TMDB, with their keywords and country (about two hours)">${st.tmdb ? "Finish finding the rest on TMDB" : "Find the rest on TMDB"}</button><button type="button" data-act="cat-facts" title="Studios, top-billed cast and US age rating for every film TMDB knows (run after Find the rest; about 1–2 hours)">${st.fx ? "Film facts from TMDB (adds world age ratings)" : "Film facts from TMDB"}</button><button type="button" data-act="cat-views" title="How many people watched each film, for the Views filter (Letterboxd, about two hours)">${st.views ? "Finish view counts" : "Read view counts"}</button>`) : "") +
       (!BUILD_TAB ? `<p class="lbs-menu-note">Long runs: <a href="/films/#store-builder" target="_blank" rel="noopener">open the builder in its own tab</a> and keep sorting here. That tab never saves your shelves.</p>` : `<p class="lbs-menu-note">Builder tab: your shelves are read-only here, so sort in your other tab.</p>`) +
       (!catJob.running && st ? `<button type="button" data-act="cat-reset">Start over</button>` : "") +
       `<button type="button" data-act="cat-close">Close</button></div>`;
@@ -3171,6 +3178,8 @@
       out.co = co.names; out.fco = co.per;
       out.cast = cast.names; out.fcast = cast.per;
       const certs = [];
+      // one age per film: the median of the countries' ratings (99: none)
+      out.fage = st.films.map((f, i) => { const a = st.fx[i] && st.fx[i][3] ? Object.values(st.fx[i][3]).sort((x, y) => x - y) : []; return a.length ? a[Math.floor((a.length - 1) / 2)] : 99; });
       out.fcert = st.films.map((f, i) => { const c = st.fx[i] && st.fx[i][2]; if (!c) return 0; let k = certs.indexOf(c); if (k < 0) { certs.push(c); k = certs.length - 1; } return k + 1; });
       out.certs = certs;
     }
@@ -5361,6 +5370,24 @@
     ["play", "Based on Plays", "based on play or musical|based on play|based on stage play"],
   ];
 
+  // Age ratings by country → the youngest age each allows.
+  const AGE_TABLES = {
+    US: { G: 0, PG: 8, "PG-13": 13, R: 17, "NC-17": 18 },
+    GB: { U: 0, UC: 0, PG: 8, "12A": 12, "12": 12, "15": 15, "18": 18, R18: 18 },
+    DE: { "0": 0, "6": 6, "12": 12, "16": 16, "18": 18 },
+    NL: { AL: 0, "6": 6, "9": 9, "12": 12, "14": 14, "16": 16, "18": 18 },
+    AU: { G: 0, PG: 8, M: 15, "MA15+": 15, "R18+": 18, X: 18 },
+    IE: { G: 0, PG: 8, "12A": 12, "12": 12, "15A": 15, "15": 15, "16": 16, "18": 18 },
+    FR: { U: 0, TP: 0, "10": 10, "12": 12, "16": 16, "18": 18 },
+    SE: { BTL: 0, "7": 7, "11": 11, "15": 15 },
+    NO: { A: 0, "6": 6, "9": 9, "12": 12, "15": 15, "18": 18 },
+    DK: { A: 0, "7": 7, "11": 11, "15": 15 },
+    CA: { G: 0, PG: 8, "14A": 14, "18A": 18, R: 18 },
+    BR: { L: 0, "10": 10, "12": 12, "14": 14, "16": 16, "18": 18 },
+    JP: { G: 0, PG12: 12, "R15+": 15, "R18+": 18 },
+    KR: { ALL: 0, "12": 12, "15": 15, "18": 18 },
+  };
+
   /* Studio labels: each rolls up the TMDB company names behind one brand
    * (whole name, case-insensitive). Edit freely: no rebuild needed. */
   const STUDIOS = [
@@ -5714,6 +5741,38 @@
       tags = { keys: KW_TAGS.map(([id]) => id), names: KW_TAGS.map(([, label]) => label), per };
     }
 
+    // Audience: nothing says "made for kids", so a film is scored from what
+    // does: kids' studios, kid keywords, Animation + Family, and the age
+    // ratings of many countries (their median; Germany's FSK 0/6 and the UK's
+    // U are much stricter than a US G/PG). Grown-up signals hold a film back.
+    const audience = new Array(N);
+    {
+      const bit = (g) => { const b = GENRES.findIndex(([x]) => x === g); return b < 0 ? 0 : 1 << b; };
+      const ANIM = bit("animation"), FAM = bit("family");
+      const KID_STUDIOS = new Set(["disney", "pixar", "dwa", "illumination", "bluesky", "sonyanim", "wbanim", "laika", "aardman", "cartoonsaloon", "nickelodeon", "cartoonnetwork", "disneychannel", "nelvana", "mattel", "shinei"].map((id) => STUDIOS.findIndex(([x]) => x === id)).filter((n) => n >= 0));
+      const kidRe = /^(?:based on children's book|children's book|children's adventure|children's film|kids|kids movie|for children|preschool|educational|cartoon|cartoon \w+|talking animal|talking dog|talking cat|anthropomorphism|anthropomorphic|anthropomorphic animal|toy comes to life|based on toy|toy|toys|puppet|puppetry|muppets|sing-along|fairy tale|based on fairy tale|princess|magical creature|dinosaur|elementary school)$/i;
+      const adultRe = /^(?:adult animation|sex|sexuality|sexual|erotic|erotica|nudity|female nudity|male nudity|softcore|sex scene|sexploitation|gore|splatter|torture|graphic violence|extreme violence|brutality|drug use|drug addiction|cocaine|heroin|rape|sexual abuse|child sexual abuse|prostitution|stripper|serial killer|slasher|profanity|black comedy|dark comedy)$/i;
+      const kwKid = C.kw ? C.kw.map((n) => kidRe.test(n)) : [], kwAdult = C.kw ? C.kw.map((n) => adultRe.test(n)) : [];
+      const certOf = (i) => (C.fcert && C.fcert[i] ? C.certs[C.fcert[i] - 1] : "");
+      for (let i = 0; i < N; i++) {
+        const ks = (C.fkw && C.fkw[i]) || [];
+        let kid = 0, adult = 0;
+        for (const k of ks) { if (kwKid[k]) kid++; if (kwAdult[k]) adult++; }
+        kid = Math.min(kid, 2);
+        if (studio && studio.per[i] && studio.per[i].some((t) => KID_STUDIOS.has(t))) kid += 2;
+        if ((genre[i] & ANIM) && (genre[i] & FAM)) kid += 1.5;
+        else if (genre[i] & FAM) kid += 0.5;
+        const age = C.fage && C.fage[i] !== 99 ? C.fage[i] : null, us = certOf(i);
+        const ageish = age != null ? age : us === "G" ? 0 : us === "PG" ? 8 : us === "PG-13" ? 13 : us === "R" ? 17 : us === "NC-17" ? 18 : null;
+        let a = null;
+        if (adult >= 2 || (ageish != null && ageish >= 15) || us === "R" || us === "NC-17") a = "adult";
+        else if ((ageish != null && ageish >= 12) || us === "PG-13" || adult) a = "teen";
+        else if (kid >= 2 && ageish != null && ageish <= 6) a = "little";
+        else if (kid >= 1.5 || ((genre[i] & FAM) && ageish != null && ageish <= 10)) a = ageish == null || ageish <= 10 ? "kids" : "teen";
+        else if (ageish != null && ageish <= 10) a = "all";
+        if (a) audience[i] = a;
+      }
+    }
     // View counts (the builder's "Read view counts"): bands cut where the
     // films actually fall, at round numbers.
     let views = null;
@@ -5728,7 +5787,7 @@
         views = { bands, of: (x) => { let n = 0; while (n < cuts.length && x >= cuts[n]) n++; return String(n); } };
       }
     }
-    facts = { cat: C, idx, genre, country, origin, lang, primary, short, tv, theme, mini, tags, studio, views, runtime: C.info ? (i) => (C.info[i] && C.info[i][1]) || 0 : null };
+    facts = { cat: C, idx, genre, country, origin, lang, primary, short, tv, theme, mini, tags, studio, views, audience, runtime: C.info ? (i) => (C.info[i] && C.info[i][1]) || 0 : null };
     return facts;
   }
 
@@ -5777,6 +5836,7 @@
           cert: i != null && F.cat.fcert && F.cat.fcert[i] ? [certBucket(F.cat.certs[F.cat.fcert[i] - 1])] : [],
           rating: i != null ? (F.cat.films[i][2] || 0) : 0,
           vband: i != null && F.views && F.cat.views[i] ? [F.views.of(F.cat.views[i])] : [],
+          aud: i != null && F.audience[i] ? [F.audience[i]] : [],
           rband: i != null && F.cat.films[i][2] ? [ratingBand(F.cat.films[i][2])] : [],
           rtband: i != null && F.runtime && F.runtime(i) ? [runtimeBand(F.runtime(i))] : [],
           who: i != null ? whoOf(F.cat, i) : [],
@@ -5791,7 +5851,7 @@
       out.push({
         slug, name: S.name, year: S.year, i: S.i, key: S.key, rating: S.rating,
         path: [p.genre, p.cat, p.sub, p.niche].filter(Boolean),
-        v: { status, sgenre: [p.genre], scat: p.cat ? [p.cat] : [], ssub: [p.sub, p.niche].filter(Boolean), genre: S.genre, type: S.type, decade: S.decade, lang: S.lang, country: S.country, pcountry: S.pcountry, tag: S.tag, studio: S.studio, cert: S.cert, rband: S.rband, rtband: S.rtband, vband: S.vband, lock: [String(lockOf(slug))], who: S.who, theme: S.theme, mini: S.mini },
+        v: { status, sgenre: [p.genre], scat: p.cat ? [p.cat] : [], ssub: [p.sub, p.niche].filter(Boolean), genre: S.genre, type: S.type, decade: S.decade, lang: S.lang, country: S.country, pcountry: S.pcountry, tag: S.tag, studio: S.studio, cert: S.cert, rband: S.rband, rtband: S.rtband, vband: S.vband, aud: S.aud, lock: [String(lockOf(slug))], who: S.who, theme: S.theme, mini: S.mini },
       });
     }
     lv.base = out; lv.baseLib = lib; lv.baseLay = wall.lay; lv.baseKey = key;
@@ -5816,6 +5876,7 @@
     const who = Object.keys(lv.f.who || {});
     if (who.length) gs.push({ id: "who", label: "People & companies", vals: who.map((k) => [k, whoName(k)]) });
     if (F && F.studio) gs.push({ id: "studio", label: "Studio", vals: F.studio.keys.map((k, n) => [String(n), F.studio.names[n], STUDIOS[n][2].replace(/\\/g, "").replace(/\|/g, " ").toLowerCase()]), many: true, find: "studio (try Disney, A24, Bad Robot…)" });
+    if (F) gs.push({ id: "aud", label: "Audience (estimated)", vals: [["little", "Little kids"], ["kids", "Kids & family"], ["all", "All ages, not aimed at kids"], ["teen", "Teens"], ["adult", "Grown-ups"]] });
     if (F && F.cat.fcert) gs.push({ id: "cert", label: "Age rating (US)", vals: CERTS });
     gs.push({ id: "rband", label: "Letterboxd rating", vals: RATING_BANDS });
     if (F && F.views) gs.push({ id: "vband", label: "Views (Letterboxd)", vals: F.views.bands });
