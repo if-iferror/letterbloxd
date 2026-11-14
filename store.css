@@ -4991,3 +4991,23 @@ html.lbs-open {
 .lbs-lib-head.-lv .lbs-seg button { padding: 4px 7px; }
 .lbs-lib-head.-lv .lbs-lv-search { flex: 1 1 90px; min-width: 80px; }
 .lbs-lib-head.-lv .lbs-lv-ftoggle { padding-left: 8px; padding-right: 8px; }
+
+/* Library: drop into a list — the column lights up and a line shows where */
+.lbs-lib-col.-dropcol { box-shadow: inset 0 0 0 2px rgba(64, 188, 244, 0.55); border-radius: 6px; }
+.lbs-lib-col.-dropempty ul { box-shadow: inset 0 0 0 2px dashed #40bcf4; }
+.lbs-lib-row { position: relative; }
+.lbs-lib-row.-dropbefore::before,
+.lbs-lib-row.-dropafter::after {
+  content: "";
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  height: 3px;
+  border-radius: 2px;
+  background: #40bcf4;
+  box-shadow: 0 0 6px rgba(64, 188, 244, 0.8);
+  pointer-events: none;
+  z-index: 2;
+}
+.lbs-lib-row.-dropbefore::before { top: -2px; }
+.lbs-lib-row.-dropafter::after { bottom: -2px; }

@@ -780,6 +780,14 @@
       return 1000 + (w >= 0 ? w : WALL_ORDER.length - 1.5);
     };
     genres.get(STOCKED)?.cats.sort((a, b) => wallKey(a) - wallKey(b));
+    // Genres in the order they were dragged into (the Library's top level).
+    if (Array.isArray(H.genreOrder) && H.genreOrder.length) {
+      const was = [...genres.keys()];
+      const gk = (id) => { const i = H.genreOrder.indexOf(id); return i >= 0 ? i : 1000 + was.indexOf(id); };
+      const sorted = [...genres].sort((a, b) => gk(a[0]) - gk(b[0]));
+      genres.clear();
+      for (const [k, v] of sorted) genres.set(k, v);
+    }
     for (const g of genres.values()) if (g.id !== STOCKED && g.cats.some((c) => H.order.includes(c))) g.cats.sort((a, b) => wallKey(a) - wallKey(b));
     for (const c of cats.values()) {
       const o = H.subOrder[c.id];
@@ -4936,7 +4944,7 @@
     const folderRow = (id, side) => {
       if (libUI.renaming === id) return `<li class="lbs-lib-new"><input type="text" class="lbs-lib-rename" data-id="${esc(id)}" maxlength="40" value="${esc(nameOf(id))}"></li>`;
       const n = fcount ? fcount.get(id) || 0 : lib.count.get(id) || 0;
-      return `<li class="lbs-lib-row lbs-folder${path.includes(id) ? " -on" : ""}${fsel.has(id) ? " -msel" : ""}${fcount && !n ? " -dim" : ""}" data-act="lib-open" data-side="${side}" data-id="${esc(id)}" data-drop="${esc(id)}"${canEdit(id) && !lib.genres.has(id) ? ' data-lfold="1"' : ""}>` +
+      return `<li class="lbs-lib-row lbs-folder${path.includes(id) ? " -on" : ""}${fsel.has(id) ? " -msel" : ""}${fcount && !n ? " -dim" : ""}" data-act="lib-open" data-side="${side}" data-id="${esc(id)}" data-drop="${esc(id)}"${canEdit(id) || (toHouse() && lib.genres.has(id)) ? ' data-lfold="1"' : ""}>` +
       `${ICON_FOLDER}<span>${esc(nameOf(id))}</span>` +
       (selPath.includes(id) ? `<em>here</em>` : "") +
       `<small>${fcount ? `${fmt(n)} / ${fmt(lib.count.get(id) || 0)}` : fmt(n)}</small>` +
@@ -4983,7 +4991,7 @@
       const lvl = side === "right" || (!id && toHouse()) ? (id ? childLevel(id) : toHouse() ? "genre" : null) : null;
       const adding = lvl && (id ? libUI.adding === id : libUI.adding === "@root");
       return (
-        `<div class="lbs-lib-col -${side}"><h5>${id ? esc(nameOf(id)) : "Genres"}${id ? `<small>${fmt(String(id).startsWith("fr:") ? k.films.length : lib.count.get(id) || 0)} films</small>` : ""}${String(id).startsWith("fr:") ? `<button type="button" class="lbs-frbadge" data-act="fr-open" data-fr="${esc(id.slice(3))}">Edit franchise</button>` : ""}</h5><ul>` +
+        `<div class="lbs-lib-col -${side}" data-colid="${esc(id || "")}"><h5>${id ? esc(nameOf(id)) : "Genres"}${id ? `<small>${fmt(String(id).startsWith("fr:") ? k.films.length : lib.count.get(id) || 0)} films</small>` : ""}${String(id).startsWith("fr:") ? `<button type="button" class="lbs-frbadge" data-act="fr-open" data-fr="${esc(id.slice(3))}">Edit franchise</button>` : ""}</h5><ul>` +
         k.folders.map((f) => folderRow(f, side)).join("") +
         (lvl ? (adding ? `<li class="lbs-lib-new"><input type="text" class="lbs-lib-new-name" data-level="${lvl}" maxlength="40" placeholder="Name the new ${LEVEL_WORD[lvl]}"></li>` : `<li class="lbs-lib-add"><button type="button" data-act="lib-new">+ New ${LEVEL_WORD[lvl]}</button></li>`) : "") +
         (k.films.length ? (k.folders.length || lvl ? `<li class="lbs-lib-sep">${allow ? `${fmt(k.films.filter((f) => allow.has(f[0])).length)} of ` : ""}${fmt(k.films.length)} film${k.films.length === 1 ? "" : "s"}</li>` : "") + filmItems(id, k.films, side) : "") +
@@ -6819,7 +6827,14 @@
     root.querySelectorAll(".lbs-pocket.-over, .lbs-pocket-tab.-over").forEach((el) => el.classList.remove("-over"));
     const pocketOver = d.kind === "dvd" && under && under.closest && under.closest(".lbs-pocket, .lbs-pocket-tab");
     if (pocketOver) { pocketOver.classList.add("-over"); wall.dropHint = null; }
-    const folder = (d.kind === "dvd" || d.kind === "folder") && under?.closest?.(".lbs-folder[data-drop], .lbs-crumb[data-drop]");
+    clearDropMarks();
+    d.libT = libDropTarget(under, e.clientY, d);
+    if (d.libT) {
+      d.libT.col.classList.add("-dropcol");
+      if (d.libT.row) d.libT.row.classList.add(d.libT.after ? "-dropafter" : "-dropbefore");
+      else d.libT.col.classList.add("-dropempty");
+    }
+    const folder = (d.kind === "dvd" || d.kind === "folder") && !(d.libT && d.libT.kind === "genre") && under?.closest?.(".lbs-folder[data-drop], .lbs-crumb[data-drop]");
     // Hold a film over a folder to open it, as when dragging.
     if (folder && folder.dataset.drop && (lib.genres.has(folder.dataset.drop) || lib.cats.has(folder.dataset.drop))) {
       if (d.spring !== folder.dataset.drop) {
@@ -6842,6 +6857,7 @@
     const hint = wall.dropHint;
     wall.dropHint = null;
     root.querySelectorAll(".lbs-folder.-over").forEach((el) => el.classList.remove("-over"));
+    clearDropMarks();
     if (!d.live) {
       if (d.kind === "piece" && d.from === "wall") selectSection(grabCid(d));
       return drawSoon();
@@ -6864,6 +6880,15 @@
     }
     // Every finished drag leaves nothing selected.
     if (d.kind !== "piece") setTimeout(() => { deselectAll(); renderLibrary(); }, 0);
+    // Dropped in a Library list (not on a folder row): the line showed where.
+    const lt = d.libT && el && el.closest && el.closest(".lbs-lib-col") === d.libT.col ? d.libT : null;
+    if (lt && lt.kind === "genre") { reorderGenres(d.id, lt.before); return drawSoon(); }
+    if (lt && d.kind === "dvd") {
+      const films = d.films && d.films.length > 1 ? d.films : [[d.slug, d.name]];
+      if (d.from === "tray") releaseFilm(d.slug);
+      if (lt.kind === "fr") return frInsert(lt.fid, films, lt.before);
+      return moveFilms(films, lt.id);
+    }
     if (d.kind === "folder") {
       const f = el && el.closest && el.closest(".lbs-folder[data-drop], .lbs-crumb[data-drop]");
       const to = f && f.dataset.drop;
@@ -6966,6 +6991,65 @@
       else if (H.subs[id]) H.subs[id] = { ...H.subs[id], name };
       H.names[id] = name;
     });
+  }
+  /* Dropping into a Library list. A line shows where the drop lands: in a
+   * franchise (hand-ordered) exactly where you let go; in any other folder at
+   * the film's alphabetical place, which is where it will sit. Genres, at the
+   * top level, can be dragged into a new order the same way. */
+  function clearDropMarks() {
+    if (!root) return;
+    root.querySelectorAll(".lbs-lib-col.-dropcol, .lbs-lib-col.-dropempty, .lbs-lib-row.-dropbefore, .lbs-lib-row.-dropafter").forEach((el) => el.classList.remove("-dropcol", "-dropempty", "-dropbefore", "-dropafter"));
+  }
+  const sortTitle = (n) => titleOf(n).replace(/^(the|a|an)\s+/i, "");
+  function gapAt(rows, y) {
+    for (let i = 0; i < rows.length; i++) { const r = rows[i].getBoundingClientRect(); if (y < r.top + r.height / 2) return i; }
+    return rows.length;
+  }
+  function libDropTarget(under, y, d) {
+    const col = under && under.closest && under.closest(".lbs-library .lbs-lib-col[data-colid]");
+    if (!col) return null;
+    const cid = col.dataset.colid;
+    if (d.kind === "folder") {
+      if (!lib.genres.has(d.id) || cid !== "") return null;
+      const rows = [...col.querySelectorAll(".lbs-folder[data-id]")].filter((r) => lib.genres.has(r.dataset.id));
+      const i = gapAt(rows, y);
+      return { kind: "genre", col, row: rows[Math.min(i, rows.length - 1)], after: i >= rows.length, before: i < rows.length ? rows[i].dataset.id : null };
+    }
+    if (d.kind !== "dvd" || !cid || under.closest(".lbs-folder[data-drop], .lbs-crumb[data-drop]")) return null;
+    const rows = [...col.querySelectorAll(".lbs-lib-film")];
+    if (cid.startsWith("fr:")) {
+      const i = gapAt(rows, y);
+      return { kind: "fr", fid: cid.slice(3), col, row: rows[Math.min(i, rows.length - 1)] || null, after: i >= rows.length, before: i < rows.length ? rows[i].dataset.slug : null };
+    }
+    const first = d.films && d.films.length ? d.films[0][1] : d.name;
+    const key = sortTitle(first || "");
+    const at = rows.find((r) => collator.compare(sortTitle(r.dataset.name || ""), key) > 0);
+    return { kind: "into", id: cid, col, row: at || rows[rows.length - 1] || null, after: !at && rows.length > 0 };
+  }
+  function reorderGenres(id, beforeId) {
+    if (!id || id === beforeId) return;
+    const order = [...lib.genres.keys()].filter((g) => g !== id);
+    const at = beforeId ? order.indexOf(beforeId) : order.length;
+    order.splice(at < 0 ? order.length : at, 0, id);
+    houseEdit(`Moved ${nameOf(id)}.`, (H) => { H.genreOrder = order; });
+  }
+  // Put films into a franchise at a spot (or reorder the ones already in it).
+  function frInsert(fid, films, beforeSlug) {
+    const fr = lib.frs[fid];
+    if (!fr) return;
+    const moving = new Set(films.map(([x]) => x));
+    const rest = fr.films.filter(([x]) => !moving.has(x));
+    let at = beforeSlug ? rest.findIndex(([x]) => x === beforeSlug) : rest.length;
+    if (at < 0) at = rest.length;
+    const list = [...rest.slice(0, at), ...films.map(([x, n]) => [x, lib.names.get(x) || n]), ...rest.slice(at)];
+    for (const [oid, o] of Object.entries(franchises())) if (oid !== fid) o.films = o.films.filter(([x]) => !moving.has(x));
+    for (const [oid, o] of Object.entries(franchises())) if (oid !== fid && o.films.length < 2) delete franchises()[oid];
+    franchises()[fid] = { ...(franchises()[fid] || {}), name: fr.name, films: list, ...(fr.color ? { color: fr.color } : {}), ...(fr.logo ? { logo: fr.logo } : {}) };
+    saveMine();
+    shareEdit("franchise", fid, { name: fr.name, films: list.map(([x]) => x), color: fr.color || null, logo: fr.logo || null });
+    refresh();
+    const added = films.filter(([x]) => !fr.films.some(([y]) => y === x)).length;
+    toast(added ? `Added ${added === 1 ? `‘${titleOf(films[0][1])}’` : `${fmt(added)} films`} to ${fr.name}.` : `Reordered ${fr.name}.`);
   }
   function deselectAll() {
     libUI.sel = null; libUI.msel = new Map(); libUI.fsel = new Set(); libUI.anchor = null; libUI.focus = null;
