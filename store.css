@@ -4766,7 +4766,7 @@ html.lbs-open {
 /* The film preview beside a wide Library: a slim column, the box over the details */
 .lbs-lib-both .lbs-filmview { place-items: stretch; }
 .lbs-lib-both .lbs-filmview .lbs-fwrap { flex-direction: column; align-items: stretch; gap: 10px; width: 100%; height: 100%; max-height: none; overflow: auto; padding: 16px 18px 20px; border-radius: 0; box-shadow: none; box-sizing: border-box; }
-.lbs-lib-both .lbs-filmview .lbs-fbox { align-self: center; zoom: 0.72; padding: 10px 10px 24px 34px; }
+.lbs-lib-both .lbs-filmview .lbs-fbox { align-self: center; flex: none; zoom: 0.72; padding: 10px 10px 24px 34px; }
 .lbs-lib-both .lbs-filmview .lbs-finfo { font-size: 13px; }
 .lbs-lib-both .lbs-filmview .lbs-finfo h2 { font-size: 21px; padding-right: 24px; }
 .lbs-lib-both .lbs-filmview .lbs-lb { min-width: 0; flex: 1; }

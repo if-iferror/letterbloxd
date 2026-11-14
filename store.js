@@ -4546,6 +4546,22 @@
     const det = await filmDetails(slug);
     if (ui.film && ui.film.slug === slug) renderFilm(det);
   }
+  // Beside the Both view the preview is a slim column: grow the box to fill
+  // its width and as much height as the title, shelf and buttons leave over.
+  function fitFilmBox() {
+    const v = root && $(".lbs-filmview", root), fb = v && $(".lbs-fbox", v), wrap = v && $(".lbs-fwrap", v);
+    if (!fb) return;
+    if (!root.classList.contains("lbs-lib-both") || v.hidden) { fb.style.zoom = ""; return; }
+    fb.style.zoom = 1;
+    const w = fb.offsetWidth, h = fb.offsetHeight;
+    const cs = getComputedStyle(wrap);
+    const roomW = wrap.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    // everything under the box stays in view: title, description, shelf, buttons
+    const info = $(".lbs-finfo", v), keep = info ? info.offsetHeight : 0;
+    const roomH = wrap.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom) - keep - 12;
+    fb.style.zoom = Math.max(0.5, Math.min(roomW / w, roomH / h, 1.6)).toFixed(3);
+  }
+  window.addEventListener("resize", () => { if (ui.film) fitFilmBox(); });
   function closeFilm() {
     ui.film = null;
     const v = root && $(".lbs-filmview", root);
@@ -4594,6 +4610,7 @@
       pane +
       `</div></div>`;
     v.hidden = false;
+    fitFilmBox();
     fillPosters(v, true);
     if (det.lid && !ui.film.me && !ui.film.meAsked) lbState(slug, det.lid);
   }
@@ -4902,6 +4919,7 @@
     if (!shell || !lib) return;
     root.classList.toggle("lbs-lib-open", libUI.open);
     root.classList.toggle("lbs-lib-both", libUI.open && lv.mode === "both");
+    if (ui.film) fitFilmBox();
     root.querySelectorAll(".lbs-lib-btn").forEach((b) => b.classList.toggle("-on", libUI.open));
     shell.hidden = !libUI.open;
     if (!libUI.open) return;
