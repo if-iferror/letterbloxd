@@ -260,7 +260,7 @@
   // catalogue grows.)
   const roomGenres = () => (lib ? [...lib.genres.keys()].filter((g) => g !== UNCAT && (lib.count.get(g) || 0) > 0) : [STOCKED]);
   const inRoom = (genreId) => roomGenres().includes(genreId);
-  const roomCats = () => roomGenres().flatMap((g) => lib.genres.get(g).cats);
+  const roomCats = () => roomGenres().flatMap((g) => lib.genres.get(g)?.cats || []);
   // For now the Store opens straight into the Sorting Desk; the walkable
   // aisles are switched off (set false to bring them back).
   const DESK_ONLY = true;
@@ -704,7 +704,7 @@
         for (const sid of c.subs) subs.delete(sid);
         cats.delete(id);
         const g = genres.get(c.genre);
-        g.cats = g.cats.filter((x) => x !== id);
+        if (g) g.cats = g.cats.filter((x) => x !== id);
       } else if (subs.has(id)) {
         const sc = subs.get(id);
         subs.delete(id);
@@ -1518,7 +1518,7 @@
       ids = [...lib.cats.keys(), ...lib.subs.keys(), ...lib.genres.keys()].filter((id) => under(id) && nameOf(id).toLowerCase().includes(q)).slice(0, 120);
       where.innerHTML = `${crumbsHTML()}<span>· ${fmt(ids.length)} folder${ids.length === 1 ? "" : "s"} match</span>`;
     } else {
-      ids = !desk.folder ? [...lib.genres.keys()] : p.cat ? lib.cats.get(p.cat).subs : lib.genres.get(p.genre).cats;
+      ids = !desk.folder ? [...lib.genres.keys()] : p.cat ? lib.cats.get(p.cat)?.subs || [] : lib.genres.get(p.genre)?.cats || [];
       const level = !desk.folder ? null : p.cat ? "sub" : "cat";
       if (level) {
         adder =
@@ -1570,7 +1570,7 @@
       const hid = freshId(`${parent}/h-${slugify(name)}`);
       desk.adding = null;
       houseEdit(`Added “${name}”.`, (H) => {
-        if (level === "cat") { H.cats[hid] = { genre: parent, name }; if (parent === STOCKED) H.order = [...lib.genres.get(STOCKED).cats.filter((c) => !/\/rest$/.test(c)), hid, `${STOCKED}/rest`]; }
+        if (level === "cat") { H.cats[hid] = { genre: parent, name }; if (parent === STOCKED) H.order = [...(lib.genres.get(STOCKED)?.cats || []).filter((c) => !/\/rest$/.test(c)), hid, `${STOCKED}/rest`]; }
         else if (level === "niche") H.subs[hid] = { cat: lib.subs.get(parent).cat, parent, name };
         else H.subs[hid] = { cat: parent, name };
       });
@@ -4888,13 +4888,13 @@
     if (String(id).startsWith("fr:")) { const fr = lib.frs[id.slice(3)]; return { folders: [], films: fr ? fr.films.filter(([x]) => lib.place.has(x)).map(([x, n]) => [x, lib.names.get(x) || n]) : [] }; }
     const p = partsOf(id);
     if (p.niche) return { folders: [], films: lib.inSub.get(id) || [] };
-    if (p.sub) return { folders: (lib.subs.get(id).niches || []).slice(), films: lib.inSub.get(id) || [] };
-    if (p.cat) return { folders: lib.cats.get(id).subs.filter((x) => !isGeneral(x)), films: lib.inSub.get(looseOf(id)) || [] };
+    if (p.sub) return { folders: (lib.subs.get(id)?.niches || []).slice(), films: lib.inSub.get(id) || [] };
+    if (p.cat) return { folders: (lib.cats.get(id)?.subs || []).filter((x) => !isGeneral(x)), films: lib.inSub.get(looseOf(id)) || [] };
     if (p.genre) {
       const rest = `${id}/rest`, rc = lib.cats.get(rest);
       // a genre's own "rest" category: its extra folders show here, its films too
       const extra = rc ? rc.subs.filter((x) => !isGeneral(x)) : [];
-      return { folders: [...lib.genres.get(id).cats.filter((x) => !isGeneral(x) && x !== rest), ...extra], films: lib.inSub.get(looseOf(id)) || [] };
+      return { folders: [...(lib.genres.get(id)?.cats || []).filter((x) => !isGeneral(x) && x !== rest), ...extra], films: lib.inSub.get(looseOf(id)) || [] };
     }
     return { folders: [], films: [] };
   }
@@ -7218,7 +7218,7 @@
   function reorderFolder(id, target, after) {
     const isCat = lib.cats.has(id);
     const parent = isCat ? lib.cats.get(id).genre : lib.subs.get(id).cat;
-    const list = (isCat ? lib.genres.get(parent).cats : lib.cats.get(parent).subs).filter((x) => x !== id);
+    const list = ((isCat ? lib.genres.get(parent)?.cats : lib.cats.get(parent)?.subs) || []).filter((x) => x !== id);
     let at = list.indexOf(target);
     if (at < 0) return;
     if (after) at++;
