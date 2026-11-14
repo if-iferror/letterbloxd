@@ -5008,6 +5008,10 @@
     const canMove = sel && target && target !== selAt;
     const pick = libUI.picking;
     const pickTo = pick && right && !String(right).startsWith("fr:") ? landingSub(right) : null;
+    // Keep each column where it was scrolled (keyed by the folder it shows, so a
+    // column that slides left as you open a folder keeps its place too).
+    const scrolls = new Map();
+    box.querySelectorAll(".lbs-lib-col[data-colid] > ul").forEach((ul) => scrolls.set(ul.parentNode.dataset.colid, ul.scrollTop));
     box.innerHTML =
       `<div class="lbs-lib-head">` +
       `<button type="button" class="lbs-lib-up" data-act="lib-up" aria-label="Up a level" title="Up a level"${path.length ? "" : " disabled"}>${ICON_LEFT}</button>` + libModeHTML() +
@@ -5050,6 +5054,7 @@
       }
     }, { root: null, rootMargin: "200px" }) : null;
     box.querySelectorAll("img[data-lp]").forEach((im) => libIo && libIo.observe(im));
+    box.querySelectorAll(".lbs-lib-col[data-colid] > ul").forEach((ul) => { const t = scrolls.get(ul.parentNode.dataset.colid); if (t) ul.scrollTop = t; });
     // long columns: draw the rows in view, and again as you scroll
     box.querySelectorAll(".lbs-lib-vwrap").forEach((wrap) => {
       const ul = wrap.closest("ul");
