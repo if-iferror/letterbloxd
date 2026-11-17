@@ -8361,9 +8361,10 @@
   // Clicking away saves. The redraw waits a moment so the click that took the
   // focus still lands on what it was aimed at (a folder, a button).
   function onNameBlur(e) {
-    if (!e.target.matches || !e.target.matches(NAME_BOXES) || !e.target.isConnected) return;
+    if (!e.target.matches || !e.target.matches(NAME_BOXES)) return;
     const inp = e.target;
-    setTimeout(() => { if (document.activeElement !== inp) commitName(inp); }, 250);
+    // A box replaced by a redraw (its twin has the focus now) isn't a click away.
+    setTimeout(() => { if (inp.isConnected && document.activeElement !== inp) commitName(inp); }, 250);
   }
   function onFieldKey(e) {
     if (e.target.classList.contains("lbs-find-q")) {
