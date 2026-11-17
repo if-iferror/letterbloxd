@@ -4960,6 +4960,20 @@
       if (wrap && n >= 0) { const ul = wrap.closest("ul"); ul.scrollTop = wrap.offsetTop + n * LIB_VROW - ul.clientHeight / 2; }
     });
   }
+  // Redrawing part of the page mustn't lose what's being typed there: call
+  // keepTyping(el) before the redraw and the function it returns after; the
+  // focused field's text and cursor move to its redrawn twin.
+  function keepTyping(el) {
+    const a = document.activeElement;
+    if (!a || a.tagName !== "INPUT" || !el.contains(a)) return () => null;
+    const key = (x) => [x.className, x.dataset.id, x.dataset.g, x.dataset.y].join("|");
+    const k = key(a), v = a.value, from = a.selectionStart, to = a.selectionEnd;
+    return () => {
+      const twin = [...el.querySelectorAll("input")].find((x) => key(x) === k);
+      if (twin && twin !== a) { twin.value = v; twin.focus({ preventScroll: true }); try { twin.setSelectionRange(from, to); } catch {} }
+      return twin || null;
+    };
+  }
   // Saving anything redraws the Library (houseEdit → refresh → renderFolders).
   // libHeld puts that off while a click is still being handled: it redraws
   // once, after (see onClick).
@@ -5012,29 +5026,26 @@
         const c = lib.cats.get(s.cat); up(s.cat); if (c) up(c.genre);
       }
     }
+    // A folder's row. A franchise is one too ("fr:" id): its films sit inside
+    // it in order; it can be renamed, but not deleted or dragged.
     const folderRow = (id, side) => {
-      if (libUI.renaming === id) return `<li class="lbs-lib-new"><input type="text" class="lbs-lib-rename" data-id="${esc(id)}" maxlength="40" value="${esc(nameOf(id))}"></li>`;
-      const n = fcount ? fcount.get(id) || 0 : lib.count.get(id) || 0;
-      return `<li class="lbs-lib-row lbs-folder${path.includes(id) ? " -on" : ""}${fsel.has(id) ? " -msel" : ""}${fcount && !n ? " -dim" : ""}" data-act="lib-open" data-side="${side}" data-id="${esc(id)}" data-drop="${esc(id)}"${canEdit(id) || (toHouse() && lib.genres.has(id)) ? ' data-lfold="1"' : ""}>` +
-      `${ICON_FOLDER}<span>${esc(nameOf(id))}</span>` +
-      (selPath.includes(id) ? `<em>here</em>` : "") +
-      `<small>${fcount ? `${fmt(n)} / ${fmt(lib.count.get(id) || 0)}` : fmt(n)}</small>` +
-      (canEdit(id) ? `<button type="button" class="lbs-lib-ren" data-act="lib-ren" data-id="${esc(id)}" aria-label="Rename ${esc(nameOf(id))}" title="Rename">✎</button>` : "") +
-      (canDel(id) ? `<button type="button" class="lbs-lib-del" data-act="lib-del" data-id="${esc(id)}" aria-label="Delete ${esc(nameOf(id))}" title="Delete">${ICON_CLOSE}</button>` : "") +
+      const fr = String(id).startsWith("fr:") && lib.frs[id.slice(3)];
+      if (libUI.renaming === id) return `<li class="lbs-lib-new"><input type="text" class="lbs-lib-rename" data-id="${esc(id)}" maxlength="${fr ? 60 : 40}" value="${esc(nameOf(id))}"></li>`;
+      const n = fr ? fr.films.length : fcount ? fcount.get(id) || 0 : lib.count.get(id) || 0;
+      const name = esc(nameOf(id));
+      return `<li class="lbs-lib-row lbs-folder${fr ? " -fr" : ""}${path.includes(id) ? " -on" : ""}${fsel.has(id) ? " -msel" : ""}${!fr && fcount && !n ? " -dim" : ""}" data-act="lib-open" data-side="${side}" data-id="${esc(id)}"` +
+      (fr ? "" : ` data-drop="${esc(id)}"${canEdit(id) || (toHouse() && lib.genres.has(id)) ? ' data-lfold="1"' : ""}`) + `>` +
+      `${ICON_FOLDER}<span>${name}</span>` +
+      (fr ? `<em class="-frtag">Franchise</em>` : selPath.includes(id) ? `<em>here</em>` : "") +
+      `<small>${!fr && fcount ? `${fmt(n)} / ${fmt(lib.count.get(id) || 0)}` : fmt(n)}</small>` +
+      (fr || canEdit(id) ? `<button type="button" class="lbs-lib-ren" data-act="lib-ren" data-id="${esc(id)}" aria-label="Rename ${name}" title="Rename">✎</button>` : "") +
+      (!fr && canDel(id) ? `<button type="button" class="lbs-lib-del" data-act="lib-del" data-id="${esc(id)}" aria-label="Delete ${name}" title="Delete">${ICON_CLOSE}</button>` : "") +
       `<b>›</b></li>`;
     };
     const filmRow = ([slug, name]) =>
       `<li class="lbs-lib-row lbs-lib-film${msel.has(slug) || (sel && sel[0] === slug) ? " -sel" : ""}" data-act="lib-film" data-film="${esc(slug)}" data-slug="${esc(slug)}" data-name="${esc(name)}" title="Drag onto a folder, the wall or your inventory">` +
       `<img data-lp="${esc(slug)}" src="${posterCache.has(slug) ? esc(posterCache.get(slug)[0]) : EMPTY}" alt="" draggable="false"><span>${esc(titleOf(name))}</span><small>${yearOf(name) || ""}</small>` +
       (held.has(slug) ? `<em class="-inv">In inventory</em>` : "") + `</li>`;
-    // A franchise is a folder of its own, where its films sit, in franchise order.
-    const frRow = (fid, side) => {
-      const fr = lib.frs[fid], fidp = `fr:${fid}`;
-      if (libUI.renaming === fidp) return `<li class="lbs-lib-new"><input type="text" class="lbs-lib-rename" data-id="${esc(fidp)}" maxlength="60" value="${esc(fr.name)}"></li>`;
-      return `<li class="lbs-lib-row lbs-folder -fr${path.includes(fidp) ? " -on" : ""}" data-act="lib-open" data-side="${side}" data-id="${esc(fidp)}">` +
-        `${ICON_FOLDER}<span>${esc(fr.name)}</span><em class="-frtag">Franchise</em><small>${fmt(fr.films.length)}</small>` +
-        `<button type="button" class="lbs-lib-ren" data-act="lib-ren" data-id="${esc(fidp)}" aria-label="Rename ${esc(fr.name)}" title="Rename">✎</button><b>›</b></li>`;
-    };
     // Films (and franchise folders) in a column. A long list is drawn only
     // where you're looking (Uncategorized holds tens of thousands).
     libUI.vcols = {};
@@ -5050,7 +5061,7 @@
           if (!fid) { items.push(() => filmRow(f)); slugs.push(f[0]); continue; }
           if (seen.has(fid)) continue;
           seen.add(fid);
-          items.push(() => frRow(fid, side)); slugs.push(f[0]);
+          items.push(() => folderRow(`fr:${fid}`, side)); slugs.push(f[0]);
         }
       }
       if (libUI.picking) return ""; // choosing a destination: folders only
@@ -5083,9 +5094,7 @@
     const pickTo = pick && right && !String(right).startsWith("fr:") ? landingSub(right) : null;
     // Keep each column where it was scrolled (keyed by the folder it shows, so a
     // column that slides left as you open a folder keeps its place too).
-    // A name being typed survives a redraw (any save redraws): same box, same text.
-    const typing = box.querySelector(".lbs-lib-rename, .lbs-lib-new-name");
-    const typed = typing && document.activeElement === typing ? { key: typing.className + (typing.dataset.id || ""), v: typing.value, a: typing.selectionStart, b: typing.selectionEnd } : null;
+    const typed = keepTyping(box); // any save redraws: a name being typed survives
     const scrolls = new Map();
     box.querySelectorAll(".lbs-lib-col[data-colid] > ul").forEach((ul) => scrolls.set(ul.parentNode.dataset.colid, ul.scrollTop));
     box.innerHTML =
@@ -5143,7 +5152,9 @@
         const a = Math.max(0, Math.floor(top / LIB_VROW) - 10), b = Math.min(items.length, Math.ceil((top + ul.clientHeight) / LIB_VROW) + 10);
         let html = "";
         for (let n = a; n < b; n++) html += items[n]().replace(/^<li /, `<li style="position:absolute;left:0;right:0;top:${n * LIB_VROW}px;height:${LIB_VROW}px;box-sizing:border-box" `);
+        const typed = keepTyping(wrap);
         wrap.innerHTML = html;
+        typed();
         wrap.querySelectorAll("img[data-lp]").forEach((im) => libIo && libIo.observe(im));
       };
       paint();
@@ -5155,12 +5166,9 @@
       libUI.flash = null;
       if (row) { row.classList.add("-flash"); row.scrollIntoView({ block: "nearest" }); }
     }
-    const inp = $(".lbs-lib-new-name", box) || $(".lbs-lib-rename", box);
-    if (inp) {
-      inp.focus({ preventScroll: true });
-      if (typed && typed.key === inp.className + (inp.dataset.id || "")) { inp.value = typed.v; inp.setSelectionRange(typed.a, typed.b); }
-      else if (inp.classList.contains("lbs-lib-rename")) inp.select();
-    }
+    // a name box just opened: focus it, its old name selected
+    const inp = !typed() && ($(".lbs-lib-new-name", box) || $(".lbs-lib-rename", box));
+    if (inp) { inp.focus({ preventScroll: true }); inp.select(); }
   }
   /* ---------------- the Library's list view ----------------
    * Every film in the store in one list, with the folder it's in on the
@@ -6161,14 +6169,10 @@
     const fl = $(".lbs-lv-filters", box);
     fl.hidden = !lv.showFilters;
     if (lv.showFilters) {
-      const keepFocus = document.activeElement && fl.contains(document.activeElement) && document.activeElement.matches("input") ? [document.activeElement.className, document.activeElement.dataset.g || document.activeElement.dataset.y, document.activeElement.selectionStart] : null;
-      const st = fl.scrollTop;
+      const st = fl.scrollTop, typed = keepTyping(fl);
       fl.innerHTML = lvChipsHTML();
       fl.scrollTop = st;
-      if (keepFocus) {
-        const el = [...fl.querySelectorAll("input")].find((x) => x.className === keepFocus[0] && (x.dataset.g || x.dataset.y) === keepFocus[1]);
-        if (el) { el.focus(); try { el.setSelectionRange(keepFocus[2], keepFocus[2]); } catch {} }
-      }
+      typed();
     }
     $(".lbs-lv-spacer", box).style.height = `${lv.rows.length * LV_ROW}px`;
     box._selecting = lv.selecting;
@@ -6383,6 +6387,7 @@
     const box = $(".lbs-ask", root);
     const fr = ui.fr;
     if (!fr) { box.hidden = true; return; }
+    const typed = keepTyping(box);
     box.innerHTML =
       `<div class="lbs-fr" role="dialog" aria-label="Franchise">` +
       `<div class="lbs-fr-top"><input type="text" class="lbs-fr-name" value="${esc(fr.name)}" maxlength="60" aria-label="Franchise name"><button type="button" class="lbs-sp-x" data-act="fr-close" aria-label="Close">${ICON_CLOSE}</button></div>` +
@@ -6398,6 +6403,7 @@
       `<div class="lbs-fr-foot">${fr.id ? '<button type="button" class="lbs-sp-link" data-act="fr-delete">Undo franchise</button>' : "<span></span>"}<button type="button" class="lbs-sp-move" data-act="fr-save"${fr.films.length > 1 ? "" : " disabled"}>Save franchise</button></div>` +
       `</div>`;
     box.hidden = false;
+    typed();
     fillPosters(box, false);
   }
   // The sticker on the back wall: its colour, and any of #1's logos.
@@ -6438,29 +6444,34 @@
       : `<li class="-none">No store films match.</li>`;
     list.hidden = false;
   }
+  // Every franchise change goes through here: your copy and the shared edit.
+  // A film is in one franchise at most (it leaves any other), and a franchise
+  // left with fewer than two films is undone. fr null: undo it.
+  function putFranchise(id, fr) {
+    if (fr) {
+      const taken = new Set(fr.films.map(([x]) => x));
+      for (const [oid, o] of Object.entries(allFranchises())) if (oid !== id && o.films.some(([x]) => taken.has(x))) putFranchise(oid, { ...o, films: o.films.filter(([x]) => !taken.has(x)) });
+    }
+    if (!fr || fr.films.length < 2) { delete franchises()[id]; shareEdit("franchise", id, null); }
+    else {
+      franchises()[id] = { name: fr.name, films: fr.films, ...(fr.color ? { color: fr.color } : {}), ...(fr.logo ? { logo: fr.logo } : {}) };
+      shareEdit("franchise", id, { name: fr.name, films: fr.films.map(([x]) => x), color: fr.color || null, logo: fr.logo || null });
+    }
+    saveMine();
+  }
   function saveFranchise() {
     const fr = ui.fr;
-    fr.name = ($(".lbs-fr-name", root)?.value || fr.name).trim() || fr.name;
-    const id = fr.id || `fr-${slugify(fr.name)}-${Date.now().toString(36)}`;
-    // A film can only be in one franchise.
-    for (const [oid, o] of Object.entries(franchises())) if (oid !== id) o.films = o.films.filter(([s]) => !fr.films.some(([x]) => x === s));
-    franchises()[id] = { name: fr.name, films: fr.films, ...(fr.color ? { color: fr.color } : {}), ...(fr.logo ? { logo: fr.logo } : {}) };
-    for (const [oid, o] of Object.entries(franchises())) if (o.films.length < 2) delete franchises()[oid];
-    saveMine();
-    shareEdit("franchise", id, { name: fr.name, films: fr.films.map(([s]) => s), color: fr.color || null, logo: fr.logo || null });
+    fr.name = fr.name.trim() || titleOf(fr.films[0][1]);
+    putFranchise(fr.id || `fr-${slugify(fr.name)}-${Date.now().toString(36)}`, fr);
     ui.fr = null;
     renderFranchise();
     refresh();
     toast(`Saved “${fr.name}”: ${fr.films.length} films kept together on the shelf.`);
   }
-
-  // A franchise's name is yours to choose (shared like any franchise edit).
   function renameFranchise(fid, name) {
     const fr = allFranchises()[fid];
     if (!fr) return;
-    franchises()[fid] = { ...fr, name };
-    saveMine();
-    shareEdit("franchise", fid, { name, films: fr.films.map(([s]) => s), color: fr.color || null, logo: fr.logo || null });
+    putFranchise(fid, { ...fr, name });
     refresh();
     toast(`Renamed to “${name}”.`);
   }
@@ -6560,14 +6571,7 @@
   // Take films out of whatever franchises they're in (a franchise left with one film is undone).
   function franchiseRemove(slugs) {
     const out = new Set(slugs);
-    for (const [fid, fr] of Object.entries(allFranchises())) {
-      if (!fr.films.some(([x]) => out.has(x))) continue;
-      const films = fr.films.filter(([x]) => !out.has(x));
-      if (films.length < 2) { delete franchises()[fid]; shareEdit("franchise", fid, null); continue; }
-      franchises()[fid] = { name: fr.name, films, ...(fr.color ? { color: fr.color } : {}), ...(fr.logo ? { logo: fr.logo } : {}) };
-      shareEdit("franchise", fid, { name: fr.name, films: films.map(([x]) => x), color: fr.color || null, logo: fr.logo || null });
-    }
-    saveMine();
+    for (const [fid, fr] of Object.entries(allFranchises())) if (fr.films.some(([x]) => out.has(x))) putFranchise(fid, { ...fr, films: fr.films.filter(([x]) => !out.has(x)) });
   }
 
   // A film from your inventory dropped on the wall.
@@ -7194,12 +7198,7 @@
     const rest = fr.films.filter(([x]) => !moving.has(x));
     let at = beforeSlug ? rest.findIndex(([x]) => x === beforeSlug) : rest.length;
     if (at < 0) at = rest.length;
-    const list = [...rest.slice(0, at), ...films.map(([x, n]) => [x, lib.names.get(x) || n]), ...rest.slice(at)];
-    for (const [oid, o] of Object.entries(franchises())) if (oid !== fid) o.films = o.films.filter(([x]) => !moving.has(x));
-    for (const [oid, o] of Object.entries(franchises())) if (oid !== fid && o.films.length < 2) delete franchises()[oid];
-    franchises()[fid] = { ...(franchises()[fid] || {}), name: fr.name, films: list, ...(fr.color ? { color: fr.color } : {}), ...(fr.logo ? { logo: fr.logo } : {}) };
-    saveMine();
-    shareEdit("franchise", fid, { name: fr.name, films: list.map(([x]) => x), color: fr.color || null, logo: fr.logo || null });
+    putFranchise(fid, { ...fr, films: [...rest.slice(0, at), ...films.map(([x, n]) => [x, lib.names.get(x) || n]), ...rest.slice(at)] });
     refresh();
     const added = films.filter(([x]) => !fr.films.some(([y]) => y === x)).length;
     toast(added ? `Added ${added === 1 ? `‘${titleOf(films[0][1])}’` : `${fmt(added)} films`} to ${fr.name}.` : `Reordered ${fr.name}.`);
@@ -8086,7 +8085,6 @@
       if (act === "fr-close") { ui.fr = null; return renderFranchise(); }
       if (act === "fr-drop") { ui.fr.films.splice(+btn.dataset.i, 1); return renderFranchise(); }
       if (act === "fr-add") {
-        ui.fr.name = $(".lbs-fr-name", root)?.value || ui.fr.name;
         const add = () => { ui.fr.films.push([fs, fn]); renderFranchise(); $(".lbs-fr-q", root)?.focus(); };
         const home = ui.fr.films[0] && filmSection(ui.fr.films[0][0]), there = filmSection(fs);
         if (home && there && home !== there) {
@@ -8109,7 +8107,7 @@
       if (act === "find-who") return openWho(btn.dataset.k);
       if (act === "fr-open") { closeFilm(); $(".lbs-find-list", root).hidden = true; $(".lbs-card", root).hidden = true; return openFranchiseById(btn.dataset.fr); }
       if (act === "fr-logo") { ui.fr.logo = btn.dataset.path; return renderFranchise(); }
-      if (act === "fr-delete") { delete franchises()[ui.fr.id]; saveMine(); shareEdit("franchise", ui.fr.id, null); ui.fr = null; renderFranchise(); refresh(); return toast("Franchise undone."); }
+      if (act === "fr-delete") { putFranchise(ui.fr.id, null); ui.fr = null; renderFranchise(); refresh(); return toast("Franchise undone."); }
       if (act === "req-remove-this") return requestRemoval("film", fs, titleOf(fn));
       if (act === "req-remove") { $(".lbs-sortpick", root).hidden = true; return requestRemoval("section", id, nameOf(id)); }
       if (act === "req-add") { e.stopPropagation(); return requestAddition(fs, fn, btn); }
