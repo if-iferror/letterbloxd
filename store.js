@@ -951,7 +951,6 @@
       root.addEventListener("click", onClick);
       root.addEventListener("input", onInput);
       root.addEventListener("keydown", onFieldKey);
-      root.addEventListener("focusout", onNameBlur);
       // No native drag and drop anywhere in the store. A native drag on
       // macOS can get stuck (when the thing being dragged is redrawn mid-drag)
       // and leave the whole computer ignoring clicks. Every drag here is our
@@ -1563,7 +1562,7 @@
       for (let n = 2; lib.genres.has(gid); n++) gid = `g-${slugify(name)}-${n}`;
       houseEdit(`Added the genre “${name}”.`, (H) => { H.genres = { ...(H.genres || {}), [gid]: { name } }; H.hidden = H.hidden.filter((x) => x !== gid); });
       libUI.path = [gid];
-      return renderLibrary();
+      return;
     }
     const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "folder";
     let id = `${parent}/u-${slug}`;
@@ -4961,7 +4960,12 @@
       if (wrap && n >= 0) { const ul = wrap.closest("ul"); ul.scrollTop = wrap.offsetTop + n * LIB_VROW - ul.clientHeight / 2; }
     });
   }
+  // Saving anything redraws the Library (houseEdit → refresh → renderFolders).
+  // libHeld puts that off while a click is still being handled: it redraws
+  // once, after (see onClick).
+  let libHeld = false, libDue = false;
   function renderLibrary() {
+    if (libHeld) { libDue = true; return; }
     const shell = root && $(".lbs-library", root);
     if (!shell || !lib) return;
     root.classList.toggle("lbs-lib-open", libUI.open);
@@ -5079,9 +5083,9 @@
     const pickTo = pick && right && !String(right).startsWith("fr:") ? landingSub(right) : null;
     // Keep each column where it was scrolled (keyed by the folder it shows, so a
     // column that slides left as you open a folder keeps its place too).
-    // A name being typed survives a redraw: same text, same cursor.
+    // A name being typed survives a redraw (any save redraws): same box, same text.
     const typing = box.querySelector(".lbs-lib-rename, .lbs-lib-new-name");
-    const typed = typing && { cls: typing.className, id: typing.dataset.id || "", v: typing.value, a: typing.selectionStart, b: typing.selectionEnd };
+    const typed = typing && document.activeElement === typing ? { key: typing.className + (typing.dataset.id || ""), v: typing.value, a: typing.selectionStart, b: typing.selectionEnd } : null;
     const scrolls = new Map();
     box.querySelectorAll(".lbs-lib-col[data-colid] > ul").forEach((ul) => scrolls.set(ul.parentNode.dataset.colid, ul.scrollTop));
     box.innerHTML =
@@ -5154,7 +5158,7 @@
     const inp = $(".lbs-lib-new-name", box) || $(".lbs-lib-rename", box);
     if (inp) {
       inp.focus({ preventScroll: true });
-      if (typed && typed.cls === inp.className && typed.id === (inp.dataset.id || "")) { inp.value = typed.v; inp.setSelectionRange(typed.a, typed.b); }
+      if (typed && typed.key === inp.className + (inp.dataset.id || "")) { inp.value = typed.v; inp.setSelectionRange(typed.a, typed.b); }
       else if (inp.classList.contains("lbs-lib-rename")) inp.select();
     }
   }
@@ -6458,7 +6462,6 @@
     saveMine();
     shareEdit("franchise", fid, { name, films: fr.films.map(([s]) => s), color: fr.color || null, logo: fr.logo || null });
     refresh();
-    renderLibrary();
     toast(`Renamed to “${name}”.`);
   }
 
@@ -7133,8 +7136,7 @@
 
   function renameFolder(id, name) {
     name = String(name || "").trim().replace(/\s+/g, " ");
-    edit.renaming = null;
-    if (!name || name === nameOf(id)) return renderFolders();
+    if (!name || name === nameOf(id)) return;
     if (String(id).startsWith("fr:")) return renameFranchise(id.slice(3), name);
     houseEdit(`Renamed to “${name}”.`, (H) => {
       if (H.genres && H.genres[id]) H.genres[id] = { ...H.genres[id], name };
@@ -7862,21 +7864,13 @@
 
   function onClick(e) {
     if (swallowClick) { swallowClick = false; e.preventDefault(); return; }
-    // A click anywhere else saves the name being typed, then does what it does.
-    // (Rows don't take the focus, so clicking a folder doesn't blur the box.)
-    const nb = root.querySelector(".lbs-lib-rename, .lbs-lib-new-name, .lbs-rename, .lbs-new");
+    // A click anywhere else saves the name being typed, then does what it
+    // does; the redraw waits until after, so the click lands where it was aimed.
+    const nb = root.querySelector(NAME_BOXES);
     if (nb && !nb.contains(e.target)) {
-      const was = e.target.closest && e.target.closest("[data-act]");
-      commitName(nb);
-      // saving redrew the Library: pass the click on to the same thing, redrawn
-      if (was && !was.isConnected) {
-        const sel = Object.entries(was.dataset).filter(([k]) => ["act", "id", "v", "slug", "i", "fr"].includes(k)).map(([k, v]) => `[data-${k}="${CSS.escape(v)}"]`).join("");
-        const colid = was.closest(".lbs-lib-col") && was.closest(".lbs-lib-col").dataset.colid;
-        const again = (colid != null && root.querySelector(`.lbs-lib-col[data-colid="${CSS.escape(colid)}"] ${sel}`)) || root.querySelector(sel);
-        e.preventDefault();
-        if (again) again.click();
-        return;
-      }
+      libHeld = true;
+      setTimeout(() => { libHeld = false; libDue = false; redrawNames(); }, 0);
+      endName(nb, true);
     }
     // Double-click a Library folder to rename it, as in Finder. Counted by time
     // and place, not by row: the first click opens the folder and the columns
@@ -8322,50 +8316,32 @@
   }
 
   // Every box that names a folder (Library and sorting desk), new or renamed.
+  // Enter or Tab saves, Esc cancels, and a click anywhere else saves (onClick).
+  // Nothing else ends an edit: losing the focus doesn't.
   const NAME_BOXES = ".lbs-lib-rename, .lbs-lib-new-name, .lbs-rename, .lbs-new";
-  // Save what's in a name box. Each kind checks it's still the one being
-  // edited, so a box saved by Enter isn't saved again as it goes away.
-  function commitName(inp) {
-    const v = inp.value;
+  // Save (or drop) what's in a name box: the data and the edit state. The
+  // caller redraws.
+  function endName(inp, save) {
+    const v = save ? inp.value.trim() : "";
     if (inp.classList.contains("lbs-lib-rename")) {
-      const id = inp.dataset.id;
-      if (libUI.renaming !== id) return;
+      const id = libUI.renaming;
       libUI.renaming = null;
-      libUI.flash = id; // show where it went (names sort alphabetically)
-      renameFolder(id, v);
-      return renderLibrary();
-    }
-    if (inp.classList.contains("lbs-lib-new-name")) {
+      if (id && v) { libUI.flash = id; renameFolder(id, v); } // flash: names sort, so show where it went
+    } else if (inp.classList.contains("lbs-lib-new-name")) {
       const parent = libUI.adding;
-      if (!parent) return;
       libUI.adding = null;
-      if (v.trim()) addFolder(inp.dataset.level, parent, v);
-      return renderLibrary();
-    }
-    if (inp.classList.contains("lbs-rename")) { if (edit.renaming) renameFolder(edit.renaming, v); return; }
-    if (inp.classList.contains("lbs-new")) {
-      if (!desk.adding) return;
-      if (v.trim()) return addFolder(desk.adding.level, desk.adding.parent, v);
+      if (parent && v) addFolder(inp.dataset.level, parent, v);
+    } else if (inp.classList.contains("lbs-rename")) {
+      const id = edit.renaming;
+      edit.renaming = null;
+      if (id && v) renameFolder(id, v);
+    } else if (inp.classList.contains("lbs-new")) {
+      const a = desk.adding;
       desk.adding = null;
-      return renderFolders();
+      if (a && v) addFolder(a.level, a.parent, v);
     }
   }
-  function cancelName(inp) {
-    if (inp.classList.contains("lbs-lib-rename")) libUI.renaming = null;
-    else if (inp.classList.contains("lbs-lib-new-name")) libUI.adding = null;
-    else if (inp.classList.contains("lbs-rename")) edit.renaming = null;
-    else if (inp.classList.contains("lbs-new")) desk.adding = null;
-    renderLibrary();
-    renderFolders();
-  }
-  // Clicking away saves. The redraw waits a moment so the click that took the
-  // focus still lands on what it was aimed at (a folder, a button).
-  function onNameBlur(e) {
-    if (!e.target.matches || !e.target.matches(NAME_BOXES)) return;
-    const inp = e.target;
-    // A box replaced by a redraw (its twin has the focus now) isn't a click away.
-    setTimeout(() => { if (inp.isConnected && document.activeElement !== inp) commitName(inp); }, 250);
-  }
+  const redrawNames = () => { renderLibrary(); renderFolders(); };
   function onFieldKey(e) {
     if (e.target.classList.contains("lbs-find-q")) {
       const items = [...root.querySelectorAll(".lbs-find-list li[data-slug]")];
@@ -8382,8 +8358,12 @@
     }
     // Name boxes: Enter or Tab saves (so does clicking away), Esc cancels.
     if (e.target.matches(NAME_BOXES)) {
-      if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); commitName(e.target); }
-      else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); cancelName(e.target); }
+      if (e.key === "Enter" || e.key === "Tab" || e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        endName(e.target, e.key !== "Escape");
+        redrawNames();
+      }
       return;
     }
     if (e.target.classList.contains("lbs-fr-name") && e.key === "Enter") { e.preventDefault(); if (ui.fr && ui.fr.films.length > 1) saveFranchise(); return; }
