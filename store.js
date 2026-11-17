@@ -951,6 +951,7 @@
       root.addEventListener("click", onClick);
       root.addEventListener("input", onInput);
       root.addEventListener("keydown", onFieldKey);
+      root.addEventListener("focusout", onNameBlur);
       // No native drag and drop anywhere in the store. A native drag on
       // macOS can get stuck (when the thing being dragged is redrawn mid-drag)
       // and leave the whole computer ignoring clicks. Every drag here is our
@@ -5078,6 +5079,9 @@
     const pickTo = pick && right && !String(right).startsWith("fr:") ? landingSub(right) : null;
     // Keep each column where it was scrolled (keyed by the folder it shows, so a
     // column that slides left as you open a folder keeps its place too).
+    // A name being typed survives a redraw: same text, same cursor.
+    const typing = box.querySelector(".lbs-lib-rename, .lbs-lib-new-name");
+    const typed = typing && { cls: typing.className, id: typing.dataset.id || "", v: typing.value, a: typing.selectionStart, b: typing.selectionEnd };
     const scrolls = new Map();
     box.querySelectorAll(".lbs-lib-col[data-colid] > ul").forEach((ul) => scrolls.set(ul.parentNode.dataset.colid, ul.scrollTop));
     box.innerHTML =
@@ -5142,8 +5146,17 @@
       let raf = 0;
       ul.addEventListener("scroll", () => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; paint(); }); });
     });
+    if (libUI.flash) {
+      const row = box.querySelector(`.lbs-folder[data-id="${CSS.escape(libUI.flash)}"]`);
+      libUI.flash = null;
+      if (row) { row.classList.add("-flash"); row.scrollIntoView({ block: "nearest" }); }
+    }
     const inp = $(".lbs-lib-new-name", box) || $(".lbs-lib-rename", box);
-    if (inp) { inp.focus(); if (inp.classList.contains("lbs-lib-rename")) inp.select(); }
+    if (inp) {
+      inp.focus({ preventScroll: true });
+      if (typed && typed.cls === inp.className && typed.id === (inp.dataset.id || "")) { inp.value = typed.v; inp.setSelectionRange(typed.a, typed.b); }
+      else if (inp.classList.contains("lbs-lib-rename")) inp.select();
+    }
   }
   /* ---------------- the Library's list view ----------------
    * Every film in the store in one list, with the folder it's in on the
@@ -7849,6 +7862,22 @@
 
   function onClick(e) {
     if (swallowClick) { swallowClick = false; e.preventDefault(); return; }
+    // A click anywhere else saves the name being typed, then does what it does.
+    // (Rows don't take the focus, so clicking a folder doesn't blur the box.)
+    const nb = root.querySelector(".lbs-lib-rename, .lbs-lib-new-name, .lbs-rename, .lbs-new");
+    if (nb && !nb.contains(e.target)) {
+      const was = e.target.closest && e.target.closest("[data-act]");
+      commitName(nb);
+      // saving redrew the Library: pass the click on to the same thing, redrawn
+      if (was && !was.isConnected) {
+        const sel = Object.entries(was.dataset).filter(([k]) => ["act", "id", "v", "slug", "i", "fr"].includes(k)).map(([k, v]) => `[data-${k}="${CSS.escape(v)}"]`).join("");
+        const colid = was.closest(".lbs-lib-col") && was.closest(".lbs-lib-col").dataset.colid;
+        const again = (colid != null && root.querySelector(`.lbs-lib-col[data-colid="${CSS.escape(colid)}"] ${sel}`)) || root.querySelector(sel);
+        e.preventDefault();
+        if (again) again.click();
+        return;
+      }
+    }
     // Double-click a Library folder to rename it, as in Finder. Counted by time
     // and place, not by row: the first click opens the folder and the columns
     // slide, so the second lands on whatever moved under the pointer.
@@ -8292,6 +8321,50 @@
     }
   }
 
+  // Every box that names a folder (Library and sorting desk), new or renamed.
+  const NAME_BOXES = ".lbs-lib-rename, .lbs-lib-new-name, .lbs-rename, .lbs-new";
+  // Save what's in a name box. Each kind checks it's still the one being
+  // edited, so a box saved by Enter isn't saved again as it goes away.
+  function commitName(inp) {
+    const v = inp.value;
+    if (inp.classList.contains("lbs-lib-rename")) {
+      const id = inp.dataset.id;
+      if (libUI.renaming !== id) return;
+      libUI.renaming = null;
+      libUI.flash = id; // show where it went (names sort alphabetically)
+      renameFolder(id, v);
+      return renderLibrary();
+    }
+    if (inp.classList.contains("lbs-lib-new-name")) {
+      const parent = libUI.adding;
+      if (!parent) return;
+      libUI.adding = null;
+      if (v.trim()) addFolder(inp.dataset.level, parent, v);
+      return renderLibrary();
+    }
+    if (inp.classList.contains("lbs-rename")) { if (edit.renaming) renameFolder(edit.renaming, v); return; }
+    if (inp.classList.contains("lbs-new")) {
+      if (!desk.adding) return;
+      if (v.trim()) return addFolder(desk.adding.level, desk.adding.parent, v);
+      desk.adding = null;
+      return renderFolders();
+    }
+  }
+  function cancelName(inp) {
+    if (inp.classList.contains("lbs-lib-rename")) libUI.renaming = null;
+    else if (inp.classList.contains("lbs-lib-new-name")) libUI.adding = null;
+    else if (inp.classList.contains("lbs-rename")) edit.renaming = null;
+    else if (inp.classList.contains("lbs-new")) desk.adding = null;
+    renderLibrary();
+    renderFolders();
+  }
+  // Clicking away saves. The redraw waits a moment so the click that took the
+  // focus still lands on what it was aimed at (a folder, a button).
+  function onNameBlur(e) {
+    if (!e.target.matches || !e.target.matches(NAME_BOXES) || !e.target.isConnected) return;
+    const inp = e.target;
+    setTimeout(() => { if (document.activeElement !== inp) commitName(inp); }, 250);
+  }
   function onFieldKey(e) {
     if (e.target.classList.contains("lbs-find-q")) {
       const items = [...root.querySelectorAll(".lbs-find-list li[data-slug]")];
@@ -8306,30 +8379,14 @@
       } else if (e.key === "Escape") { $(".lbs-find-list", root).hidden = true; $(".lbs-card", root).hidden = true; }
       return;
     }
-    if (e.target.classList.contains("lbs-lib-rename")) {
-      if (e.key === "Enter") { e.preventDefault(); const id = e.target.dataset.id, v = e.target.value; libUI.renaming = null; renameFolder(id, v); renderLibrary(); }
-      else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); libUI.renaming = null; renderLibrary(); }
+    // Name boxes: Enter or Tab saves (so does clicking away), Esc cancels.
+    if (e.target.matches(NAME_BOXES)) {
+      if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); commitName(e.target); }
+      else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); cancelName(e.target); }
       return;
     }
-    if (e.target.classList.contains("lbs-lib-new-name")) {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        const parent = libUI.adding, level = e.target.dataset.level, name = e.target.value;
-        libUI.adding = null;
-        if (parent && name.trim()) addFolder(level, parent, name);
-        renderLibrary();
-      } else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); libUI.adding = null; renderLibrary(); }
-      return;
-    }
-    if (e.target.classList.contains("lbs-rename")) {
-      if (e.key === "Enter") { e.preventDefault(); renameFolder(edit.renaming, e.target.value); }
-      else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); edit.renaming = null; renderFolders(); }
-      return;
-    }
-    if (e.target.classList.contains("lbs-new")) {
-      if (e.key === "Enter") { e.preventDefault(); addFolder(desk.adding.level, desk.adding.parent, e.target.value); }
-      else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); desk.adding = null; renderFolders(); }
-    } else if (e.target.classList.contains("lbs-dq") && e.key === "Enter") {
+    if (e.target.classList.contains("lbs-fr-name") && e.key === "Enter") { e.preventDefault(); if (ui.fr && ui.fr.films.length > 1) saveFranchise(); return; }
+    if (e.target.classList.contains("lbs-dq") && e.key === "Enter") {
       // Enter in folder search: open (or move into) the first match.
       const first = $(".lbs-hits .lbs-folder", root);
       if (!first) return;

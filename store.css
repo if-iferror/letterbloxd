@@ -4444,3 +4444,6 @@ html.lbs-open {
    film, a count), so the list above doesn't jump as you click */
 .lbs-lib-foot { box-sizing: border-box; min-height: 112px; }
 @keyframes lbs-rise { from { transform: translateY(100%); } to { transform: none; } }
+/* a folder just renamed: a moment's highlight where it now sorts */
+.lbs-lib-row.lbs-folder.-flash { animation: lbs-flash 1.1s ease-out; }
+@keyframes lbs-flash { from { background: #2f5d3a; } to { background: transparent; } }
