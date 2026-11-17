@@ -480,7 +480,8 @@
     const size = (d) => (d.place ? Object.keys(d.place).length : 0) + 1;
     while (edit.undo.length > 1 && (edit.undo.length > 40 || edit.undo.reduce((n, d) => n + size(d), 0) > 150000)) edit.undo.shift();
     persist(HOUSE_KEY, houseLocal);
-    refresh();
+    // the change is saved: whatever happens redrawing, the inventory shows it
+    try { refresh(); } finally { renderTray(); renderPocket(); }
     if (label) toast(label, undoHouse);
   }
   function undoHouse() {
@@ -494,7 +495,7 @@
       houseLocal = H;
     }
     persist(HOUSE_KEY, houseLocal);
-    refresh();
+    try { refresh(); } finally { renderTray(); renderPocket(); }
   }
 
   /* ---------------- the catalogue ----------------
@@ -521,7 +522,7 @@
       lists.set(key, { name, set: new Set(gaps.map((d) => (i += d))) });
     }
     catalogue = { at: j.at, films: j.films, lists, info: Array.isArray(j.info) ? j.info : null, people: j.people || [], langNames: j.langNames || {}, kw: Array.isArray(j.kw) ? j.kw : null, fkw: Array.isArray(j.fkw) ? j.fkw : null,
-      co: j.co || null, fco: j.fco || null, cast: j.cast || null, fcast: j.fcast || null, certs: j.certs || null, fcert: j.fcert || null, fage: Array.isArray(j.fage) ? j.fage : null, views: Array.isArray(j.views) ? j.views : null };
+      co: j.co || null, fco: j.fco || null, cast: j.cast || null, fcast: j.fcast || null, certs: j.certs || null, fcert: j.fcert || null, fage: Array.isArray(j.fage) ? j.fage : null, views: Array.isArray(j.views) ? j.views : null, frel: Array.isArray(j.frel) ? j.frel : null };
     catState = "ready";
     return true;
   }
@@ -3031,7 +3032,7 @@
         const bearer = key.length > 40, lane = limiter(10);
         const todo = [];
         st.films.forEach(([slug], i) => {
-          if (st.fx[i] === 0 || (st.fx[i] && st.fx[i].length > 3)) return; // done (now with world age ratings)
+          if (st.fx[i] === 0 || (st.fx[i] && st.fx[i].length > 4)) return; // done (now with release types)
           const e = logoEntry(slug), id = (e && e[0]) || (st.tmdb && st.tmdb[i]);
           if (id) todo.push([i, id]);
         });
@@ -3060,7 +3061,24 @@
               if (!tbl) continue;
               for (const d of r0.release_dates || []) { const a = tbl[String(d.certification || "").trim().toUpperCase()]; if (a != null) ages[r0.iso_3166_1] = Math.min(ages[r0.iso_3166_1] ?? 99, a); }
             }
-            st.fx[i] = [co, cast, cert, ages];
+            // how it was released: [type, day, US?, services] for each kind of
+            // release, earliest per country group (TMDB types: 1 premiere,
+            // 2 limited, 3 theatrical, 4 digital, 5 physical, 6 TV), and the
+            // services its release notes or studios name, for Release / Released by
+            const rel = new Map();
+            let svc = (j.production_companies || []).reduce((m, c) => m | serviceBits(c.name, true), 0);
+            for (const r0 of (j.release_dates && j.release_dates.results) || []) {
+              const us = r0.iso_3166_1 === "US" ? 1 : 0;
+              for (const d of r0.release_dates || []) {
+                const day = Math.floor(Date.parse(d.release_date) / 864e5);
+                const bits = serviceBits(d.note || "");
+                svc |= bits;
+                if (!(d.type >= 1 && d.type <= 6) || !Number.isFinite(day)) continue;
+                const k = `${d.type}|${us}`, was = rel.get(k);
+                if (!was || day < was[1]) rel.set(k, [d.type, day, us, bits]);
+              }
+            }
+            st.fx[i] = [co, cast, cert, ages, [svc, ...rel.values()]];
             if (j.origin_country) st.origin[i] = j.origin_country;
             const ks = (j.keywords && j.keywords.keywords) || [];
             if (ks.length || !(i in st.kw)) { for (const k of ks) st.kwNames[k.id] = k.name; st.kw[i] = ks.map((k) => k.id); }
@@ -3190,6 +3208,22 @@
       out.fage = st.films.map((f, i) => { const a = st.fx[i] && st.fx[i][3] ? Object.values(st.fx[i][3]).sort((x, y) => x - y) : []; return a.length ? a[Math.floor((a.length - 1) / 2)] : 99; });
       out.fcert = st.films.map((f, i) => { const c = st.fx[i] && st.fx[i][2]; if (!c) return 0; let k = certs.indexOf(c); if (k < 0) { certs.push(c); k = certs.length - 1; } return k + 1; });
       out.certs = certs;
+      // How each film was released, folded to [US types, other types, first
+      // type, services, days from first theatrical to first digital, the first
+      // release's year] (0: unknown)
+      out.frel = st.films.map((f, i) => {
+        const x = st.fx[i] && st.fx[i][4];
+        if (!x) return 0;
+        const [svc, ...rs] = x;
+        if (!rs.length && !svc) return 0;
+        let usM = 0, anyM = 0;
+        for (const [t, , us] of rs) { if (us) usM |= 1 << t; else anyM |= 1 << t; }
+        const ref = rs.some((r) => r[2]) ? rs.filter((r) => r[2]) : rs;
+        const first = ref.filter((r) => r[0] !== 1).sort((a, b) => a[1] - b[1])[0];
+        const th = ref.filter((r) => r[0] === 2 || r[0] === 3).sort((a, b) => a[1] - b[1])[0];
+        const dg = ref.filter((r) => r[0] === 4).sort((a, b) => a[1] - b[1])[0];
+        return [usM, anyM, first ? first[0] : 0, svc, th && dg ? dg[1] - th[1] : null, first ? new Date(first[1] * 864e5).getUTCFullYear() : 0];
+      });
     }
     if (st.kw) {
       // TMDB keywords used by 3+ films: their names once (kw), and each
@@ -4991,8 +5025,10 @@
     // A franchise is a folder of its own, where its films sit, in franchise order.
     const frRow = (fid, side) => {
       const fr = lib.frs[fid], fidp = `fr:${fid}`;
+      if (libUI.renaming === fidp) return `<li class="lbs-lib-new"><input type="text" class="lbs-lib-rename" data-id="${esc(fidp)}" maxlength="60" value="${esc(fr.name)}"></li>`;
       return `<li class="lbs-lib-row lbs-folder -fr${path.includes(fidp) ? " -on" : ""}" data-act="lib-open" data-side="${side}" data-id="${esc(fidp)}">` +
-        `${ICON_FOLDER}<span>${esc(fr.name)}</span><em class="-frtag">Franchise</em><small>${fmt(fr.films.length)}</small><b>›</b></li>`;
+        `${ICON_FOLDER}<span>${esc(fr.name)}</span><em class="-frtag">Franchise</em><small>${fmt(fr.films.length)}</small>` +
+        `<button type="button" class="lbs-lib-ren" data-act="lib-ren" data-id="${esc(fidp)}" aria-label="Rename ${esc(fr.name)}" title="Rename">✎</button><b>›</b></li>`;
     };
     // Films (and franchise folders) in a column. A long list is drawn only
     // where you're looking (Uncategorized holds tens of thousands).
@@ -5419,6 +5455,19 @@
   ];
 
   // Age ratings by country → the youngest age each allows.
+  // Streaming services, as release notes and studio names spell them. Bits are
+  // stored in the catalogue: add new ones at the end, never reorder.
+  const SERVICES = [
+    ["netflix", "Netflix", /\bnetflix\b/i, /^netflix\b/i],
+    ["prime", "Prime Video", /\b(?:amazon|prime video)\b/i, /^amazon (?:studios|mgm studios|prime|original)/i],
+    ["apple", "Apple TV+", /\bapple(?: tv| \+|\+)/i, /^apple (?:studios|original films|tv)/i],
+    ["disney", "Disney+", /\bdisney(?:\+| ?plus)/i, /^disney\+/i],
+    ["max", "Max / HBO", /\b(?:hbo|max)\b/i, /^hbo (?:films|max|documentary films)$|^max original/i],
+    ["hulu", "Hulu", /\bhulu\b/i, /^hulu\b/i],
+    ["peacock", "Peacock", /\bpeacock\b/i, /^peacock\b/i],
+    ["paramount", "Paramount+", /\bparamount(?:\+| ?plus)/i, /^paramount\+/i],
+  ];
+  const serviceBits = (text, studio) => SERVICES.reduce((m, [, , note, co], b) => ((studio ? co : note).test(text) ? m | (1 << b) : m), 0);
   const AGE_TABLES = {
     US: { G: 0, PG: 8, "PG-13": 13, R: 17, "NC-17": 18 },
     GB: { U: 0, UC: 0, PG: 8, "12A": 12, "12": 12, "15": 15, "18": 18, R18: 18 },
@@ -5835,7 +5884,36 @@
         views = { bands, of: (x) => { let n = 0; while (n < cuts.length && x >= cuts[n]) n++; return String(n); } };
       }
     }
-    facts = { cat: C, idx, genre, country, origin, lang, primary, short, tv, theme, mini, tags, studio, views, audience, runtime: C.info ? (i) => (C.info[i] && C.info[i][1]) || 0 : null };
+    // Release: how a film first reached people, from TMDB's release list (the
+    // US one where it has one). A short limited run within 45 days of the
+    // streaming release counts as streaming with a brief theatrical run.
+    let release = null;
+    if (Array.isArray(C.frel)) {
+      const TVM = 1 << GENRES.findIndex(([x]) => x === "tv-movie");
+      const kind = new Array(N), svc = new Array(N);
+      for (let i = 0; i < N; i++) {
+        const r = C.frel[i];
+        if (!r) { kind[i] = "unknown"; continue; }
+        const [usM, anyM, first, sv, gap, firstYear] = r;
+        if (sv) svc[i] = SERVICES.flatMap(([id], b) => (sv & (1 << b) ? [id] : []));
+        const has = (t) => !!((usM & (6 << 1)) ? usM & (1 << t) : (usM | anyM) & (1 << t)); // theatrical: US if it has any
+        const any = (t) => !!((usM | anyM) & (1 << t));
+        const streamed = any(4) && (sv || first === 4);
+        // an old film whose earliest entry is a later re-release: we don't know
+        const late = firstYear && yearOf(C.films[i][1]) && firstYear > yearOf(C.films[i][1]) + 1;
+        kind[i] = has(3) ? "wide"
+          : has(2) ? (streamed && gap != null && gap <= 45 ? "brief" : "limited")
+          : genre[i] & TVM ? "tv"
+          : late ? "unknown"
+          : first === 6 ? "tv"
+          : first === 4 || (any(4) && !any(5)) ? "stream"
+          : first === 5 ? "video"
+          : any(1) ? "festival"
+          : "unknown";
+      }
+      release = { kind, svc };
+    }
+    facts = { cat: C, idx, genre, country, origin, lang, primary, short, tv, theme, mini, tags, studio, views, audience, release, runtime: C.info ? (i) => (C.info[i] && C.info[i][1]) || 0 : null };
     return facts;
   }
 
@@ -5885,6 +5963,8 @@
           rating: i != null ? (F.cat.films[i][2] || 0) : 0,
           vband: i != null && F.views && F.cat.views[i] ? [F.views.of(F.cat.views[i])] : [],
           aud: i != null && F.audience[i] ? [F.audience[i]] : [],
+          rel: i != null && F.release ? [F.release.kind[i]] : [],
+          svc: i != null && F.release && F.release.svc[i] ? F.release.svc[i] : [],
           rband: i != null && F.cat.films[i][2] ? [ratingBand(F.cat.films[i][2])] : [],
           rtband: i != null && F.runtime && F.runtime(i) ? [runtimeBand(F.runtime(i))] : [],
           who: i != null ? whoOf(F.cat, i) : [],
@@ -5899,7 +5979,7 @@
       out.push({
         slug, name: S.name, year: S.year, i: S.i, key: S.key, rating: S.rating,
         path: [p.genre, p.cat, p.sub, p.niche].filter(Boolean),
-        v: { status, sgenre: [p.genre], scat: p.cat ? [p.cat] : [], ssub: [p.sub, p.niche].filter(Boolean), genre: S.genre, type: S.type, decade: S.decade, lang: S.lang, country: S.country, pcountry: S.pcountry, tag: S.tag, studio: S.studio, cert: S.cert, rband: S.rband, rtband: S.rtband, vband: S.vband, aud: S.aud, lock: [String(lockOf(slug))], who: S.who, theme: S.theme, mini: S.mini },
+        v: { status, sgenre: [p.genre], scat: p.cat ? [p.cat] : [], ssub: [p.sub, p.niche].filter(Boolean), genre: S.genre, type: S.type, decade: S.decade, lang: S.lang, country: S.country, pcountry: S.pcountry, tag: S.tag, studio: S.studio, cert: S.cert, rband: S.rband, rtband: S.rtband, vband: S.vband, aud: S.aud, rel: S.rel, svc: S.svc, lock: [String(lockOf(slug))], who: S.who, theme: S.theme, mini: S.mini },
       });
     }
     lv.base = out; lv.baseLib = lib; lv.baseLay = wall.lay; lv.baseKey = key;
@@ -5925,6 +6005,10 @@
     if (who.length) gs.push({ id: "who", label: "People & companies", vals: who.map((k) => [k, whoName(k)]) });
     if (F && F.studio) gs.push({ id: "studio", label: "Studio", vals: F.studio.keys.map((k, n) => [String(n), F.studio.names[n], STUDIOS[n][2].replace(/\\/g, "").replace(/\|/g, " ").toLowerCase()]), many: true, find: "studio (try Disney, A24, Bad Robot…)" });
     if (F) gs.push({ id: "aud", label: "Audience (estimated)", vals: [["little", "Little kids"], ["kids", "Kids & family"], ["all", "All ages, not aimed at kids"], ["teen", "Teens"], ["adult", "Grown-ups"]] });
+    if (F && F.release) {
+      gs.push({ id: "rel", label: "Release", vals: [["wide", "Wide theatrical"], ["limited", "Limited theatrical"], ["brief", "Streaming, brief theatrical run"], ["stream", "Streaming / digital exclusive"], ["tv", "TV movie"], ["video", "Straight to video"], ["festival", "Festivals only"], ["unknown", "Unknown"]] });
+      gs.push({ id: "svc", label: "Released by", vals: SERVICES.map(([id, name]) => [id, name]) });
+    }
     if (F && F.cat.fcert) gs.push({ id: "cert", label: "Age rating (US)", vals: CERTS });
     gs.push({ id: "rband", label: "Letterboxd rating", vals: RATING_BANDS });
     if (F && F.views) gs.push({ id: "vband", label: "Views (Letterboxd)", vals: F.views.bands });
@@ -6265,6 +6349,19 @@
     ui.fr = fr ? { id: fr.id, name: fr.name, films: fr.films.slice(), color: fr.color, logo: fr.logo } : { id: null, name: `${titleOf(name)} series`, films: [[slug, name]] };
     renderFranchise();
   }
+  // A new franchise from picked films, in the order given: named after the
+  // words their titles start with ("Toy Story", "Toy Story 2" → Toy Story).
+  function newFranchise(films) {
+    if (films.length < 2) return;
+    const words = films.map(([, n]) => titleOf(n).split(/\s+/));
+    let k = 0;
+    while (words.every((w) => w[k] && w[k].toLowerCase() === words[0][k].toLowerCase())) k++;
+    const shared = words[0].slice(0, k).join(" ").replace(/[\s:–—-]+$/, "");
+    ui.fr = { id: null, name: shared || `${titleOf(films[0][1])} series`, films: films.slice() };
+    renderFranchise();
+    const inp = $(".lbs-fr-name", root);
+    if (inp) { inp.focus(); inp.select(); }
+  }
   function renderFranchise() {
     const box = $(".lbs-ask", root);
     const fr = ui.fr;
@@ -6338,6 +6435,18 @@
     renderFranchise();
     refresh();
     toast(`Saved “${fr.name}”: ${fr.films.length} films kept together on the shelf.`);
+  }
+
+  // A franchise's name is yours to choose (shared like any franchise edit).
+  function renameFranchise(fid, name) {
+    const fr = allFranchises()[fid];
+    if (!fr) return;
+    franchises()[fid] = { ...fr, name };
+    saveMine();
+    shareEdit("franchise", fid, { name, films: fr.films.map(([s]) => s), color: fr.color || null, logo: fr.logo || null });
+    refresh();
+    renderLibrary();
+    toast(`Renamed to “${name}”.`);
   }
 
   // Requests and shared edits: kept here, and sent to the store's log.
@@ -6993,18 +7102,6 @@
     drawSoon();
   }
 
-  function renameFolder(id, name) {
-    name = String(name || "").trim().replace(/\s+/g, " ");
-    edit.renaming = null;
-    if (!name || name === nameOf(id)) return renderFolders();
-    const was = nameOf(id);
-    houseEdit(`Renamed “${was}” to “${name}”.`, (H) => {
-      if (H.cats[id]) H.cats[id].name = name;
-      else if (H.subs[id]) H.subs[id].name = name;
-      else H.names[id] = name;
-    });
-  }
-
   function deleteFolder(id) {
     const p = partsOf(id);
     const was = nameOf(id);
@@ -7023,7 +7120,9 @@
 
   function renameFolder(id, name) {
     name = String(name || "").trim().replace(/\s+/g, " ");
-    if (!name || name === nameOf(id)) return;
+    edit.renaming = null;
+    if (!name || name === nameOf(id)) return renderFolders();
+    if (String(id).startsWith("fr:")) return renameFranchise(id.slice(3), name);
     houseEdit(`Renamed to “${name}”.`, (H) => {
       if (H.genres && H.genres[id]) H.genres[id] = { ...H.genres[id], name };
       else if (H.cats[id]) H.cats[id] = { ...H.cats[id], name };
@@ -7517,9 +7616,10 @@
       // In the list, a right-click on a selected row acts on the whole selection.
       if (any.classList.contains("lbs-lv-row")) {
         const r = lv.rows[+any.dataset.n];
-        if (r && r.fr) { if (rowSel(r) !== 2) { lvSetSel(new Set(r.members)); lvRefreshSel(); } return openFilmMenu(null, null, e.clientX, e.clientY, true, r.fr); }
-        if (lv.sel.has(any.dataset.slug) && lv.sel.size > 1) return openFilmMenu(null, null, e.clientX, e.clientY, true);
+        if (r && r.fr) { if (rowSel(r) !== 2) { lvSetSel(new Set(r.members)); lvRefreshSel(); } return openFilmMenu(null, null, e.clientX, e.clientY, "lv", r.fr); }
+        if (lv.sel.has(any.dataset.slug) && lv.sel.size > 1) return openFilmMenu(null, null, e.clientX, e.clientY, "lv");
       }
+      if (any.classList.contains("lbs-lib-film") && libUI.msel.size > 1 && libUI.msel.has(any.dataset.slug)) return openFilmMenu(null, null, e.clientX, e.clientY, "lib");
       return openFilmMenu(any.dataset.slug, any.dataset.name || lib.names.get(any.dataset.slug) || any.dataset.slug, e.clientX, e.clientY);
     }
     const src = e.target.closest && e.target.closest(".lbs-item, .lbs-row");
@@ -7533,13 +7633,29 @@
   }
 
   // Right-click a film (a spine, a row, a cover): what you can do with it.
+  // The films picked, in the order they're shown (the list's rows, or the folder's).
+  function pickedInOrder(from) {
+    const picked = from === "lib" ? new Set(libUI.msel.keys()) : new Set(lv.sel);
+    const order = [];
+    if (from === "lib") {
+      // long columns keep their full order; short ones are all on screen
+      for (const c of Object.values(libUI.vcols || {})) order.push(...((c && c.slugs) || []));
+      if (root) root.querySelectorAll(".lbs-library .lbs-lib-film[data-slug]").forEach((r) => order.push(r.dataset.slug));
+    }
+    else for (const r of lv.rows || []) order.push(...(r.fr ? r.members : [r.slug]));
+    const out = [...new Set(order.filter((x) => picked.has(x)))];
+    for (const x of picked) if (!out.includes(x)) out.push(x);
+    return out.filter((x) => lib.place.has(x)).map((x) => [x, lib.names.get(x) || (from === "lib" && libUI.msel.get(x)) || x]);
+  }
   function openFilmMenu(slug, name, x, y, many, frId) {
     closeFilmMenu();
+    const group = many ? pickedInOrder(many) : null;
+    ui.ctxFilms = group;
     const b = (act, label, extra = "") => `<button type="button" role="menuitem" data-act="${act}"${slug ? ` data-slug="${esc(slug)}" data-name="${esc(name)}"` : ""}${extra}>${label}</button>`;
     const held = slug && heldList().some(([s2]) => s2 === slug);
     const inStore = slug && lib.place.has(slug);
     // Locks, like a star rating: click the 2nd to lock levels 1–2.
-    const lockSlugs = many ? [...lv.sel].filter((x) => lib.place.has(x)) : inStore ? [slug] : [];
+    const lockSlugs = group ? group.map(([x]) => x) : inStore ? [slug] : [];
     const avail = lockSlugs.length ? Math.min(...lockSlugs.map((x) => lockAnc(x).length)) : 0;
     const cur = lockSlugs.length && lockSlugs.every((x) => lockOf(x) === lockOf(lockSlugs[0])) ? lockOf(lockSlugs[0]) : 0;
     const anc = lockSlugs.length === 1 ? lockAnc(lockSlugs[0]) : [];
@@ -7547,7 +7663,11 @@
       ? `<div class="lbs-ctx-locks" role="group" aria-label="Locks">` + [1, 2, 3, 4].map((k) => `<button type="button" class="lbs-lock${k <= cur ? " -on" : ""}" data-act="f-lock" data-k="${k}" data-slugs="${esc(lockSlugs.join(" "))}"${k > avail ? " disabled" : ""} title="${k > avail ? "Not that many folders deep" : `Lock to ${anc.length ? esc(anc.slice(0, k).map(nameOf).join(" › ")) : `level ${k}`}`}">${ICON_LOCK}</button>`).join("") + `</div>`
       : "";
     const html = many
-      ? `<b>${frId ? `${esc(lib.frs[frId].name)} · ` : ""}${fmt(lv.sel.size)} films</b>` + locks + (frId ? `<button type="button" role="menuitem" data-act="fr-open" data-fr="${esc(frId)}">Open franchise</button>` : "") + b("lv-move", "Move to…") + b("lv-hold", "Add to inventory")+ b("lv-uncat", "Uncategorize") + (ONE_STORE ? b("lv-remove", "Remove from store") : "") + b("lv-clear", "Deselect all")
+      ? `<b>${frId ? `${esc(lib.frs[frId].name)} · ` : ""}${fmt(group.length)} films</b>` + locks +
+        (frId ? `<button type="button" role="menuitem" data-act="fr-open" data-fr="${esc(frId)}">Open franchise</button>` : group.length > 1 ? b("fr-new", "Create franchise") : "") +
+        (many === "lib"
+          ? b("lib-mmove", "Move to…") + b("lib-mhold", "Add to inventory") + (ONE_STORE ? b("lib-mremove", "Remove from store") : "") + b("lib-mnone", "Deselect all")
+          : b("lv-move", "Move to…") + b("lv-hold", "Add to inventory") + b("lv-uncat", "Uncategorize") + (ONE_STORE ? b("lv-remove", "Remove from store") : "") + b("lv-clear", "Deselect all"))
       : `<b>${esc(titleOf(name))}</b>` + locks +
         b("f-open", "Details") +
         (held ? b("f-return", "Take out of inventory") : b("f-hold", "Add to inventory", inStore ? "" : " disabled")) +
@@ -7729,6 +7849,14 @@
 
   function onClick(e) {
     if (swallowClick) { swallowClick = false; e.preventDefault(); return; }
+    // Double-click a Library folder to rename it, as in Finder. Counted by time
+    // and place, not by row: the first click opens the folder and the columns
+    // slide, so the second lands on whatever moved under the pointer.
+    const lo = libUI.lastOpen;
+    if (lo && e.detail > 0 && Date.now() - lo.t < 450 && Math.abs(e.clientX - lo.x) < 6 && Math.abs(e.clientY - lo.y) < 6) {
+      libUI.lastOpen = null;
+      if (lo.ren) { e.preventDefault(); libUI.renaming = lo.id; return renderLibrary(); }
+    }
     if (e.target.closest(".lbs-ctx")) setTimeout(closeFilmMenu, 0);
     const pick = $(".lbs-logopick", root);
     if (pick && !pick.hidden && !e.target.closest(".lbs-logopick")) pick.hidden = true;
@@ -7789,7 +7917,7 @@
       }
       if (act === "f-hold") {
         if (!lib.place.has(fs)) return toast(`‘${titleOf(fn)}’ isn't in the store yet, so it can't go in your inventory.`);
-        holdFilms([[fs, fn]]); ui.pocket = true; renderPocket(); return toast(`‘${titleOf(fn)}’ is in your inventory.`);
+        ui.pocket = true; return holdFilms([[fs, fn]]); // its toast has Undo
       }
       if (act === "settings") return toggleMenu(".lbs-settings");
       if (act === "lib") return setLibrary(!libUI.open);
@@ -7806,11 +7934,7 @@
         }
         libUI.fsel = new Set();
         libUI.adding = null;
-        // Double-click a folder to rename it, as in Finder. (Counted here: the
-        // first click redraws the row, so the browser's dblclick never comes.)
-        const again = libUI.lastOpen && libUI.lastOpen.id === fid && Date.now() - libUI.lastOpen.t < 450;
-        libUI.lastOpen = { id: fid, t: Date.now() };
-        if (again && btn.dataset.lfold && btn.querySelector(".lbs-lib-ren")) { libUI.lastOpen = null; libUI.renaming = fid; return renderLibrary(); }
+        libUI.lastOpen = { id: fid, t: Date.now(), x: e.clientX, y: e.clientY, ren: e.detail > 0 && !!btn.querySelector(".lbs-lib-ren") }; // for double-click (onClick)
         // open it under the column it sits in (deeper columns close)
         const pc = btn.closest(".lbs-lib-col"), par = pc ? pc.dataset.colid : "";
         const pi = par ? libUI.path.indexOf(par) : -1;
@@ -7888,8 +8012,8 @@
       if (act === "lv-move") return openMovePick(lv.sel.size ? lvFilms() : libUI.sel ? [libUI.sel] : []);
       if (act === "lv-hold") {
         const films = lvFilms().filter(([x]) => lib.place.has(x));
-        holdFilms(films); ui.pocket = true; renderPocket();
-        return toast(`${fmt(films.length)} film${films.length === 1 ? "" : "s"} in your inventory.`);
+        ui.pocket = true;
+        return holdFilms(films); // its toast has Undo
       }
       if (act === "lv-remove") { const films = lvFilms(); if (!films.length) return; return ask(`Remove <b>${fmt(films.length)} film${films.length === 1 ? "" : "s"}</b> from the store? (Search finds them again: Add to store.)`, () => { lv.selecting = false; lvSetSel(new Set()); removeFilms(films); }, "Remove"); }
       if (act === "lv-uncat") { const films = lvFilms(); lv.selecting = false; lvSetSel(new Set()); return moveFilms(films, UNCAT); }
@@ -7951,6 +8075,7 @@
         return add();
       }
       if (act === "fr-save") return saveFranchise();
+      if (act === "fr-new") { const films = ui.ctxFilms || []; closeFilmMenu(); return newFranchise(films); }
       if (act === "frm-all" || act === "frm-out") {
         const box = $(".lbs-ask", root), m = box._frm;
         box.hidden = true; box._frm = null;

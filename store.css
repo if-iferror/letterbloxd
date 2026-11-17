@@ -2450,6 +2450,8 @@ html.lbs-open {
   color: #fff;
   font: 700 19px Arial, sans-serif;
 }
+.lbs-fr-name { box-shadow: inset 0 -1px 0 #3a4552; cursor: text; } /* the name is editable */
+.lbs-fr-name:hover { background: #232a32; }
 .lbs-fr-name:focus {
   background: #2c3440;
   outline: none;
