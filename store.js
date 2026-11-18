@@ -304,8 +304,8 @@
 
   // Your own moves and folders ("Mine"). Kept in this browser only.
   const MINE_KEY = `${NS}:store:mine:v1`;
-  let mine = readJSON(MINE_KEY, null) || {};
-  mine = { place: {}, cats: {}, subs: {}, recent: [], view: "community", sort: {}, held: [], colors: {}, wash: {}, ...mine };
+  const blankMine = () => ({ place: {}, cats: {}, subs: {}, recent: [], view: "community", sort: {}, held: [], colors: {}, wash: {} });
+  let mine = blankMine(); // (read from storage when the store first opens: loadSaved)
   let paintVer = 0; // bumps when anything that colours the far-away wall changes
   // Never save before the saved copy has been read back (that would write an
   // empty shelf over it).
@@ -349,6 +349,7 @@
     return true;
   }
   async function adoptSaved(key, clash) {
+    if (!savedLoad) return; // (the store hasn't opened in this tab: it reads the latest when it does)
     const at = savedAt(key);
     if (!at || at <= (synced[key] || 0)) return;
     synced[key] = at; // claim it now so a burst of events loads it once
@@ -426,11 +427,25 @@
   const blankHouse = () => ({ v: 1, names: {}, hidden: [], genres: {}, cats: {}, subs: {}, place: {}, order: [], subOrder: {}, index: {}, sort: {}, held: [], wall: null, walls: {}, moved: {}, removed: {} });
   const fullHouse = (x) => ({ ...blankHouse(), ...(x || {}) });
   let houseShared = null;
-  let houseLocal = readJSON(HOUSE_KEY, null);
-  // (after the rest of this file has run: the IndexedDB helpers are further down)
-  const bigReady = Promise.resolve().then(async () => {
+  let houseLocal = null;
+  /* What's saved in this browser (your shelves, the house plan, posters,
+   * spine colours, logo picks) is read the first time the store opens, not
+   * on every Letterboxd page: it can be megabytes, and only the store uses it.
+   * The localStorage part is read at once, then the big copies in IndexedDB. */
+  let savedLoad = null;
+  function loadSaved() {
+    if (savedLoad) return savedLoad;
+    mine = { ...blankMine(), ...(readJSON(MINE_KEY, null) || {}) };
+    houseLocal = readJSON(HOUSE_KEY, null);
+    for (const [k, v] of Object.entries(readJSON(POSTER_KEY, {}))) if (!posterCache.has(k)) posterCache.set(k, v);
+    for (const [k, v] of Object.entries(readJSON(COLOR_KEY, {}))) if (!(k in colors)) colors[k] = v;
+    for (const [k, v] of Object.entries(readJSON(LOGO_PICK_KEY, {}))) if (!(k in logoPicks)) logoPicks[k] = v;
+    logoReady();
+    return (savedLoad = restoreSaved());
+  }
+  async function restoreSaved() {
     const m = await restoreBig(MINE_KEY, mine);
-    if (m && m !== mine) mine = { place: {}, cats: {}, subs: {}, recent: [], view: "community", sort: {}, held: [], colors: {}, wash: {}, ...m };
+    if (m && m !== mine) mine = { ...blankMine(), ...m };
     // a marker with nothing behind it (IndexedDB unreadable): don't save over it
     mineReady = !mine._idb;
     delete mine._idb;
@@ -440,7 +455,7 @@
     houseLocal = await restoreBig(HOUSE_KEY, houseLocal);
     synced[HOUSE_KEY] = Math.max((houseLocal && houseLocal._at) || 0, savedAt(HOUSE_KEY));
     await mergeMineIntoHouse();
-  });
+  }
   /* One store (see ONE_STORE): fold your own shelves into the house plan, once.
    * Your shelves win wherever the two disagree. A copy of them as they were
    * is kept in IndexedDB ("premerge-mine") first. */
@@ -899,7 +914,7 @@
 
   /* ---------------- posters ---------------- */
 
-  const posterCache = new Map(Object.entries(readJSON(POSTER_KEY, {})));
+  const posterCache = new Map(); // (filled by loadSaved)
   let posterSaveTimer = 0;
   function rememberPoster(slug, urls) {
     posterCache.set(slug, urls);
@@ -981,6 +996,7 @@
 
   function openStore() {
     if (!document.body) return;
+    loadSaved();
     if (BUILD_TAB && !openStore.built) { openStore.built = true; setTimeout(() => { if (root && $(".lbs-catbuild", root) && $(".lbs-catbuild", root).hidden) openCatBuild(); }, 1500); }
     if (!root) {
       root = h("div", "lbs-root");
@@ -1060,7 +1076,7 @@
 
   function render() {
     if (catState === "idle") {
-      Promise.all([loadCatalogue(), bigReady]).then(() => {
+      Promise.all([loadCatalogue(), loadSaved()]).then(() => {
         if (catalogue) { stock = stockFromCatalogue(); defaults = null; lib = null; }
         if (root && !root.hidden) render();
         if (mergedNote) { setTimeout(() => toast(mergedNote), 800); mergedNote = ""; }
@@ -2123,7 +2139,7 @@
     const pick = (mine.colors && mine.colors[slug]) || shared.color[slug];
     return pick ? pick + ((colors[slug] || "").slice(6) || pick) : colors[slug];
   };
-  const colors = readJSON(COLOR_KEY, {});
+  const colors = {}; // (filled by loadSaved)
   const colorJob = { running: false, done: 0, total: 0 };
   let colorSaveTimer = 0;
   const hex = (r, g, b) => [r, g, b].map((v) => Math.round(v).toString(16).padStart(2, "0")).join("");
@@ -2247,20 +2263,21 @@
   const LOGO_Z = 0.7; // logos appear from this zoom in
   // Your own build, kept in IndexedDB (localStorage is too small for the
   // whole catalogue). An older build in localStorage is moved over once.
-  let logoIndex = readJSON(LOGO_KEY, null) || { v: 1, films: {} };
-  const logoReady = Promise.resolve().then(async () => { // (after the rest of this file has run)
+  let logoIndex = { v: 1, films: {} }, logoRead = null;
+  const logoReady = () => logoRead || (logoRead = (async () => { // (read when the store first opens: loadSaved)
+    logoIndex = readJSON(LOGO_KEY, null) || logoIndex;
     try {
       const saved = await idbGet(LOGO_DB_KEY);
       if (saved && saved.films) logoIndex = { ...saved, films: { ...logoIndex.films, ...saved.films } };
       if (localStorage.getItem(LOGO_KEY)) { await idbPut(LOGO_DB_KEY, logoIndex); localStorage.removeItem(LOGO_KEY); }
     } catch {}
     drawSoon();
-  });
+  })());
   let logoShared = null; // the published index, once fetched
   let logoSharedReady = Promise.resolve();
   // A film the build has already looked at (here, or in a published index).
   const logoKnown = (slug) => !!(logoIndex.films[slug] || (logoShared && logoShared[slug]));
-  const logoPicks = readJSON(LOGO_PICK_KEY, {});
+  const logoPicks = {}; // (filled by loadSaved)
   const logoLoad = limiter(10);
   const logoJob = { running: false, done: 0, total: 0, found: 0, error: "" };
 
@@ -2366,7 +2383,7 @@
     if (logoJob.running || !stock) return;
     logoJob.running = true;
     logoJob.error = "";
-    await logoReady;
+    await logoReady();
     await loadSharedLogos();
     const bearer = key.length > 40;
     const api = async (path, params, tries = 0) => {
@@ -2756,7 +2773,7 @@
       //    match are worked out in the store from their countries and language.
       if (st.phase === "origin") {
         const key = readJSON(TMDB_KEY, "");
-        await logoReady; await loadSharedLogos();
+        await logoReady(); await loadSharedLogos();
         st.origin = st.origin || {};
         const todo = [];
         st.films.forEach(([slug], i) => { const e = logoEntry(slug); if (e && e[0] && !(i in st.origin)) todo.push([i, e[0]]); });
@@ -2788,7 +2805,7 @@
       if (st.phase === "deep") {
         const key = readJSON(TMDB_KEY, "");
         if (!key) throw new Error("This step uses TMDB: paste your TMDB key in the Logo builder first.");
-        await logoReady; await loadSharedLogos();
+        await logoReady(); await loadSharedLogos();
         st.tmdb = st.tmdb || {}; st.kw = st.kw || {}; st.kwNames = st.kwNames || {}; st.origin = st.origin || {};
         const bearer = key.length > 40, lane = limiter(8), verify = limiter(3);
         const api = async (path, params, tries = 0) => {
@@ -2863,7 +2880,7 @@
       if (st.phase === "facts") {
         const key = readJSON(TMDB_KEY, "");
         if (!key) throw new Error("This step uses TMDB: paste your TMDB key in the Logo builder first.");
-        await logoReady; await loadSharedLogos();
+        await logoReady(); await loadSharedLogos();
         st.fx = st.fx || {}; st.coNames = st.coNames || {}; st.castNames = st.castNames || {};
         st.kw = st.kw || {}; st.kwNames = st.kwNames || {}; st.origin = st.origin || {};
         const bearer = key.length > 40, lane = limiter(10);
@@ -2931,7 +2948,7 @@
       if (st.phase === "keywords") {
         const key = readJSON(TMDB_KEY, "");
         if (!key) throw new Error("Keywords come from TMDB: paste your TMDB key in the Logo builder first.");
-        await logoReady; await loadSharedLogos();
+        await logoReady(); await loadSharedLogos();
         st.kw = st.kw || {}; st.kwNames = st.kwNames || {};
         const todo = [];
         st.films.forEach(([slug], i) => { const e = logoEntry(slug); if (e && e[0] && !(i in st.kw)) todo.push([i, e[0]]); });
