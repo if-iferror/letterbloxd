@@ -224,17 +224,18 @@
 
   /* ---------------- filing ---------------- */
 
-  const yearOf = (name) => +((String(name).match(/\((\d{4})\)\s*$/) || [])[1] || 0);
-  const titleOf = (name) => String(name).replace(/\s*\(\d{4}\)\s*$/, "");
-  // "The Shining" files under S. Accents ignored, numbers before A.
-  // (remembered: sorting tens of thousands of titles asks for each one many times)
-  const fileKeys = new Map();
-  const fileKey = (name) => {
-    let k = fileKeys.get(name);
-    if (k === undefined) { k = fileKey0(name); if (fileKeys.size > 300000) fileKeys.clear(); fileKeys.set(name, k); }
-    return k;
+  const years = new Map(); // (asked for tens of thousands of times per redraw)
+  const yearOf = (name) => {
+    let y = years.get(name);
+    if (y === undefined) years.set(name, (y = +((String(name).match(/\((\d{4})\)\s*$/) || [])[1] || 0)));
+    return y;
   };
-  const fileKey0 = (name) =>
+  const titleOf = (name) => String(name).replace(/\s*\(\d{4}\)\s*$/, "");
+  // Title order: "The Shining" files under S, accents ignored, numbers before
+  // A, then by year. Every title gets a rank once (one sort of them all), so
+  // putting films in order is a subtraction, not a string comparison: sorting
+  // tens of thousands of titles was most of what every save cost.
+  const fileKey = (name) =>
     titleOf(name)
       .normalize("NFD")
       .replace(/[̀-ͯ]/g, "")
@@ -242,7 +243,43 @@
       .replace(/^[^a-z0-9]+/i, "")
       .toLowerCase();
   const collator = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
-  const byTitle = (a, b) => collator.compare(fileKey(a[1]), fileKey(b[1])) || yearOf(a[1]) - yearOf(b[1]);
+  const keyCmp = (a, b) => collator.compare(a[1], b[1]) || a[2] - b[2] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0); // [name, key, year]
+  const ranks = new Map(); // name -> rank
+  let ranked = []; // [name, key, year], in title order
+  function rankTitles(names) {
+    const fresh = [];
+    for (const n of names) if (!ranks.has(n)) { ranks.set(n, NaN); fresh.push([n, fileKey(n), yearOf(n)]); }
+    if (fresh.length > 50) { ranked = ranked.concat(fresh).sort(keyCmp); ranked.forEach((e, i) => ranks.set(e[0], i)); }
+    else for (const e of fresh) {
+      // a few new titles: each between its neighbours, so no other rank moves
+      // (a sort under way stays consistent)
+      let lo = 0, hi = ranked.length;
+      while (lo < hi) { const m = (lo + hi) >> 1; if (keyCmp(ranked[m], e) < 0) lo = m + 1; else hi = m; }
+      const prev = lo > 0 ? ranks.get(ranked[lo - 1][0]) : ranked.length ? ranks.get(ranked[0][0]) - 1 : -1;
+      const next = lo < ranked.length ? ranks.get(ranked[lo][0]) : prev + 2;
+      ranked.splice(lo, 0, e);
+      ranks.set(e[0], (prev + next) / 2);
+    }
+  }
+  const rankOf = (name) => { if (!ranks.has(name)) rankTitles([name]); return ranks.get(name); };
+  const titleCmp = (a, b) => rankOf(a) - rankOf(b); // two names
+  const byTitle = (a, b) => rankOf(a[1]) - rankOf(b[1]); // two [slug, name]
+  // Every slug in names, in title order (kept until the names change).
+  let tOrder = null, tNames = null;
+  function titleOrder(names) {
+    if (tOrder && tNames.size === names.size) {
+      let same = true;
+      for (const [x, n] of names) if (tNames.get(x) !== n) { same = false; break; }
+      if (same) return tOrder;
+    }
+    rankTitles(names.values());
+    const slugsOf = new Map();
+    for (const [x, n] of names) { const l = slugsOf.get(n); if (l) l.push(x); else slugsOf.set(n, [x]); }
+    tOrder = [];
+    for (const [n] of ranked) { const l = slugsOf.get(n); if (l) for (const x of l) tOrder.push(x); }
+    tNames = new Map(names);
+    return tOrder;
+  }
 
   /* ---------------- the library: genres › categories › subcategories ---------------- */
 
@@ -424,7 +461,15 @@
     mergedNote = `Merged your shelves into one store: ${fmt(Object.keys(H.place).length)} films placed.`;
   }
   let mergedNote = "";
-  const house = () => fullHouse(houseLocal || houseShared);
+  // The house plan with every field present. An edited plan already has them
+  // all, so it's returned as is (a fresh copy per call was 80,000 copies per
+  // list redraw); one read from storage is filled in once.
+  let houseFrom, houseFull; // (houseFrom starts undefined: no plan at all is null, and still needs a blank one)
+  const house = () => {
+    const x = houseLocal || houseShared;
+    if (x !== houseFrom) { houseFrom = x; houseFull = x && Object.keys(blankHouse()).every((k) => k in x) ? x : fullHouse(x); }
+    return houseFull;
+  };
   // grab: "one" moves a single piece; "group" moves every piece of that section, keeping its shape.
   const edit = { on: false, sel: null, renaming: null, deleting: null, undo: [], grab: "one" };
   const isFixed = (id) => !id || lib.genres.has(id) || id === UNCAT_CAT || /\/general$/.test(id);
@@ -462,7 +507,9 @@
       if (k === "place") {
         const a = prev.place || {}, b = next.place || {}, ch = {};
         let n = 0;
-        for (const x in b) if (a[x] !== b[x] && JSON.stringify(a[x]) !== JSON.stringify(b[x])) { ch[x] = a[x] === undefined ? null : a[x]; n++; }
+        // (a placement is a folder id, or [folder, name]: compared item by item, not as JSON)
+        const same = (u, v) => u === v || (Array.isArray(u) && Array.isArray(v) && u.length === v.length && u.every((y, i) => y === v[i]));
+        for (const x in b) if (!same(a[x], b[x])) { ch[x] = a[x] === undefined ? null : a[x]; n++; }
         for (const x in a) if (!(x in b)) { ch[x] = a[x]; n++; }
         if (n) d.place = ch;
         continue;
@@ -754,13 +801,18 @@
       const cat = parts.slice(0, 2).join("/");
       return cats.has(cat) ? `${cat}/general` : UNCAT_SUB;
     };
+    // Each folder's films, A-Z: filled in title order, so nothing needs sorting.
+    // (A film placed without a name files under its slug.)
+    let named = names;
+    for (const slug of place.keys()) if (!names.has(slug)) { if (named === names) named = new Map(names); named.set(slug, slug); }
     const inSub = new Map([...subs.keys()].map((k) => [k, []]));
-    for (const [slug, sub] of place) {
+    for (const slug of titleOrder(named)) {
+      const sub = place.get(slug);
+      if (sub === undefined) continue;
       const at = home(sub);
       if (at !== sub) place.set(slug, at);
-      inSub.get(at)?.push([slug, names.get(slug) || slug]);
+      inSub.get(at)?.push([slug, named.get(slug)]);
     }
-    for (const list of inSub.values()) list.sort(byTitle);
 
     const count = new Map();
     for (const [id, list] of inSub) {
@@ -1680,7 +1732,7 @@
   }
   // A franchise's films come together, in franchise order, where #1 falls.
   function groupFranchises(list) {
-    const frs = Object.values(allFranchises());
+    const frs = Object.values(lib.frs);
     if (!frs.length) return list;
     const owner = new Map();
     frs.forEach((fr, k) => fr.films.forEach(([s], i) => owner.set(s, [k, i])));
@@ -1697,14 +1749,18 @@
   }
   // A franchise lives in #1's section: films pulled in from other sections
   // move there, keeping their own subsection.
+  // (worked out once per library: every section asks)
+  let homesOf = null, homes = null;
   function franchiseHomes() {
-    const home = new Map();
-    for (const fr of Object.values(allFranchises())) {
+    if (homesOf === lib) return homes;
+    homesOf = lib;
+    homes = new Map();
+    for (const fr of Object.values(lib.frs)) {
       const lead = fr.films[0] && filmSection(fr.films[0][0]);
       if (!lead) continue;
-      for (const [s] of fr.films) { const at = filmSection(s); if (at && at !== lead) home.set(s, lead); }
+      for (const [s] of fr.films) { const at = filmSection(s); if (at && at !== lead) homes.set(s, lead); }
     }
-    return home;
+    return homes;
   }
   function sectionOrderRaw(cid) {
     const H = house();
@@ -1716,6 +1772,8 @@
     const blocks = blocksOf(cid);
     for (const bid of blocks) for (const [slug, name] of lib.inSub.get(bid) || []) if (!held.has(slug) && !homes.has(slug)) list.push({ slug, name, sub: bid, blk: bid });
     // Films pulled in by a franchise from another category join #1's block.
+    // (Without them the list is in order already: blocks in order, each A-Z.)
+    const inOrder = list.length;
     for (const [slug, to] of homes) {
       if (to !== cid || held.has(slug)) continue;
       const sid = lib.place.get(slug);
@@ -1729,7 +1787,7 @@
     const subAt = new Map(blocks.map((bid, i) => [bid, i]));
     const bySub = (a, b) => (subAt.get(a.blk) ?? 1e7) - (subAt.get(b.blk) ?? 1e7);
     if (mode === "year") return list.sort((a, b) => bySub(a, b) || (yearOf(a.name) || 9999) - (yearOf(b.name) || 9999) || az(a, b));
-    if (mode !== "index") return list.sort((a, b) => bySub(a, b) || az(a, b));
+    if (mode !== "index") return list.length === inOrder ? list : list.sort((a, b) => bySub(a, b) || az(a, b));
     list.sort(az);
     const index = mode === "index" && H.index[cid];
     if (!index) return list.sort(bySub);
@@ -4453,9 +4511,11 @@
       else if (e.key === "+" || e.key === "=") zoomAt(1.4, c.clientWidth / 2, c.clientHeight / 2);
       else if (e.key === "-") zoomAt(1 / 1.4, c.clientWidth / 2, c.clientHeight / 2);
     });
-    let lastK = 0;
+    let lastK = 0, lastSize = "";
     new ResizeObserver(() => {
-      if (!wall.lay) return;
+      const size = `${c.clientWidth}x${c.clientHeight}`;
+      if (!wall.lay || size === lastSize) return; // (it also fires for changes that leave the canvas as it was)
+      lastSize = size;
       lastK = wall.lay.k;
       buildLayout();
       if (wall.lay.k !== lastK) fit();
@@ -5953,15 +6013,23 @@
     const onWall = wall.lay ? wall.lay.idx : null;
     const F = buildFacts();
     const held = new Set(heldList.map(([x]) => x));
-    const byHand = new Set([...Object.keys(H.place), ...(mine.view === "mine" && !edit.on && !ONE_STORE ? Object.keys(mine.place) : [])]);
     const gBit = Object.fromEntries(GENRES.map(([g], b) => [g, 1 << b]));
     if (lv.statFacts !== F) { lv.stat = new Map(); lv.statFacts = F; }
     const stat = lv.stat;
     const out = [];
+    const atSub = new Map(); // folder -> what every film in it shares
+    const tags = new Map(), tagOf = (k) => tags.get(k) || (tags.set(k, k.split(",")), tags.get(k)); // status lists, shared
+    const locks = H.locks || {};
     for (const [slug, sub] of lib.place) {
-      const p = partsOf(sub);
-      if (!p.genre) continue;
-      // What never changes about a film is worked out once and kept.
+      let P = atSub.get(sub);
+      if (P === undefined) {
+        const p = partsOf(sub);
+        atSub.set(sub, (P = p.genre ? { uncat: p.genre === UNCAT, path: [p.genre, p.cat, p.sub, p.niche].filter(Boolean), sgenre: [p.genre], scat: p.cat ? [p.cat] : [], ssub: [p.sub, p.niche].filter(Boolean) } : null));
+      }
+      if (!P) continue;
+      // What never changes about a film is worked out once and kept: its
+      // filter values (S.vs, shared by its rows as v). A row's own values
+      // (where it is, its locks) are its d.
       let S = stat.get(slug);
       if (!S) {
         const name = lib.names.get(slug) || slug, year = yearOf(name);
@@ -5977,7 +6045,7 @@
         if (isTv) type.push("tv");
         if (gm & gBit.animation) type.push("anim");
         S = {
-          name, year, i: i == null ? 1e9 : i, key: fileKey(name),
+          name, year, i: i == null ? 1e9 : i, key: fileKey(name), rating: i != null ? (F.cat.films[i][2] || 0) : 0, vs: {
           genre: GENRES.filter(([g]) => gm & gBit[g]).map(([g]) => g), type, decade: year ? [decadeOf(year)] : [],
           lang: i != null && F.lang.per[i] ? F.lang.per[i].map(String) : [],
           country: i != null && F.origin.per[i] ? F.origin.per[i].map(String) : [],
@@ -5985,7 +6053,6 @@
           tag: i != null && F.tags && F.tags.per[i] ? F.tags.per[i].map(String) : [],
           studio: i != null && F.studio && F.studio.per[i] ? F.studio.per[i].map(String) : [],
           cert: i != null && F.cat.fcert && F.cat.fcert[i] ? [certBucket(F.cat.certs[F.cat.fcert[i] - 1])] : [],
-          rating: i != null ? (F.cat.films[i][2] || 0) : 0,
           vband: i != null && F.views && F.cat.views[i] ? [F.views.of(F.cat.views[i])] : [],
           aud: i != null && F.audience[i] ? [F.audience[i]] : [],
           rel: i != null && F.release ? [F.release.kind[i]] : [],
@@ -5995,17 +6062,14 @@
           who: i != null ? whoOf(F.cat, i) : [],
           theme: i != null && F.theme && F.theme.per[i] ? F.theme.per[i].map(String) : [],
           mini: i != null && F.mini && F.mini.per[i] ? F.mini.per[i].map(String) : [],
-        };
+        } };
         stat.set(slug, S);
       }
-      const status = [p.genre === UNCAT ? "uncat" : "cat"];
-      if (onWall && p.genre !== UNCAT) status.push(onWall.has(slug) ? "wall" : "nowall");
-      if (held.has(slug)) status.push("held");
-      out.push({
-        slug, name: S.name, year: S.year, i: S.i, key: S.key, rating: S.rating,
-        path: [p.genre, p.cat, p.sub, p.niche].filter(Boolean),
-        v: { status, sgenre: [p.genre], scat: p.cat ? [p.cat] : [], ssub: [p.sub, p.niche].filter(Boolean), genre: S.genre, type: S.type, decade: S.decade, lang: S.lang, country: S.country, pcountry: S.pcountry, tag: S.tag, studio: S.studio, cert: S.cert, rband: S.rband, rtband: S.rtband, vband: S.vband, aud: S.aud, rel: S.rel, svc: S.svc, lock: [String(lockOf(slug))], who: S.who, theme: S.theme, mini: S.mini },
-      });
+      const d = {
+        status: tagOf((P.uncat ? "uncat" : "cat") + (onWall && !P.uncat ? (onWall.has(slug) ? ",wall" : ",nowall") : "") + (held.has(slug) ? ",held" : "")),
+        sgenre: P.sgenre, scat: P.scat, ssub: P.ssub, lock: tagOf(String(locks[slug] ? lockOf(slug) : 0)),
+      };
+      out.push({ slug, name: S.name, year: S.year, i: S.i, key: S.key, rating: S.rating, path: P.path, v: S.vs, d });
     }
     lv.base = out; lv.baseLib = lib; lv.baseLay = wall.lay; lv.baseKey = key;
     lv.baseMap = new Map(out.map((r) => [r.slug, r]));
@@ -6058,39 +6122,14 @@
   }
   // Run the filters: the rows, and each chip's count (with every other group applied).
   function lvRun() {
-    const base = lvBase();
-    const groups = lvGroups();
-    const act = groups.map((g) => {
-      const st = lv.f[g.id] || {};
-      const I = new Set(), X = new Set();
-      for (const [v, s] of Object.entries(st)) (s === 1 ? I : s === -1 ? X : null)?.add(v);
-      return { g, I, X, on: I.size || X.size, all: !!(lv.all && lv.all[g.id]) && I.size > 1 };
-    });
-    const y0 = +lv.y0 || 0, y1 = +lv.y1 || 0;
-    const q = fileKey(lv.q || "").trim();
-    const counts = groups.map(() => new Map());
-    const rows = [];
-    for (const r of base) {
-      if (q && !r.key.includes(q)) continue;
-      if ((y0 && (!r.year || r.year < y0)) || (y1 && (!r.year || r.year > y1))) continue;
-      let fails = 0, failAt = -1;
-      for (let k = 0; k < act.length; k++) {
-        const a = act[k];
-        if (!a.on) continue;
-        const vs = r.v[a.g.id] || [];
-        let ok = !a.I.size;
-        if (a.all) { let hit = 0; for (const v of vs) if (a.I.has(v)) hit++; ok = hit >= a.I.size; }
-        else for (const v of vs) { if (a.X.has(v)) { ok = false; break; } if (a.I.has(v)) ok = true; }
-        if (a.X.size && ok) for (const v of vs) if (a.X.has(v)) { ok = false; break; }
-        if (!ok) { fails++; failAt = k; if (fails > 1) break; }
-      }
-      if (fails > 1) continue;
-      if (fails === 1) { const c = counts[failAt]; for (const v of r.v[act[failAt].g.id] || []) c.set(v, (c.get(v) || 0) + 1); continue; }
-      rows.push(r);
-      for (let k = 0; k < act.length; k++) { const c = counts[k]; for (const v of r.v[act[k].g.id] || []) c.set(v, (c.get(v) || 0) + 1); }
-    }
-    const cmp = lv.sort === "title" ? (a, b) => collator.compare(a.key, b.key) || a.year - b.year : lv.sort === "year" ? (a, b) => (b.year || 0) - (a.year || 0) || a.i - b.i : lv.sort === "rating" ? (a, b) => (b.rating || 0) - (a.rating || 0) || a.i - b.i : (a, b) => a.i - b.i;
-    rows.sort(cmp);
+    const base = lvBase(), F = buildFacts();
+    // Filtering and counting every film is the slow part (counts for every
+    // filter value of every match): kept until the films, the facts, the
+    // filters, the search or the sort change.
+    const sig = JSON.stringify([lv.f, lv.all, lv.y0, lv.y1, lv.q, lv.sort]);
+    const same = lv.run && lv.run.base === base && lv.run.F === F && lv.run.sig === sig;
+    const { groups, counts, rows } = same ? lv.run : lvFilter(base);
+    if (!same) lv.run = { base, F, sig, groups, counts, rows };
     // A franchise is one row (it shows when any of its films match); open
     // it to see all its films beneath, the ones that don't match dimmed.
     lv.nFilms = rows.length;
@@ -6105,13 +6144,50 @@
       const fr = lib.frs[fid];
       const members = fr.films.map(([x]) => x).filter((x) => lv.baseMap.has(x));
       const lead = lv.baseMap.get(members[0]) || r;
-      out.push({ fr: fid, slug: `fr:${fid}`, name: fr.name, members, path: lead.path, v: lead.v, year: 0 });
+      out.push({ fr: fid, slug: `fr:${fid}`, name: fr.name, members, path: lead.path, v: lead.v, d: lead.d, year: 0 });
       if (lv.open.has(fid)) for (const x of members) out.push({ ...lv.baseMap.get(x), member: true, dim: !matched.has(x) });
     }
     lv.rows = out;
     lv.pos = new Map(out.map((r, n) => [r.slug, n]));
     lv.groups = groups;
     lv.counts = counts;
+  }
+  const ROW_OWN = new Set(["status", "sgenre", "scat", "ssub", "lock"]); // a list row's own filter values (its d)
+  function lvFilter(base) {
+    const groups = lvGroups();
+    const act = groups.map((g) => {
+      const st = lv.f[g.id] || {};
+      const I = new Set(), X = new Set();
+      for (const [v, s] of Object.entries(st)) (s === 1 ? I : s === -1 ? X : null)?.add(v);
+      return { g, I, X, on: I.size || X.size, all: !!(lv.all && lv.all[g.id]) && I.size > 1, own: ROW_OWN.has(g.id) };
+    });
+    const valsOf = (r, a) => (a.own ? r.d : r.v)[a.g.id] || [];
+    const y0 = +lv.y0 || 0, y1 = +lv.y1 || 0;
+    const q = fileKey(lv.q || "").trim();
+    const counts = groups.map(() => new Map());
+    const rows = [];
+    for (const r of base) {
+      if (q && !r.key.includes(q)) continue;
+      if ((y0 && (!r.year || r.year < y0)) || (y1 && (!r.year || r.year > y1))) continue;
+      let fails = 0, failAt = -1;
+      for (let k = 0; k < act.length; k++) {
+        const a = act[k];
+        if (!a.on) continue;
+        const vs = valsOf(r, a);
+        let ok = !a.I.size;
+        if (a.all) { let hit = 0; for (const v of vs) if (a.I.has(v)) hit++; ok = hit >= a.I.size; }
+        else for (const v of vs) { if (a.X.has(v)) { ok = false; break; } if (a.I.has(v)) ok = true; }
+        if (a.X.size && ok) for (const v of vs) if (a.X.has(v)) { ok = false; break; }
+        if (!ok) { fails++; failAt = k; if (fails > 1) break; }
+      }
+      if (fails > 1) continue;
+      if (fails === 1) { const c = counts[failAt]; for (const v of valsOf(r, act[failAt])) c.set(v, (c.get(v) || 0) + 1); continue; }
+      rows.push(r);
+      for (let k = 0; k < act.length; k++) { const c = counts[k]; for (const v of valsOf(r, act[k])) c.set(v, (c.get(v) || 0) + 1); }
+    }
+    const cmp = lv.sort === "title" ? (a, b) => titleCmp(a.name, b.name) : lv.sort === "year" ? (a, b) => (b.year || 0) - (a.year || 0) || a.i - b.i : lv.sort === "rating" ? (a, b) => (b.rating || 0) - (a.rating || 0) || a.i - b.i : (a, b) => a.i - b.i;
+    rows.sort(cmp);
+    return { groups, counts, rows };
   }
 
   function lvChipsHTML() {
@@ -6229,7 +6305,7 @@
         (r.fr
           ? `<span class="lbs-lv-t"><b>${esc(r.name)}</b> <button type="button" class="lbs-frbadge" data-act="fr-open" data-fr="${esc(r.fr)}">Franchise · ${fmt(r.members.length)}</button></span>`
           : `<span class="lbs-lv-t">${esc(titleOf(r.name))} <i>${r.year || ""}</i></span>`) +
-        (r.v.status.includes("held") ? `<em class="-inv">Inv</em>` : "") + 
+        (r.d.status.includes("held") ? `<em class="-inv">Inv</em>` : "") + 
         `<small title="${esc([nameOf(r.path[0]), tail].join(" › "))}"><b>${esc(nameOf(r.path[0]))}</b> ${esc(r.path.length > 1 ? tail : "")}</small></div>`;
     }
     sp.innerHTML = html;
@@ -7157,7 +7233,6 @@
     if (!root) return;
     root.querySelectorAll(".lbs-lib-col.-dropcol, .lbs-lib-col.-dropempty, .lbs-lib-row.-dropbefore, .lbs-lib-row.-dropafter").forEach((el) => el.classList.remove("-dropcol", "-dropempty", "-dropbefore", "-dropafter"));
   }
-  const sortTitle = (n) => titleOf(n).replace(/^(the|a|an)\s+/i, "");
   function gapAt(rows, y) {
     for (let i = 0; i < rows.length; i++) { const r = rows[i].getBoundingClientRect(); if (y < r.top + r.height / 2) return i; }
     return rows.length;
@@ -7179,8 +7254,7 @@
       return { kind: "fr", fid: cid.slice(3), col, row: rows[Math.min(i, rows.length - 1)] || null, after: i >= rows.length, before: i < rows.length ? rows[i].dataset.slug : null };
     }
     const first = d.films && d.films.length ? d.films[0][1] : d.name;
-    const key = sortTitle(first || "");
-    const at = rows.find((r) => collator.compare(sortTitle(r.dataset.name || ""), key) > 0);
+    const at = rows.find((r) => titleCmp(r.dataset.name || "", first || "") > 0);
     return { kind: "into", id: cid, col, row: at || rows[rows.length - 1] || null, after: !at && rows.length > 0 };
   }
   function reorderGenres(id, beforeId) {
