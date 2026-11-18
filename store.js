@@ -198,14 +198,7 @@
       ]);
 
       // 3. One aisle per film: the most specific wins.
-      const members = Object.fromEntries(AISLES.map((a, n) => [a.id, aisleLists[n]]));
-      const placed = new Set();
-      const aisles = {};
-      for (const id of AISLE_PRIORITY) {
-        aisles[id] = (members[id] || []).filter((i) => !placed.has(i));
-        aisles[id].forEach((i) => placed.add(i));
-      }
-      aisles.rest = films.map((_, i) => i).filter((i) => !placed.has(i));
+      const aisles = oneAisleEach(Object.fromEntries(AISLES.map((a, n) => [a.id, aisleLists[n]])), films.map((_, i) => i));
 
       const tags = {};
       TAGS.forEach((t, n) => { (tags[t.id] = tags[t.id] || []).push(...tagLists[n]); });
@@ -238,6 +231,7 @@
       .replace(/^(the|a|an)\s+/i, "")
       .replace(/^[^a-z0-9]+/i, "")
       .toLowerCase();
+  const plural = (n, word) => `${fmt(n)} ${word}${n === 1 ? "" : "s"}`; // "1 film", "2,000 films"
   const collator = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
   // [name, key, year] (key and year filled in when first needed)
   const keyOf = (e) => e[1] ?? (e[1] = fileKey(e[0])), yrOf = (e) => e[2] ?? (e[2] = yearOf(e[0]));
@@ -619,6 +613,17 @@
     for (let n = 0; n < parts.length; n += 2) if (parts[n] !== "decade") for (const v of parts[n + 1].split("+")) keys.push(`${parts[n]}/${v}`);
     return keys;
   }))];
+  // Each film in one aisle, the most specific it's in (AISLE_PRIORITY);
+  // the rest of `all` in rest.
+  function oneAisleEach(members, all) {
+    const placed = new Set(), aisles = {};
+    for (const id of AISLE_PRIORITY) {
+      aisles[id] = (members[id] || []).filter((i) => !placed.has(i));
+      aisles[id].forEach((i) => placed.add(i));
+    }
+    aisles.rest = all.filter((i) => !placed.has(i));
+    return aisles;
+  }
   // A film's home genre: the most specific of its genres.
   const HOME_ORDER = ["horror", "documentary", "animation", "western", "war", "music", "science-fiction", "fantasy", "comedy", "romance", "crime", "thriller", "mystery", "family", "adventure", "action", "history", "tv-movie", "drama"];
   function stockFromCatalogue() {
@@ -632,13 +637,7 @@
       if (!set) console.warn(`[store] catalogue has no list for aisle ${a.id} (${a.q})`);
       members[a.id] = set ? sorted(set) : [];
     }
-    const placed = new Set();
-    const aisles = {};
-    for (const id of AISLE_PRIORITY) {
-      aisles[id] = (members[id] || []).filter((i) => !placed.has(i));
-      aisles[id].forEach((i) => placed.add(i));
-    }
-    aisles.rest = sorted(horror).filter((i) => !placed.has(i));
+    const aisles = oneAisleEach(members, sorted(horror));
     const tags = {};
     for (const t of TAGS) { const set = catQuery(t.q); if (set) (tags[t.id] = tags[t.id] || []).push(...sorted(set)); }
     // Everyone else's home genre.
@@ -1285,7 +1284,7 @@
       const all = filmsIn(desk.folder);
       const q = desk.q.trim().toLowerCase();
       films = q ? all.filter(([, name]) => name.toLowerCase().includes(q)) : all;
-      where.innerHTML = `${crumbsHTML()}<span>· ${fmt(films.length)} film${films.length === 1 ? "" : "s"}${q ? " match" : ""}</span>`;
+      where.innerHTML = `${crumbsHTML()}<span>· ${plural(films.length, "film")}${q ? " match" : ""}</span>`;
     }
 
     if (rowIo) rowIo.disconnect();
@@ -1342,7 +1341,7 @@
     if (edit.on && edit.renaming === id) return `<li class="lbs-adding"><input type="text" class="lbs-rename" maxlength="40" value="${esc(nameOf(id))}"></li>`;
     if (edit.on && edit.deleting === id) {
       const n = lib.count.get(id) || 0;
-      return `<li class="lbs-confirm">Delete <b>${esc(nameOf(id))}</b>?${n ? ` Its ${fmt(n)} film${n === 1 ? "" : "s"} go to ${lib.cats.has(id) ? "Uncategorized" : "General"}.` : ""} <button type="button" data-act="del-yes" data-id="${esc(id)}">Delete</button><button type="button" data-act="del-no">Keep</button></li>`;
+      return `<li class="lbs-confirm">Delete <b>${esc(nameOf(id))}</b>?${n ? ` Its ${plural(n, "film")} go to ${lib.cats.has(id) ? "Uncategorized" : "General"}.` : ""} <button type="button" data-act="del-yes" data-id="${esc(id)}">Delete</button><button type="button" data-act="del-no">Keep</button></li>`;
     }
     const tools = !edit.on || lib.genres.has(id) ? "" :
       `<span class="lbs-tools">` +
@@ -1367,7 +1366,7 @@
       // Search: folders anywhere below this one.
       const under = (id) => !desk.folder || id === desk.folder || id.startsWith(desk.folder + "/") || partsOf(id).genre === desk.folder || partsOf(id).cat === desk.folder;
       ids = [...lib.cats.keys(), ...lib.subs.keys(), ...lib.genres.keys()].filter((id) => under(id) && nameOf(id).toLowerCase().includes(q)).slice(0, 120);
-      where.innerHTML = `${crumbsHTML()}<span>· ${fmt(ids.length)} folder${ids.length === 1 ? "" : "s"} match</span>`;
+      where.innerHTML = `${crumbsHTML()}<span>· ${plural(ids.length, "folder")} match</span>`;
     } else {
       ids = !desk.folder ? [...lib.genres.keys()] : p.cat ? lib.cats.get(p.cat)?.subs || [] : lib.genres.get(p.genre)?.cats || [];
       const level = !desk.folder ? null : p.cat ? "sub" : "cat";
@@ -1377,7 +1376,7 @@
             ? `<li class="lbs-adding"><input type="text" class="lbs-new" maxlength="40" placeholder="${level === "cat" ? "New category" : "New subcategory"}"></li>`
             : `<li class="lbs-add"><button type="button" data-act="add" data-level="${level}" data-parent="${esc(desk.folder)}">+ New ${level === "cat" ? "category" : "subcategory"}</button></li>`;
       }
-      where.innerHTML = `${crumbsHTML()}<span>· ${fmt(ids.length)} folder${ids.length === 1 ? "" : "s"}</span>`;
+      where.innerHTML = `${crumbsHTML()}<span>· ${plural(ids.length, "folder")}</span>`;
     }
     list.innerHTML = `<li class="lbs-browse"><ul>${ids.map((id) => (q ? folderRow(id).replace('<span class="lbs-folder-name">', `<span class="lbs-folder-name"><small>${esc(pathOf(id).slice(0, -1).join(" › "))}${pathOf(id).length > 1 ? " › " : ""}</small>`) : folderRow(id))).join("")}${adder}</ul></li>`;
     const input = $(".lbs-new, .lbs-rename", list);
@@ -4047,7 +4046,7 @@
     ctx.font = `800 110px "Helvetica Neue", Arial, sans-serif`;
     ctx.fillText("UNCATEGORIZED", sx + sw / 2, sy + 125, sw - 90);
     ctx.font = `700 58px "Helvetica Neue", Arial, sans-serif`;
-    ctx.fillText(`${fmt(P.n)} film${P.n === 1 ? "" : "s"}`, sx + sw / 2, sy + 225, sw - 90);
+    ctx.fillText(`${plural(P.n, "film")}`, sx + sw / 2, sy + 225, sw - 90);
     ctx.textAlign = "left";
     if (wall.dropHint && wall.dropHint.pile) {
       ctx.strokeStyle = "#40bcf4";
@@ -4886,7 +4885,7 @@
         `<div class="lbs-lib-col -${side === "right" ? "right" : "left"}" data-side="${side}" data-colid="${esc(id || "")}"><h5>${id ? esc(nameOf(id)) : "Genres"}${id ? `<small>${fmt(String(id).startsWith("fr:") ? k.films.length : lib.count.get(id) || 0)} films</small>` : ""}${String(id).startsWith("fr:") ? `<button type="button" class="lbs-frbadge" data-act="fr-open" data-fr="${esc(id.slice(3))}">Edit franchise</button>` : ""}</h5><ul>` +
         k.folders.map((f) => folderRow(f, side)).join("") +
         (lvl ? (adding ? `<li class="lbs-lib-new"><input type="text" class="lbs-lib-new-name" data-level="${lvl}" maxlength="40" placeholder="Name the new ${LEVEL_WORD[lvl]}"></li>` : `<li class="lbs-lib-add"><button type="button" data-act="lib-new">+ New ${LEVEL_WORD[lvl]}</button></li>`) : "") +
-        (k.films.length ? (k.folders.length || lvl ? `<li class="lbs-lib-sep">${allow ? `${fmt(k.films.filter((f) => allow.has(f[0])).length)} of ` : ""}${fmt(k.films.length)} film${k.films.length === 1 ? "" : "s"}</li>` : "") + filmItems(id, k.films, side) : "") +
+        (k.films.length ? (k.folders.length || lvl ? `<li class="lbs-lib-sep">${allow ? `${fmt(k.films.filter((f) => allow.has(f[0])).length)} of ` : ""}${plural(k.films.length, "film")}</li>` : "") + filmItems(id, k.films, side) : "") +
         (!k.folders.length && !k.films.length && !lvl ? `<li class="lbs-lib-empty">Empty</li>` : "") +
         `</ul></div>`
       );
@@ -4918,7 +4917,7 @@
       `</div>` +
       `<div class="lbs-lib-foot">` +
       (!pick && (msel.size > 1 || fsel.size)
-        ? `<div class="lbs-lib-acts"><b class="lbs-lib-mcount">${[msel.size > 1 ? `${fmt(msel.size)} films` : "", fsel.size ? `${fmt(fsel.size)} folder${fsel.size === 1 ? "" : "s"}` : ""].filter(Boolean).join(" · ")} selected</b>` +
+        ? `<div class="lbs-lib-acts"><b class="lbs-lib-mcount">${[msel.size > 1 ? `${fmt(msel.size)} films` : "", fsel.size ? `${plural(fsel.size, "folder")}` : ""].filter(Boolean).join(" · ")} selected</b>` +
           (msel.size > 1 ? `<button type="button" class="-go" data-act="lib-mmove">Move to…</button><button type="button" data-act="lib-mhold">Add to inventory</button>` : `<span class="lbs-lib-tip">Drag them onto a folder.</span>`) +
           (msel.size > 1 && ONE_STORE ? `<button type="button" class="-link" data-act="lib-mremove">Remove from store</button>` : "") +
           `<button type="button" class="-link" data-act="lib-mnone">Deselect</button></div>`
@@ -6489,7 +6488,7 @@
     const frItem = ([fid, f]) => `<li class="-fr" data-act="fr-open" data-fr="${esc(fid)}"><img data-poster="${esc(f.films[0][0])}" alt=""><div><b>${esc(f.name)}</b> <span>Franchise · ${f.films.length} films</span><small>${esc(where(whereIs(f.films[0][0]) || []))}</small></div><button type="button" class="lbs-find-req" data-act="fr-open" data-fr="${esc(fid)}">View</button></li>`;
     const top = local.slice(0, 8);
     const used = new Set();
-    let html = whoSearch(nq).map((it) => `<li class="-who" data-act="find-who" data-k="${esc(it.k)}"><span class="lbs-who-ico">${it.kind === "Studio" || it.kind === "Company" ? "🎬" : esc(it.name.split(/\s+/).map((w) => w[0]).slice(0, 2).join(""))}</span><div><b>${esc(it.name)}</b> <span>${it.kind} · ${fmt(it.n)} film${it.n === 1 ? "" : "s"}</span><small>Show in the Library list</small></div></li>`).join("");
+    let html = whoSearch(nq).map((it) => `<li class="-who" data-act="find-who" data-k="${esc(it.k)}"><span class="lbs-who-ico">${it.kind === "Studio" || it.kind === "Company" ? "🎬" : esc(it.name.split(/\s+/).map((w) => w[0]).slice(0, 2).join(""))}</span><div><b>${esc(it.name)}</b> <span>${it.kind} · ${plural(it.n, "film")}</span><small>Show in the Library list</small></div></li>`).join("");
     for (const h of frHits) {
       html += frItem(h);
       for (const [, sl, nm] of top) if (lib.frOf.get(sl) === h[0]) { html += item(sl, nm, true, true); used.add(sl); }
@@ -6573,7 +6572,7 @@
       return `<div class="lbs-dvd" data-slug="${esc(slug)}" data-name="${esc(name)}" style="--c:${c ? `#${c.slice(0, 6)}` : "#2c3440"}" title="${esc(name)}">${esc(titleOf(name))}</div>`;
     };
     tray.innerHTML =
-      `<div class="lbs-tray-top"><b>Inventory</b>${held.length ? `<span>${fmt(held.length)} film${held.length === 1 ? "" : "s"}</span>` : ""}</div>` +
+      `<div class="lbs-tray-top"><b>Inventory</b>${held.length ? `<span>${plural(held.length, "film")}</span>` : ""}</div>` +
       (placing
         ? `<div class="lbs-tray-tools"><span class="lbs-grabtype">Grab <button type="button" data-act="grab" data-v="one" class="${edit.grab === "one" ? "-on" : ""}">Individual</button><button type="button" data-act="grab" data-v="group" class="${edit.grab === "group" ? "-on" : ""}">Group</button></span>` +
           `<span><button type="button" data-act="w-auto">Auto-arrange</button><button type="button" data-act="w-clear">Everything down</button></span></div>` +
@@ -7862,14 +7861,14 @@
         ui.pocket = true;
         return holdFilms(films); // its toast has Undo
       }
-      if (act === "lv-remove") { const films = lvFilms(); if (!films.length) return; return ask(`Remove <b>${fmt(films.length)} film${films.length === 1 ? "" : "s"}</b> from the store? (Search finds them again: Add to store.)`, () => { lv.selecting = false; lvSetSel(new Set()); removeFilms(films); }, "Remove"); }
+      if (act === "lv-remove") { const films = lvFilms(); if (!films.length) return; return ask(`Remove <b>${plural(films.length, "film")}</b> from the store? (Search finds them again: Add to store.)`, () => { lv.selecting = false; lvSetSel(new Set()); removeFilms(films); }, "Remove"); }
       if (act === "lv-uncat") { const films = lvFilms(); lv.selecting = false; lvSetSel(new Set()); return moveFilms(films, UNCAT); }
       if (act === "lib-new") { const col = btn.closest(".lbs-lib-col"); libUI.adding = (col && col.dataset.colid) || "@root"; return renderLibrary(); }
       if (act === "lib-del") {
         e.stopPropagation();
         const did = btn.dataset.id, n = lib.count.get(did) || 0;
         const where = lib.genres.has(did) || lib.cats.has(did) ? "Uncategorized" : `${nameOf(lib.subs.get(did)?.parent || lib.subs.get(did)?.cat)}${lib.subs.get(did)?.parent ? "" : " › General"}`;
-        return ask(`Delete <b>${esc(nameOf(did))}</b>${lib.genres.has(did) ? " and every folder in it" : lib.cats.has(did) ? " and its subcats" : ""}?${n ? ` Its ${fmt(n)} film${n === 1 ? "" : "s"} go to ${esc(where)}.` : ""}`, () => deleteFolder(did), "Delete");
+        return ask(`Delete <b>${esc(nameOf(did))}</b>${lib.genres.has(did) ? " and every folder in it" : lib.cats.has(did) ? " and its subcats" : ""}?${n ? ` Its ${plural(n, "film")} go to ${esc(where)}.` : ""}`, () => deleteFolder(did), "Delete");
       }
       if (act === "lib-move") {
         const right = libUI.path[libUI.path.length - 1];
