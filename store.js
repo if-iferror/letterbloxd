@@ -4133,14 +4133,17 @@
     const el = $(".lbs-stage-path", root);
     if (!el) return;
     const sec = wall.level === "wall" ? sectionAtCenter() : null;
-    el.innerHTML =
+    // (drawn every frame while you pan: the page is only touched when it changes)
+    const html =
       `<button type="button" class="lbs-crumb" data-act="fit" title="See the whole room">Store</button>` +
       (sec ? `<i>›</i><button type="button" class="lbs-crumb" data-act="go-genre" data-id="${esc(lib.cats.get(sec.id).genre)}">${esc(nameOf(lib.cats.get(sec.id).genre))}</button>` : "") +
       (sec ? `<i>›</i><button type="button" class="lbs-crumb" data-act="open" data-id="${esc(sec.id)}" data-drop="${esc(sec.id)}">${esc(sec.name)}</button>` : "") +
       (colorJob.total && colorJob.done < colorJob.total ? `<span class="lbs-hint">colours ${fmt(colorJob.done)} / ${fmt(colorJob.total)}</span>` : "") +
       (logoJob.running ? `<span class="lbs-hint">logos ${fmt(logoJob.done)} / ${fmt(logoJob.total)}</span>` : "");
+    if (el._html !== html) { el.innerHTML = html; el._html = html; }
     const credit = $(".lbs-credit", root);
-    if (credit) credit.hidden = !(wall.level === "wall" && (Object.keys(logoIndex.films).length || (logoShared && Object.keys(logoShared).length)));
+    const any = (o) => { for (const k in o) return true; return false; };
+    if (credit) credit.hidden = !(wall.level === "wall" && (any(logoIndex.films) || (logoShared && any(logoShared))));
   }
 
   // The tip: poster + title for the spine under the pointer.
@@ -4186,7 +4189,13 @@
     renderTray();
   }
 
+  // A new canvas each time the store is drawn: the last one's page-wide
+  // listeners and size watcher go, or they'd keep it (and its pixels) alive.
+  let canvasBound = null;
   function bindCanvas(c) {
+    if (canvasBound) canvasBound.abort();
+    canvasBound = new AbortController();
+    const off = { signal: canvasBound.signal };
     let pan = null;
     c.addEventListener("wheel", (e) => {
       e.preventDefault();
@@ -4224,7 +4233,7 @@
       wall.cam.x -= dx / wall.cam.z;
       wall.cam.y -= dy / wall.cam.z;
       drawSoon();
-    });
+    }, off);
     window.addEventListener("mouseup", (e) => {
       if (!pan) return;
       const clicked = pan.moved < 4 && e.target === c;
@@ -4248,7 +4257,7 @@
         const p = toWall(e.offsetX, e.offsetY);
         flyTo(p.x, p.y, wall.cam.z < FAR ? 0.22 : 0.95);
       }
-    });
+    }, off);
     c.addEventListener("mousemove", (e) => {
       if (pan) return;
       const i = filmAt(e.offsetX, e.offsetY);
@@ -4289,7 +4298,7 @@
       else if (e.key === "-") zoomAt(1 / 1.4, c.clientWidth / 2, c.clientHeight / 2);
     });
     let lastK = 0, lastSize = "";
-    new ResizeObserver(() => {
+    const ro = new ResizeObserver(() => {
       const size = `${c.clientWidth}x${c.clientHeight}`;
       if (!wall.lay || size === lastSize) return; // (it also fires for changes that leave the canvas as it was)
       lastSize = size;
@@ -4297,7 +4306,9 @@
       buildLayout();
       if (wall.lay.k !== lastK) fit();
       else drawSoon();
-    }).observe(c);
+    });
+    ro.observe(c);
+    canvasBound.signal.addEventListener("abort", () => ro.disconnect());
   }
 
   /* ---------------- browsing (everyone) ----------------
