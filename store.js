@@ -2256,6 +2256,40 @@
   const LOGO_PICK_KEY = `${NS}:store:logo-picks:v1`;
   const SUGGEST_KEY = `${NS}:store:suggest:v1`;
   const TMDB_KEY = `${NS}:dev:tmdb`; // the developer's own key, this browser only
+  /* A TMDB request, as every builder makes it: your key (a long one is a v4
+   * token, sent as a header), waiting out rate limits, a refused key said
+   * plainly. Resolves to the JSON; null when TMDB has nothing; undefined when
+   * it kept saying "too many requests" (try that film again another run).
+   * o: tries (429s to wait out, 5), badKey (the 401 message), strict (throw
+   * on anything else), paused (stop when it says so), count (each request). */
+  const BAD_KEY = "TMDB didn't accept your key (Logo builder › Forget key, then paste it again).";
+  async function tmdb(key, path, params, o = {}) {
+    const bearer = key.length > 40, tries = o.tries ?? 5;
+    for (let n = 0; ; n++) {
+      if (o.paused && o.paused()) throw new Error("paused");
+      const u = new URL(`https://api.themoviedb.org/3/${path}`);
+      for (const [k, v] of Object.entries(params || {})) u.searchParams.set(k, v);
+      if (!bearer) u.searchParams.set("api_key", key);
+      const r = await fetch(u, bearer ? { headers: { Authorization: `Bearer ${key}` } } : {});
+      if (o.count) o.count();
+      if (r.status === 401) throw new Error(o.badKey || BAD_KEY);
+      if (r.status === 429) {
+        if (n + 1 < tries) { await new Promise((ok) => setTimeout(ok, 1500 * (n + 1))); continue; }
+        if (o.strict) throw new Error("TMDB 429");
+        return undefined;
+      }
+      if (!r.ok) { if (o.strict) throw new Error(`TMDB ${r.status}`); return null; }
+      return r.json();
+    }
+  }
+  // Matching a Letterboxd film to TMDB: titles compared loosely, a result's
+  // year, and Letterboxd's word on a TMDB id (HEAD /tmdb/<id>/ redirects to
+  // its film page, without downloading it).
+  const looseTitle = (x) => String(x || "").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/&/g, "and").replace(/[^a-z0-9]+/g, "");
+  const tmdbYear = (c) => +String(c.release_date || "").slice(0, 4) || 0;
+  const isOurs = async (id, slug) => {
+    try { const r = await fetch(`/tmdb/${id}/`, { method: "HEAD", credentials: "include" }); return r.ok && new URL(r.url).pathname.startsWith(`/film/${slug}/`); } catch { return false; }
+  };
   // Published indexes: the first Horror run, then the whole catalogue.
   const LOGO_FILES = ["horror-logos.json", "logos.json"].map((f) => `https://raw.githubusercontent.com/if-iferror/letterbloxd/dev/data/${f}`);
   const LOGO_DB_KEY = "logos:v1";
@@ -2385,25 +2419,8 @@
     logoJob.error = "";
     await logoReady();
     await loadSharedLogos();
-    const bearer = key.length > 40;
-    const api = async (path, params, tries = 0) => {
-      const u = new URL(`https://api.themoviedb.org/3/${path}`);
-      for (const [k, v] of Object.entries(params || {})) u.searchParams.set(k, v);
-      if (!bearer) u.searchParams.set("api_key", key);
-      const r = await fetch(u, bearer ? { headers: { Authorization: `Bearer ${key}` } } : {});
-      if (r.status === 401) throw new Error("TMDB didn't accept that key.");
-      if (r.status === 429 && tries < 5) { await new Promise((ok) => setTimeout(ok, 1500 * (tries + 1))); return api(path, params, tries + 1); }
-      if (!r.ok) throw new Error(`TMDB ${r.status}`);
-      return r.json();
-    };
-    const norm = (s) => String(s || "").toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "").replace(/&/g, "and").replace(/[^a-z0-9]+/g, "");
-    const yr = (c) => +String(c.release_date || "").slice(0, 4) || 0;
-    const isOurs = async (id, slug) => {
-      try {
-        const r = await fetch(`/tmdb/${id}/`, { method: "HEAD", credentials: "include" });
-        return r.ok && new URL(r.url).pathname.startsWith(`/film/${slug}/`);
-      } catch { return false; }
-    };
+    const api = (path, params) => tmdb(key, path, params, { tries: 6, strict: true, badKey: "TMDB didn't accept that key." });
+    const norm = looseTitle, yr = tmdbYear;
     const verify = limiter(3); // gentle on Letterboxd
 
     async function match(slug, name) {
@@ -2778,20 +2795,11 @@
         const todo = [];
         st.films.forEach(([slug], i) => { const e = logoEntry(slug); if (e && e[0] && !(i in st.origin)) todo.push([i, e[0]]); });
         if (key && todo.length) {
-          const bearer = key.length > 40, lane = limiter(8);
+          const lane = limiter(8);
           let n = 0;
           await Promise.all(todo.map(([i, tid]) => lane(async () => {
-            if (!catJob.running) throw new Error("paused");
-            for (let tries = 0; tries < 5; tries++) {
-              const u = new URL(`https://api.themoviedb.org/3/movie/${tid}`);
-              if (!bearer) u.searchParams.set("api_key", key);
-              const r = await fetch(u, bearer ? { headers: { Authorization: `Bearer ${key}` } } : {});
-              if (r.status === 429) { await new Promise((ok) => setTimeout(ok, 1500 * (tries + 1))); continue; }
-              if (r.status === 401) throw new Error("TMDB didn't accept your key (Logo builder › Forget key, then paste it again).");
-              const j = r.ok ? await r.json() : null;
-              st.origin[i] = (j && j.origin_country) || [];
-              break;
-            }
+            const j = await tmdb(key, `movie/${tid}`, null, { tries: 5, paused: () => !catJob.running });
+            if (j !== undefined) st.origin[i] = (j && j.origin_country) || []; // (undefined: rate-limited throughout, next run)
             if (++n % 300 === 0) { catJob.msg = `Country of origin: ${fmt(Object.keys(st.origin).length)} / ${fmt(todo.length + Object.keys(st.origin).length - n)}`; await catSave(); tick(); }
           })));
         } else if (!key) catJob.msg = "No TMDB key here, so country of origin is worked out from countries and language instead.";
@@ -2807,23 +2815,9 @@
         if (!key) throw new Error("This step uses TMDB: paste your TMDB key in the Logo builder first.");
         await logoReady(); await loadSharedLogos();
         st.tmdb = st.tmdb || {}; st.kw = st.kw || {}; st.kwNames = st.kwNames || {}; st.origin = st.origin || {};
-        const bearer = key.length > 40, lane = limiter(8), verify = limiter(3);
-        const api = async (path, params, tries = 0) => {
-          if (!catJob.running) throw new Error("paused");
-          const u = new URL(`https://api.themoviedb.org/3/${path}`);
-          for (const [k, v] of Object.entries(params || {})) u.searchParams.set(k, v);
-          if (!bearer) u.searchParams.set("api_key", key);
-          const r = await fetch(u, bearer ? { headers: { Authorization: `Bearer ${key}` } } : {});
-          catJob.reqs++;
-          if (r.status === 401) throw new Error("TMDB didn't accept your key (Logo builder › Forget key, then paste it again).");
-          if (r.status === 429 && tries < 6) { await new Promise((ok) => setTimeout(ok, 1500 * (tries + 1))); return api(path, params, tries + 1); }
-          return r.ok ? r.json() : null;
-        };
-        const norm = (x) => String(x || "").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/&/g, "and").replace(/[^a-z0-9]+/g, "");
-        const yr = (c) => +String(c.release_date || "").slice(0, 4) || 0;
-        const isOurs = async (id, slug) => {
-          try { const r = await fetch(`/tmdb/${id}/`, { method: "HEAD", credentials: "include" }); return r.ok && new URL(r.url).pathname.startsWith(`/film/${slug}/`); } catch { return false; }
-        };
+        const lane = limiter(8), verify = limiter(3);
+        const api = async (path, params) => (await tmdb(key, path, params, { tries: 7, paused: () => !catJob.running, count: () => catJob.reqs++ })) || null;
+        const norm = looseTitle, yr = tmdbYear;
         const todo = [];
         st.films.forEach(([slug], i) => { const e = logoEntry(slug); if (!(e && e[0]) && !(i in st.tmdb)) todo.push(i); });
         let n = 0, found = Object.values(st.tmdb).filter(Boolean).length;
@@ -2883,7 +2877,7 @@
         await logoReady(); await loadSharedLogos();
         st.fx = st.fx || {}; st.coNames = st.coNames || {}; st.castNames = st.castNames || {};
         st.kw = st.kw || {}; st.kwNames = st.kwNames || {}; st.origin = st.origin || {};
-        const bearer = key.length > 40, lane = limiter(10);
+        const lane = limiter(10);
         const todo = [];
         st.films.forEach(([slug], i) => {
           if (st.fx[i] === 0 || (st.fx[i] && st.fx[i].length > 4)) return; // done (now with release types)
@@ -2892,16 +2886,9 @@
         });
         let n = 0;
         await Promise.all(todo.map(([i, id]) => lane(async () => {
-          if (!catJob.running) throw new Error("paused");
-          for (let tries = 0; tries < 6; tries++) {
-            const u = new URL(`https://api.themoviedb.org/3/movie/${id}`);
-            u.searchParams.set("append_to_response", "credits,release_dates,keywords");
-            if (!bearer) u.searchParams.set("api_key", key);
-            const r = await fetch(u, bearer ? { headers: { Authorization: `Bearer ${key}` } } : {});
-            catJob.reqs++;
-            if (r.status === 429) { await new Promise((ok) => setTimeout(ok, 1500 * (tries + 1))); continue; }
-            if (r.status === 401) throw new Error("TMDB didn't accept your key (Logo builder › Forget key, then paste it again).");
-            const j = r.ok ? await r.json() : null;
+          const j = await tmdb(key, `movie/${id}`, { append_to_response: "credits,release_dates,keywords" }, { tries: 6, paused: () => !catJob.running, count: () => catJob.reqs++ });
+          do { // (once; break leaves early)
+            if (j === undefined) break; // rate-limited throughout: next run
             if (!j) { st.fx[i] = 0; break; }
             const co = (j.production_companies || []).map((c) => { st.coNames[c.id] = c.name; return c.id; });
             const cast = ((j.credits && j.credits.cast) || []).slice(0, 6).map((c) => { st.castNames[c.id] = c.name; return c.id; });
@@ -2936,8 +2923,7 @@
             if (j.origin_country) st.origin[i] = j.origin_country;
             const ks = (j.keywords && j.keywords.keywords) || [];
             if (ks.length || !(i in st.kw)) { for (const k of ks) st.kwNames[k.id] = k.name; st.kw[i] = ks.map((k) => k.id); }
-            break;
-          }
+          } while (false);
           if (++n % 400 === 0) { catJob.msg = `Film facts from TMDB: ${fmt(n)} / ${fmt(todo.length)}`; await catSave(); tick(); }
         })));
         st.phase = "done";
@@ -2952,22 +2938,14 @@
         st.kw = st.kw || {}; st.kwNames = st.kwNames || {};
         const todo = [];
         st.films.forEach(([slug], i) => { const e = logoEntry(slug); if (e && e[0] && !(i in st.kw)) todo.push([i, e[0]]); });
-        const bearer = key.length > 40, lane = limiter(10);
+        const lane = limiter(10);
         let n = 0;
         await Promise.all(todo.map(([i, tid]) => lane(async () => {
-          if (!catJob.running) throw new Error("paused");
-          for (let tries = 0; tries < 5; tries++) {
-            const u = new URL(`https://api.themoviedb.org/3/movie/${tid}/keywords`);
-            if (!bearer) u.searchParams.set("api_key", key);
-            const r = await fetch(u, bearer ? { headers: { Authorization: `Bearer ${key}` } } : {});
-            catJob.reqs++;
-            if (r.status === 429) { await new Promise((ok) => setTimeout(ok, 1500 * (tries + 1))); continue; }
-            if (r.status === 401) throw new Error("TMDB didn't accept your key (Logo builder › Forget key, then paste it again).");
-            const j = r.ok ? await r.json() : null;
+          const j = await tmdb(key, `movie/${tid}/keywords`, null, { tries: 5, paused: () => !catJob.running, count: () => catJob.reqs++ });
+          if (j !== undefined) { // (undefined: rate-limited throughout, next run)
             const ks = (j && j.keywords) || [];
             for (const k of ks) st.kwNames[k.id] = k.name;
             st.kw[i] = ks.map((k) => k.id);
-            break;
           }
           if (++n % 400 === 0) { catJob.msg = `Keywords: ${fmt(n)} / ${fmt(todo.length)}`; await catSave(); tick(); }
         })));
