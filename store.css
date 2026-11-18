@@ -35,97 +35,9 @@ html.lbs-open {
   background: #14181c;
   border-bottom: 1px solid #2c3440;
 }
-.lbs-brand {
-  color: #fff;
-  font-size: 17px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  white-space: nowrap;
-}
-.lbs-brand span {
-  color: #40bcf4;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  margin-left: 4px;
-}
+
 /* The wing's name, like the big sign over a department */
-.lbs-wing-sign {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  padding: 5px 14px;
-  border-radius: 3px;
-  background: #222b34;
-  box-shadow: 0 0 0 1px #384350 inset;
-}
-.lbs-wing-sign b {
-  color: #fff;
-  font-size: 15px;
-  font-weight: 800;
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
-}
-.lbs-wing-sign span {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: #789;
-}
-.lbs-collections[hidden] {
-  display: none;
-}
-.lbs-collections {
-  display: flex;
-  gap: 4px;
-  margin-left: auto;
-}
-.lbs-coll {
-  all: unset;
-  display: inline-flex;
-  align-items: baseline;
-  gap: 6px;
-  padding: 6px 12px;
-  border-radius: 3px;
-  color: #9ab;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.lbs-coll span {
-  color: #678;
-  font-size: 11px;
-  font-weight: 400;
-}
-.lbs-coll:hover {
-  color: #def;
-}
-.lbs-coll.-on {
-  background: #2c3440;
-  color: #fff;
-}
-.lbs-coll.-on span {
-  color: #9ab;
-}
-.lbs-coll.-soon,
-.lbs-coll.-soon:hover {
-  cursor: default;
-  color: #567;
-}
-.lbs-coll em {
-  font-style: normal;
-  font-size: 9.5px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: #456;
-  border: 1px solid #2c3440;
-  border-radius: 2px;
-  padding: 1px 4px;
-}
+
 .lbs-close {
   all: unset;
   display: grid;
@@ -181,327 +93,6 @@ html.lbs-open {
   cursor: pointer;
 }
 
-/* ---------- the aisle ---------- */
-.lbs-walk {
-  position: relative;
-  height: calc(100% - 34px - var(--deskbar, 40px));
-}
-.lbs-track {
-  height: 100%;
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
-  outline: none;
-}
-.lbs-track::-webkit-scrollbar {
-  display: none;
-}
-/* The back wall: pegboard */
-.lbs-wall {
-  display: flex;
-  width: max-content;
-  min-width: 100%;
-  height: 100%;
-  background-color: #161b20;
-  background-image: radial-gradient(circle, rgba(0, 0, 0, 0.55) 1.3px, transparent 1.8px);
-  background-size: 18px 18px;
-  background-position: 9px 9px;
-}
-
-/* One aisle of shelving */
-.lbs-aisle {
-  position: relative;
-  flex: none;
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  box-shadow: inset 0 -40px 40px -30px rgba(0, 0, 0, 0.5);
-}
-/* Uprights between aisles */
-.lbs-aisle::before,
-.lbs-aisle:last-child::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: -6px;
-  z-index: 2;
-  width: 12px;
-  background: linear-gradient(90deg, #12161a 0%, #3b4652 35%, #2a333d 65%, #101418 100%);
-  box-shadow: 4px 0 10px rgba(0, 0, 0, 0.45), -4px 0 10px rgba(0, 0, 0, 0.45);
-}
-.lbs-aisle:first-child::before {
-  left: 0;
-}
-.lbs-aisle:last-child::after {
-  left: auto;
-  right: 0;
-}
-
-/* The aisle's wooden sign, repeating along the top */
-.lbs-head {
-  position: relative;
-  flex: none;
-  height: var(--head);
-}
-.lbs-wood {
-  position: absolute;
-  top: 12px;
-  display: inline-flex;
-  align-items: center;
-  gap: 12px;
-  height: 38px;
-  padding: 0 14px;
-  border-radius: 4px;
-  background-color: #8c5b30;
-  background-image:
-    repeating-linear-gradient(
-      178deg,
-      rgba(255, 214, 160, 0.09) 0px,
-      rgba(255, 214, 160, 0.09) 1px,
-      transparent 1px,
-      transparent 5px,
-      rgba(60, 30, 10, 0.12) 5px,
-      rgba(60, 30, 10, 0.12) 6px,
-      transparent 6px,
-      transparent 11px
-    ),
-    linear-gradient(180deg, #a06a39 0%, #8a582d 55%, #74481f 100%);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 220, 170, 0.35),
-    inset 0 -2px 0 rgba(40, 20, 5, 0.35),
-    0 7px 14px rgba(0, 0, 0, 0.55);
-  transform: rotate(var(--tilt, 0deg));
-  white-space: nowrap;
-}
-.lbs-wood b {
-  color: #fbeed6;
-  font-size: 15px;
-  font-weight: 800;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  text-shadow: 0 -1px 0 rgba(40, 18, 4, 0.6), 0 1px 0 rgba(255, 220, 170, 0.15);
-}
-/* screws */
-.lbs-wood i {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: radial-gradient(circle at 35% 35%, #e9e4da 0, #9b9283 45%, #4d463c 100%);
-  box-shadow: 0 1px 1px rgba(0, 0, 0, 0.5);
-}
-
-/* A shelf: one row, its board running the full length of the aisle */
-.lbs-shelf {
-  position: relative;
-  display: flex;
-  align-items: flex-end;
-  height: var(--row);
-  padding: 0 var(--pad);
-  box-sizing: border-box;
-  background-image: linear-gradient(
-    to bottom,
-    transparent calc(100% - var(--lip)),
-    #55606d calc(100% - var(--lip)),
-    #55606d calc(100% - var(--lip) + 2px),
-    #353e49 calc(100% - var(--lip) + 2px),
-    #272f38 calc(100% - 3px),
-    #0b0e11 calc(100% - 3px)
-  );
-}
-.lbs-run {
-  position: relative;
-  display: flex;
-  align-items: flex-end;
-  gap: var(--gap);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-/* where one subcategory ends and the next begins: a clear shelf divider */
-.lbs-run + .lbs-run {
-  margin-left: var(--divider);
-}
-.lbs-run + .lbs-run::before {
-  content: "";
-  position: absolute;
-  left: calc(var(--divider) / -2 - 2px);
-  bottom: var(--lip);
-  width: 4px;
-  height: calc(var(--ph) * 0.8);
-  border-radius: 2px 2px 0 0;
-  background: linear-gradient(90deg, rgba(210, 228, 240, 0.28), rgba(210, 228, 240, 0.12));
-  box-shadow: 0 0 0 1px rgba(210, 228, 240, 0.12);
-}
-.lbs-item {
-  position: relative;
-  flex: none;
-  display: flex;
-  align-items: flex-end;
-  height: var(--row);
-  padding-bottom: var(--lip);
-  box-sizing: border-box;
-}
-
-/* Taped laminated tags on the shelf edge */
-.lbs-tag {
-  position: absolute;
-  left: 0;
-  bottom: 4px;
-  z-index: 1;
-  height: 17px;
-  padding: 0 8px;
-  border-radius: 2px;
-  background-color: #f2eee3;
-  background-image: linear-gradient(115deg, rgba(255, 255, 255, 0.7) 0%, rgba(255, 255, 255, 0) 40%, rgba(255, 255, 255, 0.3) 72%, rgba(255, 255, 255, 0) 86%);
-  box-shadow: 0 0 0 2px rgba(225, 232, 238, 0.18), 0 2px 4px rgba(0, 0, 0, 0.5);
-  color: #14181c;
-  font-size: 9.5px;
-  font-weight: 800;
-  line-height: 17px;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  white-space: nowrap;
-  pointer-events: none;
-}
-.lbs-tag i {
-  position: absolute;
-  top: -4px;
-  left: -6px;
-  width: 22px;
-  height: 9px;
-  background: rgba(250, 246, 228, 0.45);
-  transform: rotate(-24deg);
-}
-
-/* Posters use Letterboxd's own .poster/.frame styles for the frame and hover. */
-.lbs-poster {
-  position: relative;
-  width: var(--pw);
-  height: var(--ph);
-  border-radius: 3px;
-  overflow: hidden;
-  background: #2c3440;
-  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.7);
-}
-.lbs-poster .image {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  transition: opacity 0.25s;
-}
-.lbs-poster .frame {
-  position: absolute;
-  inset: 0;
-}
-.lbs-item:not(.lbs-loaded) .image {
-  opacity: 0.3;
-}
-
-/* End cap at the head of the wing */
-.lbs-aisle.-endcap {
-  background: linear-gradient(#1d2730, #151b21);
-  box-shadow: inset 0 60px 80px -40px rgba(64, 188, 244, 0.12);
-}
-.lbs-aisle.-endcap .lbs-wood {
-  background-color: #c79a1c;
-  background-image: linear-gradient(180deg, #ffd85a 0%, #e9b923 100%);
-}
-.lbs-aisle.-endcap .lbs-wood b {
-  color: #2a1d00;
-  text-shadow: 0 1px 0 rgba(255, 245, 200, 0.5);
-}
-
-/* Walk buttons */
-.lbs-step {
-  all: unset;
-  position: absolute;
-  top: 50%;
-  z-index: 3;
-  display: grid;
-  place-items: center;
-  width: 44px;
-  height: 44px;
-  margin-top: -22px;
-  border-radius: 50%;
-  background: rgba(20, 24, 28, 0.9);
-  box-shadow: 0 0 0 1px #456, 0 4px 14px rgba(0, 0, 0, 0.6);
-  color: #def;
-  cursor: pointer;
-  opacity: 0.55;
-  transition: opacity 0.15s;
-}
-.lbs-step[hidden] {
-  display: none;
-}
-.lbs-walk:hover .lbs-step {
-  opacity: 1;
-}
-.lbs-step:hover {
-  background: #2c3440;
-  color: #fff;
-}
-.lbs-step svg {
-  width: 20px;
-  height: 20px;
-}
-.lbs-step.-back {
-  left: 14px;
-}
-.lbs-step.-on {
-  right: 14px;
-}
-
-/* ---------- floor guide ---------- */
-.lbs-floor {
-  position: relative;
-  height: 34px;
-  background: #14181c;
-  border-top: 1px solid #2c3440;
-}
-.lbs-map {
-  display: flex;
-  height: 100%;
-}
-.lbs-map button {
-  all: unset;
-  flex-basis: 0;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  border-right: 1px solid #0f1317;
-  background: #1a2026;
-  color: #678;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  cursor: pointer;
-}
-.lbs-map button span {
-  overflow: hidden;
-  padding: 0 6px;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-.lbs-map button:hover {
-  background: #232b33;
-  color: #def;
-}
-.lbs-map button.-here {
-  background: #26303a;
-  color: #fff;
-}
-.lbs-you {
-  position: absolute;
-  top: 2px;
-  bottom: 2px;
-  border-radius: 3px;
-  box-shadow: 0 0 0 2px #40bcf4;
-  pointer-events: none;
-}
-
 /* ---------- home page strip ---------- */
 .lbs-home {
   margin: 0 0 28px;
@@ -518,13 +109,7 @@ html.lbs-open {
 .lbs-home-door:hover {
   box-shadow: 0 0 0 1px #40bcf4 inset;
 }
-.lbs-home-kicker {
-  color: #40bcf4;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-}
+
 .lbs-home-title {
   color: #fff;
   font-size: 20px;
@@ -897,7 +482,6 @@ html.lbs-open {
   height: 14px;
 }
 
-.lbs-col,
 .lbs-hits {
   margin: 0;
   padding: 4px;
@@ -1033,9 +617,7 @@ html.lbs-open {
   box-shadow: 0 0 0 2px #40bcf4 inset !important;
   color: #fff !important;
 }
-.lbs-wood.-over {
-  box-shadow: 0 0 0 3px #40bcf4, 0 7px 14px rgba(0, 0, 0, 0.55) !important;
-}
+
 .lbs-item[draggable="true"] {
   cursor: grab;
 }
@@ -1086,16 +668,7 @@ html.lbs-open {
     gap: 10px;
     padding: 0 12px;
   }
-  .lbs-brand span,
-  .lbs-wing-sign span,
-  .lbs-coll span,
-  .lbs-coll em {
-    display: none;
-  }
-}
 
-.lbs-collections[hidden] + .lbs-close {
-  margin-left: auto;
 }
 
 /* ---------- the store floor (desk, left side) ---------- */
@@ -1262,41 +835,7 @@ html.lbs-open {
   color: #fff;
   font-size: 13px;
 }
-.lbs-logopick-list {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px;
-  margin-bottom: 8px;
-}
-.lbs-logopick-list button {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 52px;
-  padding: 6px;
-  border: 0;
-  border-radius: 3px;
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
-  cursor: pointer;
-}
-.lbs-logopick-list button:hover {
-  box-shadow: inset 0 0 0 2px #678;
-}
-.lbs-logopick-list button.-on {
-  box-shadow: inset 0 0 0 2px #40bcf4;
-}
-.lbs-logopick-list img {
-  max-width: 100%;
-  max-height: 100%;
-  object-fit: contain;
-}
-.lbs-logopick-list .-plain {
-  background: #2c3440;
-  color: #def;
-  font: 700 11px Arial, sans-serif;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-}
+
 .lbs-logopick a {
   color: #40bcf4 !important;
 }
@@ -2378,29 +1917,6 @@ html.lbs-open {
 .lbs-sp-x svg {
   width: 16px;
   height: 16px;
-}
-.lbs-sp-genre {
-  padding: 0 18px 10px;
-}
-.lbs-sp-genre label {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  color: #678;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-.lbs-sp-genre select {
-  padding: 4px 8px;
-  border: 0;
-  border-radius: 4px;
-  background: #2c3440;
-  color: #fff;
-  font: 600 13px Arial, sans-serif;
-  letter-spacing: 0;
-  text-transform: none;
 }
 
 .lbs-sp-move {

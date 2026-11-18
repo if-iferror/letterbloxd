@@ -36,11 +36,7 @@
   const CACHE_MS = 7 * 864e5;
   const PER_PAGE = 72;
   const MAIN_PAGES = 130; // ranks 1-9,360
-  const COLLECTIONS = [
-    { id: "main", name: "Main", count: 9360, open: true },
-    { id: "obscure", name: "Obscure", count: 15480, open: false },
-    { id: "ultra", name: "Ultra-obscure", count: 53002, open: false },
-  ];
+  const MAIN_COUNT = 9360; // the Main collection's films (used before the catalogue)
 
   /* ---------------- the floor plan ---------------- */
 
@@ -305,9 +301,6 @@
   const roomGenres = () => (lib ? [...lib.genres.keys()].filter((g) => g !== UNCAT && (lib.count.get(g) || 0) > 0) : [STOCKED]);
   const inRoom = (genreId) => roomGenres().includes(genreId);
   const roomCats = () => roomGenres().flatMap((g) => lib.genres.get(g)?.cats || []);
-  // For now the Store opens straight into the Sorting Desk; the walkable
-  // aisles are switched off (set false to bring them back).
-  const DESK_ONLY = true;
 
   // Your own moves and folders ("Mine"). Kept in this browser only.
   const MINE_KEY = `${NS}:store:mine:v1`;
@@ -667,7 +660,7 @@
         break;
       }
     }
-    for (const [i, g] of Object.entries(stock.homes || {})) {
+    for (const i of Object.keys(stock.homes || {})) {
       const slug = stock.films[i][0];
       if (!out.has(slug)) out.set(slug, UNCAT_SUB);
     }
@@ -941,7 +934,6 @@
         }, { root: scroller, rootMargin: margin })
       : null;
   }
-  let io = null; // posters in the aisle
   let rowIo = null; // thumbnails in the desk
 
   /* Posters load with CORS (Letterboxd's image server allows it) so the
@@ -972,27 +964,13 @@
     return c ? `crossorigin="anonymous" src="${esc(c[0])}" srcset="${esc(c[0])} 1x, ${esc(c[1])} 2x"` : `src="${EMPTY}"`;
   };
 
-  function posterHTML([slug, name], tag) {
-    return (
-      `<li class="lbs-item${posterCache.has(slug) ? " lbs-loaded" : ""}" data-slug="${esc(slug)}" data-name="${esc(name)}" data-dnd="film">` +
-      `<div class="poster film-poster lbs-poster">` +
-      `<img class="image" ${imgAttrs(slug)} width="150" height="225" alt="${esc(name)}" decoding="async" draggable="false">` +
-      `<a class="frame" href="/film/${esc(slug)}/" title="${esc(name)}" draggable="false"><span class="frame-title">${esc(name)}</span><span class="overlay"></span></a>` +
-      `</div>` +
-      (tag ? `<span class="lbs-tag"><i></i>${esc(tag)}</span>` : "") +
-      `</li>`
-    );
-  }
 
   /* ---------------- the store ---------------- */
 
   let root = null;
-  let collection = "main";
-  let walkway = null; // { track, els, aisles }
 
   const ICON_CLOSE = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>`;
   const ICON_LEFT = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
-  const ICON_RIGHT = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
   const ICON_UP = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 15l7-7 7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
   const ICON_FOLDER = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5h4.2l2 2h8.8A1.5 1.5 0 0 1 21 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z" fill="currentColor"/></svg>`;
   // The store's logo, an original mark (icons/bloxbuster-logo.svg, inlined: this script runs in the page).
@@ -1089,20 +1067,10 @@
       });
     }
     if (catState !== "loading") stock = stock || loadStock();
-    const total = stock ? stock.films.length : COLLECTIONS[0].count;
     root.classList.toggle("lbs-nodates", !!mine.noDates);
     root.innerHTML =
       `<header class="lbs-top">` +
-      (DESK_ONLY ? "" : `<div class="lbs-brand">LetterBloxd <span>video store</span></div>`) +
-      (DESK_ONLY
-        ? `<div class="lbs-logo">${LOGO_SVG}</div><button type="button" class="lbs-lib-btn -inhead" data-act="lib" aria-label="Library: every folder and film">${ICON_FOLDER}<span>Library</span></button>`
-        : `<div class="lbs-wing-sign"><b>Horror</b><span>wing</span></div>`) +
-      `<nav class="lbs-collections" aria-label="Collections"${DESK_ONLY ? " hidden" : ""}>` +
-      COLLECTIONS.map((c) =>
-        `<button type="button" class="lbs-coll${c.id === collection ? " -on" : ""}${c.open ? "" : " -soon"}" data-coll="${c.id}"${c.open ? "" : ' aria-disabled="true"'}>` +
-        `${c.name} <span>${fmt(c.id === "main" ? total : c.count)}</span>${c.open ? "" : "<em>soon</em>"}</button>`
-      ).join("") +
-      `</nav>` +
+      `<div class="lbs-logo">${LOGO_SVG}</div><button type="button" class="lbs-lib-btn -inhead" data-act="lib" aria-label="Library: every folder and film">${ICON_FOLDER}<span>Library</span></button>` +
       (DEV_TOOLS ? `<button type="button" class="lbs-edit-toggle" data-act="edit" aria-pressed="false">Dev mode</button>` : "") +
       `<button type="button" class="lbs-close" data-act="close" aria-label="Leave the store">${ICON_CLOSE}</button>` +
       `</header>` +
@@ -1110,7 +1078,7 @@
 
     const hall = $(".lbs-hall", root);
     if (catState === "loading") { hall.append(h("div", "lbs-loading", `<p>Opening the store…</p>`)); return; }
-    if (stock && DESK_ONLY) {
+    if (stock) {
       buildLibrary();
       if (ONE_STORE && !BUILD_TAB && mineReady && houseLocal && !houseLocal.sweptGeneral) setTimeout(() => { try { sweepGeneral(); } catch (err) { console.warn("sweepGeneral", err); } }, 0);
       root.classList.add("lbs-desk-only");
@@ -1128,18 +1096,8 @@
       $(".lbs-fq", root)?.focus();
       return;
     }
-    if (stock) {
-      buildLibrary();
-      hall.innerHTML =
-        `<div class="lbs-walk"></div>` +
-        `<footer class="lbs-floor"><div class="lbs-map"></div><div class="lbs-you"></div></footer>` +
-        deskHTML();
-      buildWing();
-      renderDesk();
-      return;
-    }
 
-    const box = h("div", "lbs-loading", `<div class="lbs-meter"><i></i></div><p>Stocking the shelves: reading Horror's top ${fmt(COLLECTIONS[0].count)} films from Letterboxd and sorting them into categories. This happens once a week and takes about a minute.</p>`);
+    const box = h("div", "lbs-loading", `<div class="lbs-meter"><i></i></div><p>Stocking the shelves: reading Horror's top ${fmt(MAIN_COUNT)} films from Letterboxd and sorting them into categories. This happens once a week and takes about a minute.</p>`);
     hall.append(box);
     buildStock((f) => {
       const i = $(".lbs-meter i", root);
@@ -1151,199 +1109,15 @@
       });
   }
 
-  // Sizes that make the shelving fill the height of the window.
-  const HEAD = 64; // the aisle's wooden sign
-  const LIP = 26; // shelf edge, where the laminated tags are taped
-  const HEADROOM = 10; // gap between a poster's top and the shelf above
-  const GAP = 8; // between posters
-  const DIVIDER = 30; // between two shelves' worth of films on one row
-  const PAD = 34; // inside the uprights
-  const WOOD_EVERY = 1150; // px between repeats of the aisle sign
-  const TAG_EVERY = 900; // px between repeats of a shelf tag
 
-  function geometry(height) {
-    const avail = Math.max(260, height - HEAD - 6);
-    const rows = Math.max(3, Math.min(7, Math.floor(avail / 165)));
-    const rowH = Math.floor(avail / rows);
-    const ph = Math.max(78, Math.min(170, rowH - LIP - HEADROOM));
-    return { rows, rowH, ph, pw: Math.round((ph * 2) / 3) };
-  }
 
-  // Lay shelves into rows: the first `rows` shelves take one row each, top
-  // down; each later one starts to the right of whichever row ends first.
-  function packRows(shelves, rows, g) {
-    const lines = Array.from({ length: rows }, () => ({ width: 0, runs: [] }));
-    const len = (n) => n * g.pw + (n - 1) * GAP;
-    shelves.forEach((s, n) => {
-      const line = n < rows ? lines[n] : lines.reduce((a, b) => (b.width < a.width ? b : a));
-      if (line.runs.length) line.width += DIVIDER;
-      line.runs.push(s);
-      line.width += len(s.items.length);
-    });
-    return lines;
-  }
 
-  function aisleHTML(a, g, n) {
-    const lines = a.lines;
-    const inner = Math.max(...lines.map((l) => l.width), g.pw * 3);
-    const width = inner + PAD * 2;
-    const tagEvery = Math.max(5, Math.round(TAG_EVERY / (g.pw + GAP)));
-    const woods = [];
-    for (let x = PAD + 10; x < width - 200 || !woods.length; x += WOOD_EVERY) woods.push(x);
-    return (
-      `<section class="lbs-aisle${a.endcap ? " -endcap" : ""}" data-aisle="${esc(a.id)}" style="width:${width}px">` +
-      `<div class="lbs-head">` +
-      woods
-        .map((x, k) => `<div class="lbs-wood" style="left:${x}px;--tilt:${[-0.6, 0.5, -0.3, 0.7][(n + k) % 4]}deg"${a.endcap ? "" : ` data-drop="${esc(a.id)}"`}><i></i><b>${esc(a.name)}</b><i></i></div>`)
-        .join("") +
-      `</div>` +
-      lines
-        .map(
-          (line) =>
-            `<div class="lbs-shelf">` +
-            line.runs
-              .map(
-                (run) =>
-                  `<ul class="lbs-run" data-shelf="${esc(run.id)}">` +
-                  run.items
-                    .map((film, k) => posterHTML(film, k === 0 || (k % tagEvery === 0 && run.items.length - k >= 3) ? run.name : ""))
-                    .join("") +
-                  `</ul>`
-              )
-              .join("") +
-            `</div>`
-        )
-        .join("") +
-      `</section>`
-    );
-  }
 
-  function buildWing() {
-    const walkEl = $(".lbs-walk", root);
-    const keep = walkway && walkway.track.isConnected ? walkway.track.scrollLeft : 0;
-    walkEl.innerHTML =
-      `<button type="button" class="lbs-step -back" data-act="back" aria-label="Walk back">${ICON_LEFT}</button>` +
-      `<div class="lbs-track" tabindex="0" aria-label="Horror wing. Scroll or use the arrow keys to walk."><div class="lbs-wall"></div></div>` +
-      `<button type="button" class="lbs-step -on" data-act="on" aria-label="Walk on">${ICON_RIGHT}</button>`;
 
-    const track = $(".lbs-track", walkEl);
-    const wall = $(".lbs-wall", walkEl);
-    if (io) io.disconnect();
-    io = makeWatcher(track, "0px 1400px");
-    const g = geometry(track.clientHeight || window.innerHeight - 140);
-    root.style.setProperty("--ph", `${g.ph}px`);
-    root.style.setProperty("--pw", `${g.pw}px`);
-    root.style.setProperty("--row", `${g.rowH}px`);
-    root.style.setProperty("--head", `${HEAD}px`);
-    root.style.setProperty("--lip", `${LIP}px`);
-    root.style.setProperty("--gap", `${GAP}px`);
-    root.style.setProperty("--divider", `${DIVIDER}px`);
-    root.style.setProperty("--pad", `${PAD}px`);
 
-    // Aisles = Horror's categories, A-Z, Everything Else last.
-    const aisles = lib.genres
-      .get(STOCKED)
-      .cats.map((id) => lib.cats.get(id))
-      .map((c) => ({
-        id: c.id,
-        name: c.name,
-        shelves: c.subs.map((s) => ({ id: s, name: lib.subs.get(s).name, items: lib.inSub.get(s) })).filter((s) => s.items.length),
-      }))
-      .filter((a) => a.shelves.length);
-    aisles.forEach((a) => (a.lines = packRows(a.shelves, g.rows, g)));
 
-    // The end cap at the head of the wing: this week's popular, face-out.
-    if (stock.front && stock.front.length) {
-      const per = Math.ceil(stock.front.length / g.rows);
-      const lines = Array.from({ length: g.rows }, (_, r) => {
-        const items = stock.front.slice(r * per, r * per + per);
-        return { width: items.length ? items.length * g.pw + (items.length - 1) * GAP : 0, runs: items.length ? [{ id: "front", name: "This Week", items }] : [] };
-      });
-      aisles.unshift({ id: "front", name: "Popular This Week", endcap: true, lines });
-    }
 
-    wall.innerHTML = aisles.map((a, n) => aisleHTML(a, g, n)).join("");
-    wall.querySelectorAll(".lbs-item:not(.lbs-loaded)").forEach((li) => (io ? io.observe(li) : fillPoster(li)));
 
-    // Floor guide: every aisle, to scale. Click to walk there.
-    const els = [...wall.children];
-    $(".lbs-map", root).innerHTML = els
-      .map((el, n) => `<button type="button" data-act="goto" data-n="${n}" style="flex-grow:${el.offsetWidth}" title="${esc(aisles[n].name)}"><span>${esc(aisles[n].name)}</span></button>`)
-      .join("");
-    walkway = { track, els, aisles };
-    track.scrollLeft = keep;
-    track.addEventListener("scroll", onWalk, { passive: true });
-    track.addEventListener("wheel", onWheel, { passive: false });
-    track.addEventListener("keydown", onKey);
-    onWalk();
-    if (!desk.open) track.focus({ preventScroll: true });
-  }
-
-  // Scrolling is walking: a vertical wheel moves you along the wing.
-  function onWheel(e) {
-    if (!walkway) return;
-    const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
-    if (!d) return;
-    e.preventDefault();
-    walkway.track.scrollLeft += d * (e.deltaMode === 1 ? 40 : 1);
-  }
-
-  function walk(dir) {
-    const t = walkway.track;
-    t.scrollBy({ left: dir * Math.max(t.clientWidth * 0.8, 300), behavior: "smooth" });
-  }
-
-  function onKey(e) {
-    if (e.key === "ArrowRight" || e.key === "PageDown") { e.preventDefault(); walk(1); }
-    else if (e.key === "ArrowLeft" || e.key === "PageUp") { e.preventDefault(); walk(-1); }
-    else if (e.key === "Home") { e.preventDefault(); walkway.track.scrollTo({ left: 0, behavior: "smooth" }); }
-    else if (e.key === "End") { e.preventDefault(); walkway.track.scrollTo({ left: walkway.track.scrollWidth, behavior: "smooth" }); }
-  }
-
-  let walkFrame = 0;
-  let standingIn = null; // the aisle in the middle of the view
-  function aisleHere() {
-    if (!walkway) return null;
-    const t = walkway.track;
-    const mid = t.scrollLeft + t.clientWidth / 2;
-    const n = walkway.els.findIndex((el) => el.offsetLeft <= mid && mid < el.offsetLeft + el.offsetWidth);
-    return n >= 0 && !walkway.aisles[n].endcap ? walkway.aisles[n].id : null;
-  }
-  function onWalk() {
-    if (walkFrame) return;
-    walkFrame = requestAnimationFrame(() => {
-      walkFrame = 0;
-      if (!walkway) return;
-      const t = walkway.track;
-      const w = t.scrollWidth || 1;
-      const you = $(".lbs-you", root);
-      if (you) {
-        you.style.left = `${(t.scrollLeft / w) * 100}%`;
-        you.style.width = `${(t.clientWidth / w) * 100}%`;
-      }
-      $(".lbs-step.-back", root).hidden = t.scrollLeft < 4;
-      $(".lbs-step.-on", root).hidden = t.scrollLeft + t.clientWidth >= t.scrollWidth - 4;
-      const mid = t.scrollLeft + t.clientWidth / 2;
-      const btns = root.querySelectorAll(".lbs-map button");
-      walkway.els.forEach((el, n) => {
-        const here = el.offsetLeft <= mid && mid < el.offsetLeft + el.offsetWidth;
-        if (btns[n]) btns[n].classList.toggle("-here", here);
-        if (here) standingIn = walkway.aisles[n].endcap ? null : walkway.aisles[n].id;
-      });
-      if (!desk.open) renderDeskBar();
-    });
-  }
-
-  let resizeTimer = 0;
-  window.addEventListener("resize", () => {
-    if (!root || root.hidden || !walkway) return;
-    clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(() => {
-      const at = walkway.track.scrollLeft / (walkway.track.scrollWidth || 1);
-      buildWing();
-      walkway.track.scrollLeft = at * walkway.track.scrollWidth;
-    }, 200);
-  });
 
   /* ---------------- the sorting desk ---------------- */
 
@@ -1419,14 +1193,13 @@
     if (open) {
       d.hidden = false;
       if (!desk.folder) {
-        desk.folder = aisleHere() || STOCKED;
+        desk.folder = STOCKED;
       }
       renderDesk();
     } else {
       d.hidden = true;
       desk.moving = null;
       renderDesk();
-      walkway?.track.focus({ preventScroll: true });
     }
   }
 
@@ -1442,7 +1215,7 @@
   function renderDeskBar() {
     const bar = $(".lbs-deskbar-path", root);
     if (!bar) return;
-    const here = desk.open ? desk.folder : aisleHere();
+    const here = desk.open ? desk.folder : null;
     bar.innerHTML = here
       ? `${pathHTML(here, "open")}<span class="lbs-hint">${desk.open ? "" : "· drag any film here to re-file it"}</span>`
       : `<span class="lbs-hint">Drag any film here to re-file it</span>`;
@@ -1663,7 +1436,6 @@
    *   near   spines with titles; hover for the poster, drag one to a folder
    */
   const WALL_ORDER = ["gothic", "haunted", "creepy", "vampires", "madsci", "creature", "zombies", "extreme", "slashers", "giallo", "eighties", "jhorror", "comedy", "rest"];
-  const HUES = [282, 262, 220, 350, 160, 95, 120, 8, 0, 35, 315, 190, 48, 210];
   const WU = { bayW: 1000, gap: 36, pad: 5, sign: 260, shelfH: 200, shelves: 6, lip: 14 };
   const HANG_H = 216, HANG_DROP = 18; // the hanging category boards over each bay
   const AISLE_W = 900, AISLE_GAP = 90; // the big aisle sign at the start of each row of bays
@@ -2528,7 +2300,6 @@
     const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
     return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
   };
-  const contrast = (a, b) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
 
   // A logo image, ready to draw, or null (and it starts loading).
   // Kept in wall.logos: key -> { img, ok, lum, ink: { colour: canvas } }
@@ -2714,7 +2485,6 @@
    * closed and continued. */
   const CAT_DB = `${NS}-store`;
   const CAT_KEY = "catalogue-job:v1";
-  const CAT_SAMPLE = 1500; // most film pages read to find themes
   const catJob = { running: false, st: null, msg: "", error: "", started: 0, reqs: 0 };
   const catLane = limiter(4); // gentle: four requests at a time
 
@@ -3320,27 +3090,6 @@
     renderCatBuild();
   }
 
-  // Right-click a spine: the film's other TMDB logos, to pick from.
-  function openLogoPicker(i, sx, sy) {
-    const f = wall.lay.films[i];
-    const e = logoEntry(f.slug);
-    const box = $(".lbs-logopick", root);
-    if (!box || !e || !e[0]) return false;
-    const cur = logoPicks[f.slug] ?? 0;
-    const bg = colors[f.slug] ? `#${colors[f.slug].slice(0, 6)}` : "#2c3440";
-    box.innerHTML =
-      `<b>${esc(titleOf(f.name))}: spine logo</b>` +
-      `<div class="lbs-logopick-list">` +
-      e.slice(1).map((p, n) => `<button type="button" data-act="logo-pick" data-slug="${esc(f.slug)}" data-n="${n}" class="${cur === n ? "-on" : ""}" style="background:${bg}"><img src="${TMDB_IMG}w185/${esc(p)}" alt="Logo ${n + 1}"></button>`).join("") +
-      `<button type="button" data-act="logo-pick" data-slug="${esc(f.slug)}" data-n="-1" class="-plain${cur === -1 ? " -on" : ""}">Plain title</button>` +
-      `</div>` +
-      `<a href="https://www.themoviedb.org/movie/${e[0]}/images/logos" target="_blank" rel="noopener">${e.length > 1 ? "See every logo on TMDB ↗" : "No logo yet. Add one on TMDB ↗"}</a>`;
-    box.hidden = false;
-    const st = $(".lbs-stage", root).getBoundingClientRect();
-    box.style.left = `${Math.max(8, Math.min(sx, st.width - box.offsetWidth - 8))}px`;
-    box.style.top = `${Math.max(8, Math.min(sy, st.height - box.offsetHeight - 8))}px`;
-    return true;
-  }
 
   function pickLogo(slug, n) {
     if (n === 0 || n === "") delete logoPicks[slug];
@@ -5013,24 +4762,6 @@
     saveMine();
     renderLibrary();
   }
-  // Open the Library on a film: its folder open, the film highlighted.
-  function openLibraryAt(slug, name) {
-    lv.mode = "folders";
-    const p = partsOf(lib.place.get(slug));
-    libUI.path = [p.genre, p.cat, p.sub, p.niche].filter(Boolean);
-    if (!libUI.path.length) libUI.path = [STOCKED];
-    libUI.sel = [slug, name || lib.names.get(slug) || slug];
-    libUI.focus = { film: libUI.sel };
-    setLibrary(true);
-    requestAnimationFrame(() => {
-      const el = root.querySelector(`.lbs-library [data-film="${CSS.escape(slug)}"]`);
-      if (el) return el.scrollIntoView({ block: "center" });
-      // a long column: scroll to where the film's row will be drawn
-      const wrap = root.querySelector('.lbs-library .lbs-lib-vwrap[data-side="right"]');
-      const items = libUI.vcols.right, n = items && items.slugs ? items.slugs.indexOf(slug) : -1;
-      if (wrap && n >= 0) { const ul = wrap.closest("ul"); ul.scrollTop = wrap.offsetTop + n * LIB_VROW - ul.clientHeight / 2; }
-    });
-  }
   // Redrawing part of the page mustn't lose what's being typed there: call
   // keepTyping(el) before the redraw and the function it returns after; the
   // focused field's text and cursor move to its redrawn twin.
@@ -5048,9 +4779,9 @@
   // Saving anything redraws the Library (houseEdit → refresh → renderFolders).
   // libHeld puts that off while a click is still being handled: it redraws
   // once, after (see onClick).
-  let libHeld = false, libDue = false;
+  let libHeld = false;
   function renderLibrary() {
-    if (libHeld) { libDue = true; return; }
+    if (libHeld) return;
     const shell = root && $(".lbs-library", root);
     if (!shell || !lib) return;
     root.classList.toggle("lbs-lib-open", libUI.open);
@@ -7547,7 +7278,6 @@
     buildLibrary();
     desk.moving = null;
     desk.selected.clear();
-    if (!DESK_ONLY) buildWing();
     renderDesk();
   }
 
@@ -7595,7 +7325,7 @@
       root.classList.add("lbs-dragging");
       return;
     }
-    const src = e.target.closest && e.target.closest(".lbs-item, .lbs-row");
+    const src = e.target.closest && e.target.closest(".lbs-row");
     if (!src || !src.dataset.slug) return;
     if (src.classList.contains("lbs-row") && desk.selected.has(src.dataset.slug) && desk.selected.size > 1) {
       const rows = [...root.querySelectorAll(".lbs-row.-sel")];
@@ -7611,7 +7341,6 @@
     }
     root.classList.add("lbs-dragging");
     // Picking a film up off the shelf slides the desk open.
-    if (!desk.open && !DESK_ONLY) setTimeout(() => setDesk(true), 0);
   }
 
   function onDragEnd() {
@@ -7731,7 +7460,7 @@
       if (any.classList.contains("lbs-lib-film") && libUI.msel.size > 1 && libUI.msel.has(any.dataset.slug)) return openFilmMenu(null, null, e.clientX, e.clientY, "lib");
       return openFilmMenu(any.dataset.slug, any.dataset.name || lib.names.get(any.dataset.slug) || any.dataset.slug, e.clientX, e.clientY);
     }
-    const src = e.target.closest && e.target.closest(".lbs-item, .lbs-row");
+    const src = e.target.closest && e.target.closest(".lbs-row");
     if (!src || !src.dataset.slug) return;
     e.preventDefault();
     desk.moving = src.classList.contains("lbs-row") && desk.selected.has(src.dataset.slug) ? [...root.querySelectorAll(".lbs-row.-sel")].map(filmOf) : [filmOf(src)];
@@ -7963,7 +7692,7 @@
     const nb = root.querySelector(NAME_BOXES);
     if (nb && !nb.contains(e.target)) {
       libHeld = true;
-      setTimeout(() => { libHeld = false; libDue = false; redrawNames(); }, 0);
+      setTimeout(() => { libHeld = false; redrawNames(); }, 0);
       endName(nb, true);
     }
     // Double-click a Library folder to rename it, as in Finder. Counted by time
@@ -7987,13 +7716,8 @@
     if (lvr) { $(".lbs-lv-list", root)?.focus({ preventScroll: true }); return lvClickRow(lvr, e); }
     const row = e.target.closest(".lbs-row");
     if (row && !e.target.closest("a, button")) return selectRow(row, e);
-    const btn = e.target.closest("[data-act], [data-coll], [data-scope], [data-view], [data-mode]");
+    const btn = e.target.closest("[data-act], [data-scope], [data-view], [data-mode]");
     if (!btn || !root.contains(btn)) return;
-    if (btn.dataset.coll) {
-      if (btn.getAttribute("aria-disabled") === "true") return;
-      collection = btn.dataset.coll;
-      return render();
-    }
     if (btn.dataset.scope) {
       desk.scope = btn.dataset.scope;
       desk.shown = 150;
@@ -8279,13 +8003,6 @@
       if (fn) { fn(); toast("Undone."); }
       return;
     }
-    if (act === "back") return walk(-1);
-    if (act === "on") return walk(1);
-    if (act === "goto") {
-      const el = walkway?.els[+btn.dataset.n];
-      if (el) walkway.track.scrollTo({ left: Math.max(0, el.offsetLeft - 12), behavior: "smooth" });
-      return;
-    }
     if (act === "open" && edit.on && lib.cats.has(id) && inRoom(lib.cats.get(id).genre)) { edit.sel = id; drawSoon(); }
     if (act === "open") {
       if (!desk.open) {
@@ -8297,15 +8014,12 @@
       if (desk.mode === "store") requestAnimationFrame(() => flyToFolder(id));
       return;
     }
-    if (act === "aisles") return fit(); // (there's only the room now)
     if (act === "go-genre") return flyToFolder(id);
-    if (act === "enter") { wall.level = "wall"; desk.folder = id; renderFolders(); return showStage(); }
     if (act === "fit") return fit();
     if (act === "zoom-in" || act === "zoom-out") {
       const c = wall.canvas;
       return c && zoomAt(act === "zoom-in" ? 1.6 : 1 / 1.6, c.clientWidth / 2, c.clientHeight / 2);
     }
-    if (act === "col") { desk.folder = id || null; return renderFolders(); }
     if (act === "up") {
       const p = partsOf(desk.folder);
       return openFolder(p.sub ? p.cat : p.cat ? p.genre : null);
@@ -8509,12 +8223,9 @@
     if (!host) return;
     const strip = h("section", "lbs-home");
     strip.innerHTML =
-      `<a class="lbs-home-door${DESK_ONLY ? " -logo" : ""}" href="#store">` +
-      (DESK_ONLY ? `<span class="lbs-home-logo">${LOGO_SVG}</span>` : "") +
-      (DESK_ONLY ? "" : `<span class="lbs-home-kicker">LetterBloxd video store</span>`) +
-      (DESK_ONLY
-        ? `<span class="lbs-home-title">BLOXBUSTER is open</span><span class="lbs-home-sub">Browse the Horror wall, carry films around, sort the shelves your way. Walk in →</span>`
-        : `<span class="lbs-home-title">The Horror wing is open</span><span class="lbs-home-sub">${AISLES.length + 1} aisles, every film on one shelf, A to Z. Walk in →</span>`) +
+      `<a class="lbs-home-door -logo" href="#store">` +
+      `<span class="lbs-home-logo">${LOGO_SVG}</span>` +
+      `<span class="lbs-home-title">BLOXBUSTER is open</span><span class="lbs-home-sub">Browse the Horror wall, carry films around, sort the shelves your way. Walk in →</span>` +
       `</a>`;
     strip.querySelector("a").addEventListener("click", enterStore);
     // Just under "Welcome back…", above your friends' activity.
@@ -8543,7 +8254,6 @@
     const mod = e.metaKey || e.ctrlKey, inField = typing(document.activeElement);
     if (e.key === "Escape") {
       if (desk.moving) { desk.moving = null; return renderDesk(); }
-      if (desk.open && !DESK_ONLY) return setDesk(false);
       if (inField) return document.activeElement.blur();
       const tr = $(".lbs-trailer", root);
       if (tr && !tr.hidden) return closeTrailer();
