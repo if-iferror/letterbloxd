@@ -243,12 +243,14 @@
       .replace(/^[^a-z0-9]+/i, "")
       .toLowerCase();
   const collator = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
-  const keyCmp = (a, b) => collator.compare(a[1], b[1]) || a[2] - b[2] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0); // [name, key, year]
+  // [name, key, year] (key and year filled in when first needed)
+  const keyOf = (e) => e[1] ?? (e[1] = fileKey(e[0])), yrOf = (e) => e[2] ?? (e[2] = yearOf(e[0]));
+  const keyCmp = (a, b) => collator.compare(keyOf(a), keyOf(b)) || yrOf(a) - yrOf(b) || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
   const ranks = new Map(); // name -> rank
   let ranked = []; // [name, key, year], in title order
   function rankTitles(names) {
     const fresh = [];
-    for (const n of names) if (!ranks.has(n)) { ranks.set(n, NaN); fresh.push([n, fileKey(n), yearOf(n)]); }
+    for (const n of names) if (!ranks.has(n)) { ranks.set(n, NaN); fresh.push([n]); }
     if (fresh.length > 50) { ranked = ranked.concat(fresh).sort(keyCmp); ranked.forEach((e, i) => ranks.set(e[0], i)); }
     else for (const e of fresh) {
       // a few new titles: each between its neighbours, so no other rank moves
@@ -262,6 +264,11 @@
     }
   }
   const rankOf = (name) => { if (!ranks.has(name)) rankTitles([name]); return ranks.get(name); };
+  // A catalogue that brings its title order (torder) is ranked as it reads.
+  function seedRanks(C) {
+    if (!C.torder || ranked.length) return;
+    for (const i of C.torder) { const n = C.films[i] && C.films[i][1]; if (n != null && !ranks.has(n)) { ranks.set(n, ranked.length); ranked.push([n]); } }
+  }
   const titleCmp = (a, b) => rankOf(a) - rankOf(b); // two names
   const byTitle = (a, b) => rankOf(a[1]) - rankOf(b[1]); // two [slug, name]
   // Every slug in names, in title order (kept until the names change).
@@ -569,7 +576,9 @@
       lists.set(key, { name, set: new Set(gaps.map((d) => (i += d))) });
     }
     catalogue = { at: j.at, films: j.films, lists, info: Array.isArray(j.info) ? j.info : null, people: j.people || [], langNames: j.langNames || {}, kw: Array.isArray(j.kw) ? j.kw : null, fkw: Array.isArray(j.fkw) ? j.fkw : null,
-      co: j.co || null, fco: j.fco || null, cast: j.cast || null, fcast: j.fcast || null, certs: j.certs || null, fcert: j.fcert || null, fage: Array.isArray(j.fage) ? j.fage : null, views: Array.isArray(j.views) ? j.views : null, frel: Array.isArray(j.frel) ? j.frel : null };
+      co: j.co || null, fco: j.fco || null, cast: j.cast || null, fcast: j.fcast || null, certs: j.certs || null, fcert: j.fcert || null, fage: Array.isArray(j.fage) ? j.fage : null, views: Array.isArray(j.views) ? j.views : null, frel: Array.isArray(j.frel) ? j.frel : null,
+      torder: Array.isArray(j.torder) && j.torder.length === j.films.length ? j.torder : null };
+    seedRanks(catalogue);
     catState = "ready";
     return true;
   }
@@ -3238,6 +3247,8 @@
       lists[k] = [l.name, l.ids.map((i) => { const d = i - prev; prev = i; return d; })];
     }
     const out = { v: 1, at: new Date().toISOString().slice(0, 10), min: st.min, cutPage: st.cutPage, films: st.films, lists };
+    // The films in title order (indexes), so the store needn't sort 80,000 titles on every visit.
+    out.torder = st.films.map((f, i) => [f[1], fileKey(f[1]), yearOf(f[1]), i]).sort(keyCmp).map((e) => e[3]);
     if (st.info && st.info.some((x) => x && x.length > 1)) {
       // [lid, runtime, primary language, original language, [director index], type]
       const people = [], at = new Map();
@@ -5781,13 +5792,14 @@
   const RUNTIME_BANDS = [["0", "0–15 min"], ["15", "15–30 min"], ["30", "30–45 min"], ["45", "45–60 min"], ["60", "60–75 min"], ["75", "75–90 min"], ["m", "90 min – 2 h"], ["l", "2 – 2½ h"], ["xl", "2½ h and up"]];
   const runtimeBand = (m) => (m < 90 ? String(Math.floor(m / 15) * 15) : m < 120 ? "m" : m < 150 ? "l" : "xl");
   // A film's people and companies, as filter keys: d: director, c: cast, k: company
+  const NONE = []; // a shared empty list of values (never added to)
   function whoOf(C, i) {
     const out = [];
     const row = C.info && C.info[i];
     if (row && Array.isArray(row[4])) for (const d of row[4]) out.push(`d:${d}`);
     if (C.fcast && C.fcast[i]) for (const c of C.fcast[i]) out.push(`c:${c}`);
     if (C.fco && C.fco[i]) for (const k of C.fco[i]) out.push(`k:${k}`);
-    return out;
+    return out.length ? out : NONE;
   }
   function whoName(k) {
     const C = catalogue, [t, n] = [k.slice(0, 1), +k.slice(2)];
@@ -6014,8 +6026,15 @@
     const F = buildFacts();
     const held = new Set(heldList.map(([x]) => x));
     const gBit = Object.fromEntries(GENRES.map(([g], b) => [g, 1 << b]));
-    if (lv.statFacts !== F) { lv.stat = new Map(); lv.statFacts = F; }
+    if (lv.statFacts !== F) { lv.stat = new Map(); lv.vals = new Map(); lv.statFacts = F; }
     const stat = lv.stat;
+    // Films share their filter values (most share a language, a decade, a mix
+    // of genres...): one array per distinct value, and one empty one, instead
+    // of two million small arrays.
+    const vals = lv.vals || (lv.vals = new Map()); // field -> Map(value -> shared array)
+    const one = (p, k, make) => { let m = vals.get(p); if (!m) vals.set(p, (m = new Map())); let a = m.get(k); if (!a) m.set(k, (a = make())); return a; };
+    const nums = (p, src) => (!src || !src.length ? NONE : src.length === 1 ? one(p, src[0], () => [String(src[0])]) : one(p, src.join(","), () => src.map(String)));
+    const one1 = (p, v) => (!v ? NONE : one(p, v, () => [v])); // (no value: false, 0, "" or none at all)
     const out = [];
     const atSub = new Map(); // folder -> what every film in it shares
     const tags = new Map(), tagOf = (k) => tags.get(k) || (tags.set(k, k.split(",")), tags.get(k)); // status lists, shared
@@ -6046,22 +6065,24 @@
         if (gm & gBit.animation) type.push("anim");
         S = {
           name, year, i: i == null ? 1e9 : i, key: fileKey(name), rating: i != null ? (F.cat.films[i][2] || 0) : 0, vs: {
-          genre: GENRES.filter(([g]) => gm & gBit[g]).map(([g]) => g), type, decade: year ? [decadeOf(year)] : [],
-          lang: i != null && F.lang.per[i] ? F.lang.per[i].map(String) : [],
-          country: i != null && F.origin.per[i] ? F.origin.per[i].map(String) : [],
-          pcountry: i != null && F.country.per[i] ? F.country.per[i].map(String) : [],
-          tag: i != null && F.tags && F.tags.per[i] ? F.tags.per[i].map(String) : [],
-          studio: i != null && F.studio && F.studio.per[i] ? F.studio.per[i].map(String) : [],
-          cert: i != null && F.cat.fcert && F.cat.fcert[i] ? [certBucket(F.cat.certs[F.cat.fcert[i] - 1])] : [],
-          vband: i != null && F.views && F.cat.views[i] ? [F.views.of(F.cat.views[i])] : [],
-          aud: i != null && F.audience[i] ? [F.audience[i]] : [],
-          rel: i != null && F.release ? [F.release.kind[i]] : [],
-          svc: i != null && F.release && F.release.svc[i] ? F.release.svc[i] : [],
-          rband: i != null && F.cat.films[i][2] ? [ratingBand(F.cat.films[i][2])] : [],
-          rtband: i != null && F.runtime && F.runtime(i) ? [runtimeBand(F.runtime(i))] : [],
-          who: i != null ? whoOf(F.cat, i) : [],
-          theme: i != null && F.theme && F.theme.per[i] ? F.theme.per[i].map(String) : [],
-          mini: i != null && F.mini && F.mini.per[i] ? F.mini.per[i].map(String) : [],
+          genre: gm ? one("g", gm, () => GENRES.filter(([g]) => gm & gBit[g]).map(([g]) => g)) : NONE,
+          type: type.length ? one("t", String(type), () => type) : NONE,
+          decade: year ? one1("d", decadeOf(year)) : NONE,
+          lang: nums("l", i != null && F.lang.per[i]),
+          country: nums("c", i != null && F.origin.per[i]),
+          pcountry: nums("p", i != null && F.country.per[i]),
+          tag: nums("k", i != null && F.tags && F.tags.per[i]),
+          studio: nums("s", i != null && F.studio && F.studio.per[i]),
+          cert: i != null && F.cat.fcert && F.cat.fcert[i] ? one1("e", certBucket(F.cat.certs[F.cat.fcert[i] - 1])) : NONE,
+          vband: i != null && F.views && F.cat.views[i] ? one1("w", F.views.of(F.cat.views[i])) : NONE,
+          aud: one1("a", i != null && F.audience[i]),
+          rel: one1("r", i != null && F.release && F.release.kind[i]),
+          svc: i != null && F.release && F.release.svc[i] ? one("v", String(F.release.svc[i]), () => F.release.svc[i]) : NONE,
+          rband: i != null && F.cat.films[i][2] ? one1("b", ratingBand(F.cat.films[i][2])) : NONE,
+          rtband: rt ? one1("u", runtimeBand(rt)) : NONE,
+          who: i != null ? whoOf(F.cat, i) : NONE,
+          theme: nums("h", i != null && F.theme && F.theme.per[i]),
+          mini: nums("m", i != null && F.mini && F.mini.per[i]),
         } };
         stat.set(slug, S);
       }
